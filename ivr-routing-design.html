@@ -395,37 +395,37 @@
 
 <div class="diagram">
 <pre class="mermaid">
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 30, 'rankSpacing': 35}, 'themeVariables': {'fontSize': '13px'}}}%%
 flowchart TD
 
-    subgraph PA["Path A — App-initiated (user hits Call CTA)"]
-        A([User hits Call CTA in app]):::start --> B[/Gather FROM list<br/>CSP: sim_inventory SIMs + registered mobile<br/>Customer: registered mobile only/]
-        B --> C[/Resolve TO number<br/>from ticket context/]
-        C --> D[(Table 1<br/>FROM list → TO<br/>short TTL)]:::store
-        D --> E[/Masked number shown in app/]
+    subgraph PA["Path A — In-app CTA (either party)"]
+        direction LR
+        A([Tap Call CTA]):::start --> B[/Gather FROM<br/>CSP: SIMs + registered<br/>Customer: registered only/]
+        B --> C[/Resolve TO/]
+        C --> D[(Table 1 write<br/>FROM list → TO)]:::store
+        D --> E[/Masked number/]
     end
 
-    PB([Path B — User dials masked number directly<br/>dialer · call log · saved contact]):::start
+    PB([Path B — Direct dial<br/>dialer · call log · saved contact]):::start
 
-    subgraph P2["Call routing (both paths converge)"]
-        F{Table 1 lookup<br/>FROM → TO}
-        F -->|Hit| H([Connect ✓]):::happy
-        F -->|Miss| I[Resolve-FROM API]
-        I --> J{Classify FROM}
-        J -->|is_customer| K[(Table 3<br/>Cx → Tech)]:::store
-        K --> K2{Active tech<br/>found?}
-        K2 -->|Yes| H
-        K2 -->|No<br/>ticket closed / expired| O
-        J -->|is_partner_user| L[Gather 5-digit PIN]:::fallback
-        J -->|other| L
-        J -->|API failure| L
-        L --> M{Valid PIN?}
-        M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
-        N --> H
-        M -->|No| O([IVR: Call via app]):::deadend
-    end
-
-    E -. user dials .-> F
+    F{Table 1 lookup}
+    E -. dials .-> F
     PB -. dials .-> F
+
+    F -->|Hit| H([Connect ✓]):::happy
+    F -->|Miss| I[Resolve-FROM API]
+    I --> J{Classify FROM}
+    J -->|is_customer| K[(Table 3<br/>Cx → Tech)]:::store
+    K --> K2{Active<br/>tech found?}
+    K2 -->|Yes| H
+    K2 -->|No| O
+    J -->|is_partner_user| L[Gather 5-digit PIN]:::fallback
+    J -->|other| L
+    J -->|API failure| L
+    L --> M{Valid PIN?}
+    M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
+    N --> H
+    M -->|No| O([IVR: Call via app]):::deadend
 
     classDef start    fill:#37474f,stroke:#263238,color:#fff
     classDef happy    fill:#4caf50,stroke:#2e7d32,color:#fff
