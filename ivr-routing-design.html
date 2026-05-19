@@ -289,6 +289,61 @@
   <li>A partner's colleague can place the call using the same PIN — no new app install required.</li>
 </ul>
 
+<h2>Coverage — how each initiation pattern is handled</h2>
+<p class="section-intro">Calls can be initiated by either side, in or out of the app. Each pattern resolves through one of the paths shown in the flowchart further down.</p>
+
+<h3>Partner-initiated calls</h3>
+<table>
+  <thead>
+    <tr><th style="width:55%">Scenario</th><th>New design path</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Partner taps Call CTA in-app from a SIM already in inventory, dials within TTL</td>
+      <td><b>Happy path</b> — Table 1 hit → instant bridge to customer</td>
+    </tr>
+    <tr>
+      <td>Partner redials masked number from dialer / call log (no fresh CTA, or TTL expired)</td>
+      <td>Resolve-FROM = <code>is_partner_user</code> → PIN → Table 2 → bridge to customer</td>
+    </tr>
+    <tr>
+      <td>Partner calls from a SIM not yet in inventory (eSIM, dual-SIM secondary, permission denied)</td>
+      <td>Resolve-FROM = <code>other</code> → PIN → Table 2 → bridge to customer</td>
+    </tr>
+    <tr>
+      <td>Partner shares the masked number; colleague dials it from their own phone</td>
+      <td>Resolve-FROM = <code>other</code> → PIN (shared by partner) → Table 2 → bridge to customer</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Customer-initiated calls</h3>
+<table>
+  <thead>
+    <tr><th style="width:55%">Scenario</th><th>New design path</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Customer taps Call CTA in-app, dials within TTL</td>
+      <td><b>Happy path</b> — Table 1 hit → instant bridge to technician</td>
+    </tr>
+    <tr>
+      <td>Customer dials masked number from dialer / call log (callback after a missed call)</td>
+      <td>Resolve-FROM = <code>is_customer</code> → Table 3 → bridge to technician (no PIN)</td>
+    </tr>
+    <tr>
+      <td>Customer dials after their ticket has been closed</td>
+      <td>Resolve-FROM = <code>is_customer</code> → Table 3 miss → IVR: "Please call via app"</td>
+    </tr>
+    <tr>
+      <td>Customer dials from a SIM not registered with us (relative's phone, new SIM)</td>
+      <td>Resolve-FROM = <code>other</code> → PIN prompt → customer has no PIN → IVR: "Please call via app"</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note"><b>Why customers never need a PIN, but partners do.</b> A customer has at most one active ticket and one assigned technician at any time — so the moment we recognise the customer's FROM (or find them in Table 3), we know exactly who they want to reach. A partner has many active customers simultaneously, so a PIN is what tells us <em>which one</em>.</div>
+
 <h2>PIN architecture — what it is and how we're using it</h2>
 
 <h3>The general pattern</h3>
@@ -383,7 +438,7 @@ flowchart TD
 <section class="usecase">
   <div class="uc-tag">Reference</div>
   <h3>In-app happy path (preserved)</h3>
-  <div class="today">Works fine today, kept untouched. Partner taps Call CTA in-app from a registered SIM <b>or any SIM already in <code>sim_inventory</code></b> (captured on prior logins), dials the masked number within TTL.</div>
+  <div class="today">Works fine today, kept untouched. <b>Either party</b> (partner or customer) taps Call CTA in-app from a registered SIM or any SIM already in <code>sim_inventory</code> (captured on prior logins), and dials the masked number within TTL. Same plumbing in both directions; the diagram below uses a partner as the example.</div>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
