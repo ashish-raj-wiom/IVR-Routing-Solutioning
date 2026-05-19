@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>IVR Call Routing — Proposed Design</title>
+<title>IVR Call Routing — Proposed Solution</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   :root {
@@ -206,7 +206,7 @@
 </head>
 <body>
 
-<h1>IVR Call Routing — Proposed Design</h1>
+<h1>IVR Call Routing — Proposed Solution</h1>
 <p class="subtitle"><b>A meaningful share of partner ↔ customer calls drop today.</b> This is the design that closes the gap.</p>
 <p class="subtitle" style="opacity:0.65; margin-top:-6px;">Drafted 2026-05-18 · For leadership review</p>
 
@@ -307,15 +307,15 @@
     </tr>
     <tr>
       <td>Partner redials masked number from dialer / call log (no fresh CTA, or TTL expired)</td>
-      <td>Resolve-FROM = <code>is_partner_user</code> → PIN → Table 2 → bridge to customer</td>
+      <td>Resolve-FROM = <code>not customer</code> → PIN → Table 2 → bridge to customer</td>
     </tr>
     <tr>
       <td>Partner calls from a SIM not yet in inventory (eSIM, dual-SIM secondary, permission denied)</td>
-      <td>Resolve-FROM = <code>other</code> → PIN → Table 2 → bridge to customer</td>
+      <td>Resolve-FROM = <code>not customer</code> → PIN → Table 2 → bridge to customer</td>
     </tr>
     <tr>
       <td>Partner shares the masked number; colleague dials it from their own phone</td>
-      <td>Resolve-FROM = <code>other</code> → PIN (shared by partner) → Table 2 → bridge to customer</td>
+      <td>Resolve-FROM = <code>not customer</code> → PIN (shared by partner) → Table 2 → bridge to customer</td>
     </tr>
   </tbody>
 </table>
@@ -340,7 +340,7 @@
     </tr>
     <tr>
       <td>Customer dials from a SIM not registered with us (relative's phone, new SIM)</td>
-      <td>Resolve-FROM = <code>other</code> → PIN prompt → customer has no PIN → IVR: "Please call via app"</td>
+      <td>Resolve-FROM = <code>not customer</code> → PIN prompt → customer has no PIN → IVR: "Please call via app"</td>
     </tr>
   </tbody>
 </table>
@@ -366,13 +366,16 @@
 <p>This is Exotel's <b>Connect Applet with Dynamic URL</b> pattern — a public, documented mechanism. We don't need to invent telephony; we just expose two endpoints and run lookups fast (&lt; 200 ms) inside Exotel's 5-second timeout budget. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
 
 <h3>How we're using it here</h3>
-<p>The PIN layer activates in three specific scenarios — all of which fail today:</p>
+<p>We've kept the classification deliberately simple: <b>Resolve-FROM only answers one question</b> — <em>"is this caller a customer?"</em> (a boolean). Anything else — partner, colleague, unknown SIM, or even an API failure — falls into the same PIN prompt. We don't need to know <em>who</em> the non-customer caller is; the PIN they enter will tell us which customer they want to reach.</p>
+<p>Concrete scenarios this covers — all of which fail today:</p>
 <ul class="compact">
-  <li><b>Partner calls from an unregistered SIM</b> → unknown FROM → ask for PIN.</li>
-  <li><b>Partner redials from the dialer / call log</b> → known SIM, but no live mapping → ask for PIN to identify which customer.</li>
-  <li><b>Colleague dials on the partner's behalf</b> → unknown FROM → ask for PIN.</li>
+  <li>Partner calls from an unregistered SIM (UC01)</li>
+  <li>Partner forwards the masked number to a colleague (UC02)</li>
+  <li>Partner calls back on a customer-initiated masked number (UC03)</li>
+  <li>Partner re-dials from the dialer after a previous call ended (UC04; fast-lane via Table 1 if still within TTL)</li>
+  <li>Resolve-FROM API failure — default to "not a customer" → PIN (safer than skipping)</li>
 </ul>
-<p>For <b>customers</b>, we <em>skip</em> the PIN entirely. Today every customer has exactly one active ticket and one assigned technician — so the moment we recognise the customer's FROM, we know who they want to call. No PIN entry, no friction.</p>
+<p>For <b>customers</b>, we skip the PIN entirely. Every customer has at most one active ticket and one assigned technician — so the moment Resolve-FROM returns <code>is_customer = true</code>, Table 3 resolves the technician and we bridge. No PIN, no friction.</p>
 
 <h3>PIN distribution <span class="tag new">TBD</span></h3>
 <p>PINs are issued <b>only to the partner side</b>, one per active ticket, valid until the ticket closes. Distribution channel still to decide:</p>
@@ -414,14 +417,12 @@ flowchart TD
 
     F -->|Hit| H([Connect ✓]):::happy
     F -->|Miss| I[Resolve-FROM API]
-    I --> J{Classify FROM}
-    J -->|is_customer| K[(Table 3<br/>Cx → Tech)]:::store
+    I --> J{Is caller<br/>a customer?}
+    J -->|Yes| K[(Table 3<br/>Cx → Tech)]:::store
     K --> K2{Active<br/>tech found?}
     K2 -->|Yes| H
     K2 -->|No| O
-    J -->|is_partner_user| L[Gather 5-digit PIN]:::fallback
-    J -->|other| L
-    J -->|API failure| L
+    J -->|No / API fail| L[Gather 5-digit PIN]:::fallback
     L --> M{Valid PIN?}
     M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
     N --> H
@@ -493,22 +494,22 @@ sequenceDiagram
       <tr>
         <td><b>UC 01</b> — Partner calls from an unregistered SIM</td>
         <td>Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~30% of the time; call drops.</td>
-        <td><code>other</code></td>
+        <td><code>not customer</code></td>
       </tr>
       <tr>
         <td><b>UC 02</b> — Partner forwards the masked number to a colleague</td>
         <td>Partner shares the masked number with a colleague on a different phone. Colleague's SIM isn't in <code>sim_inventory</code>. Call drops.</td>
-        <td><code>other</code></td>
+        <td><code>not customer</code></td>
       </tr>
       <tr>
         <td><b>UC 03</b> — Partner calls back on a masked number originally initiated by the customer</td>
         <td>Customer initiates a call via in-app CTA → partner misses it → partner taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → Partner — so the callback drops.</td>
-        <td><code>is_partner_user</code></td>
+        <td><code>not customer</code></td>
       </tr>
       <tr>
         <td><b>UC 04</b> — Partner re-dials the same customer from the dialer after a previous call ended</td>
         <td>Partner called the customer earlier via in-app CTA — call connected and ended. Some time later the partner wants to call the same customer again, taps the masked number in their dialer / call log. In today's setup, the original MN2 mapping has expired (TTL) by the second attempt, and no fresh <code>initiateCall</code> fires because the partner is dialing outside the app. Call drops.</td>
-        <td><code>is_partner_user</code></td>
+        <td><code>not customer</code></td>
       </tr>
     </tbody>
   </table>
@@ -525,7 +526,7 @@ sequenceDiagram
 
     Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other' or 'is_partner_user'
+    Note over IVR: Table 1 miss<br/>Resolve-FROM = not customer
     IVR-->>Caller: IVR: 'Enter 5-digit PIN'
     Caller->>IVR: Enters PIN
     Note over IVR: Table 2 lookup<br/>PIN → customer mobile
