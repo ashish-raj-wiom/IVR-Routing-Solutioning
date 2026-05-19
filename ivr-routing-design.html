@@ -379,7 +379,7 @@ flowchart TD
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 04</b> — Partner re-dials customer from dialer after a previous call ended</td>
+      <td><b>UC 04</b> — Partner dials Wiom number directly from the dialer (fresh call or re-dial)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
@@ -459,8 +459,8 @@ sequenceDiagram
         <td><code>not customer</code></td>
       </tr>
       <tr>
-        <td><b>UC 04</b> — Partner re-dials the same customer from the dialer after a previous call ended</td>
-        <td>Partner called the customer earlier via in-app CTA — call connected and ended. Some time later the partner wants to call the same customer again, taps the masked number in their dialer / call log. In today's setup, the original MN2 mapping has expired (TTL) by the second attempt, and no fresh <code>initiateCall</code> fires because the partner is dialing outside the app. Call drops.</td>
+        <td><b>UC 04</b> — Partner dials the Wiom number directly from the dialer (fresh call or re-dial)</td>
+        <td>Partner bypasses the in-app CTA — dials the Wiom number from their dialer, call log, or saved contact. This may be a fresh call (partner knows the PIN from the ticket card and prefers dialing directly) or a re-dial after a previous call ended. Today no fresh <code>initiateCall</code> fires, any prior mapping has expired (TTL), and the call drops.</td>
         <td><code>not customer</code></td>
       </tr>
     </tbody>
@@ -471,7 +471,7 @@ sequenceDiagram
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant Caller as Caller<br/>UC01 unknown SIM · UC02 colleague<br/>UC03 callback · UC04 re-dial
+    participant Caller as Caller<br/>UC01 unknown SIM · UC02 colleague<br/>UC03 callback · UC04 dial / re-dial
     participant MN as Masked Number
     participant IVR as IVR
     participant API as Is-Customer API
@@ -489,7 +489,7 @@ sequenceDiagram
 </pre>
   </div>
 
-  <div class="outcome">All four connect end-to-end via the same fallback family. UC01 / UC02 (unknown SIM) and UC03 (callback on customer-initiated MN — Table 1 holds the customer's FROM, not the partner's) <em>always</em> go through PIN. UC04 is the exception: if the partner re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges instantly with no PIN; after TTL it joins the same PIN path as the others.</div>
+  <div class="outcome">All four connect end-to-end via the same PIN fallback. UC04 has a sub-case fast-lane: if the partner re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges instantly with no PIN. In every other case (UC01 / UC02 / UC03, plus UC04 fresh-dial), Table 1 misses and the PIN path runs.</div>
 </section>
 
 <section class="usecase">
