@@ -292,61 +292,6 @@
 <h3>Trust layer — recipient-side pickup (already in place)</h3>
 <p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. This whitelisting is already live, and the single-masked-number proposal preserves that verified status across both call directions — no regression on recipient-side trust as part of this build.</p>
 
-<h2>Coverage — how each initiation pattern is handled</h2>
-<p class="section-intro">Calls can be initiated by either side, in or out of the app. Each pattern resolves through one of the paths shown in the flowchart further down.</p>
-
-<h3>Partner-initiated calls</h3>
-<table>
-  <thead>
-    <tr><th style="width:55%">Scenario</th><th>New design path</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Partner taps Call CTA in-app from a SIM already in inventory, dials within TTL</td>
-      <td><b>Happy path</b> — Table 1 hit → instant bridge to customer</td>
-    </tr>
-    <tr>
-      <td>Partner redials masked number from dialer / call log (no fresh CTA, or TTL expired)</td>
-      <td>Resolve-FROM = <code>not customer</code> → PIN → Table 2 → bridge to customer</td>
-    </tr>
-    <tr>
-      <td>Partner calls from a SIM not yet in inventory (eSIM, dual-SIM secondary, permission denied)</td>
-      <td>Resolve-FROM = <code>not customer</code> → PIN → Table 2 → bridge to customer</td>
-    </tr>
-    <tr>
-      <td>Partner shares the masked number; colleague dials it from their own phone</td>
-      <td>Resolve-FROM = <code>not customer</code> → PIN (shared by partner) → Table 2 → bridge to customer</td>
-    </tr>
-  </tbody>
-</table>
-
-<h3>Customer-initiated calls</h3>
-<table>
-  <thead>
-    <tr><th style="width:55%">Scenario</th><th>New design path</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>Customer taps Call CTA in-app, dials within TTL</td>
-      <td><b>Happy path</b> — Table 1 hit → instant bridge to technician</td>
-    </tr>
-    <tr>
-      <td>Customer dials masked number from dialer / call log (callback after a missed call)</td>
-      <td>Resolve-FROM = <code>is_customer</code> → Table 3 → bridge to technician (no PIN)</td>
-    </tr>
-    <tr>
-      <td>Customer dials after their ticket has been closed</td>
-      <td>Resolve-FROM = <code>is_customer</code> → Table 3 miss → IVR: "Please call via app"</td>
-    </tr>
-    <tr>
-      <td>Customer dials from a SIM not registered with us (relative's phone, new SIM)</td>
-      <td>Resolve-FROM = <code>not customer</code> → PIN prompt → customer has no PIN → IVR: "Please call via app"</td>
-    </tr>
-  </tbody>
-</table>
-
-<div class="note"><b>Why customers never need a PIN, but partners do.</b> A customer has at most one active ticket and one assigned technician at any time — so the moment we recognise the customer's FROM (or find them in Table 3), we know exactly who they want to reach. A partner has many active customers simultaneously, so a PIN is what tells us <em>which one</em>.</div>
-
 <h2>PIN architecture — what it is and how we're using it</h2>
 
 <h3>The general pattern</h3>
@@ -437,7 +382,49 @@ flowchart TD
 </div>
 
 <h2>Use cases</h2>
-<p class="section-intro">How each path resolves under the new design. The first is the existing happy path (preserved); the rest are the four failure modes the design recovers.</p>
+<p class="section-intro">Six scenarios cover the full call surface. The table below shows what works today vs what this solution recovers. Detailed sequence diagrams follow.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:64%">Scenario</th>
+      <th style="text-align:center; width:14%">Today</th>
+      <th style="text-align:center; width:22%">With this solution</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Reference</b> — In-app happy path (partner or customer taps Call CTA, dials within TTL)</td>
+      <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
+      <td style="text-align:center; color:#2e7d32;">✓ <small>(preserved)</small></td>
+    </tr>
+    <tr>
+      <td><b>UC 01</b> — Partner calls from an unregistered SIM</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 02</b> — Partner forwards the masked number to a colleague</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 03</b> — Partner calls back on a customer-initiated masked number</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 04</b> — Partner re-dials customer from dialer after a previous call ended</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 05</b> — Customer calls back after a missed call</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓ <small>(nudge to app if ticket closed)</small></td>
+    </tr>
+  </tbody>
+</table>
 
 <section class="usecase">
   <div class="uc-tag">Reference</div>
@@ -521,12 +508,15 @@ sequenceDiagram
     autonumber
     participant Caller as Caller<br/>UC01 unknown SIM · UC02 colleague<br/>UC03 callback · UC04 re-dial
     participant MN as Masked Number
-    participant IVR as IVR + Lookup
+    participant IVR as IVR
+    participant API as Is-Customer API
     participant C as Customer
 
     Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss<br/>Resolve-FROM = not customer
+    Note over IVR: Table 1 lookup → miss
+    IVR->>API: is_customer(FROM)?
+    API-->>IVR: false
     IVR-->>Caller: IVR: 'Enter 5-digit PIN'
     Caller->>IVR: Enters PIN
     Note over IVR: Table 2 lookup<br/>PIN → customer mobile
@@ -547,12 +537,15 @@ sequenceDiagram
     autonumber
     participant C as Customer (registered)
     participant MN as Masked Number
-    participant IVR as IVR + Lookup
+    participant IVR as IVR
+    participant API as Is-Customer API
     participant T as Technician
 
     C->>MN: Dial masked number from dialer
     MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'is_customer'
+    Note over IVR: Table 1 lookup → miss
+    IVR->>API: is_customer(FROM)?
+    API-->>IVR: true
     Note over IVR: Table 3 lookup<br/>customer → active technician
     IVR->>T: Bridge to technician
 </pre>
