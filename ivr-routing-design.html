@@ -354,7 +354,9 @@ flowchart TD
         F -->|Miss| I[Resolve-FROM API]
         I --> J{Classify FROM}
         J -->|is_customer| K[(Table 3<br/>Cx → Tech)]:::store
-        K --> H
+        K --> K2{Active tech<br/>found?}
+        K2 -->|Yes| H
+        K2 -->|No<br/>ticket closed / expired| O
         J -->|is_partner_user| L[Gather 5-digit PIN]:::fallback
         J -->|other| L
         J -->|API failure| L
@@ -500,7 +502,7 @@ sequenceDiagram
     IVR->>T: Bridge to technician
 </pre>
   </div>
-  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — single-active-ticket assumption resolves the technician.</div>
+  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — single-active-ticket assumption resolves the technician. If the customer's ticket is already closed (no active technician found in Table 3), the IVR plays "Please call via app" instead of dropping silently.</div>
 </section>
 
 <h2>Tables</h2>
@@ -557,6 +559,7 @@ sequenceDiagram
 <div class="note">
 <ul class="compact">
   <li><b>Customer calling from an unregistered SIM</b> — no PIN held → IVR nudges to call via app.</li>
+  <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR nudges to call via app (rather than dropping).</li>
   <li><b>Customer with &gt; 1 active ticket</b> — out of scope. Production reality today is 1 ticket per customer at a time.</li>
   <li><b>Dual-role caller</b> (same person both customer and partner-user) — disallowed by the system.</li>
   <li><b>PIN brute-force protection</b> — deferred. Good-to-have, not v1.</li>
