@@ -164,12 +164,105 @@
     font-size: 14px;
     margin: 6px 0 8px;
   }
+  .mn-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 720px) {
+    .mn-grid { grid-template-columns: 1fr; }
+  }
+  .mn-box {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px 18px;
+    background: #f9fafc;
+  }
+  .mn-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
+    color: #00897b;
+    margin-bottom: 6px;
+  }
+  .mn-flow {
+    font-size: 16px;
+    font-weight: 600;
+    color: #0f1e3a;
+    margin-bottom: 6px;
+  }
+  .mn-note {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .lead {
+    font-size: 16px;
+    line-height: 1.6;
+    color: #222;
+    margin: 12px 0 16px;
+  }
 </style>
 </head>
 <body>
 
 <h1>IVR Call Routing — Proposed Design (v1)</h1>
 <p class="subtitle">Single masked number · 2 entry paths (app / dialer) · 3 tables · PIN fallback · Drafted 2026-05-18</p>
+
+<h2>The problem we're solving</h2>
+<p class="lead">A significant share of partner ↔ customer call attempts on Wiom's masked-number infrastructure fail to connect today. The current mechanism only works reliably when a partner initiates a call <b>from inside the app, from a registered SIM, within the TTL window</b> — and that narrow path covers only a fraction of how partners and customers actually try to reach each other.</p>
+
+<h3>MN1 / MN2 — how masking works today</h3>
+<p>The current implementation uses <b>two separate masked numbers per call session</b>, one per direction:</p>
+
+<div class="mn-grid">
+  <div class="mn-box">
+    <div class="mn-label">MN1</div>
+    <div class="mn-flow">Customer → MN1 → Partner</div>
+    <div class="mn-note">One-way route. Only customer-initiated calls work.</div>
+  </div>
+  <div class="mn-box">
+    <div class="mn-label">MN2</div>
+    <div class="mn-flow">Partner → MN2 → Customer</div>
+    <div class="mn-note">One-way route. Only partner-initiated calls work.</div>
+  </div>
+</div>
+
+<p>Each is minted via <code>initiateCall</code> when the originating side taps the Call CTA in their app, and bound to a short-lived FROM → TO mapping in the backend. MN1 only knows how to route Customer → Partner; MN2 only the reverse. The masked number is also recycled across sessions — the same physical number is reused across many pairs over time, so a stale number in someone's call log has no guaranteed meaning later.</p>
+
+<h3>Where it breaks today</h3>
+<table>
+  <thead>
+    <tr><th style="width:32%">Failure mode</th><th>What happens today</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Unregistered / undetected SIM</b></td>
+      <td>SIM capture at app login works ~70% of the time. The remaining ~30% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
+      <td>Partner sees MN1 in their call log (the number a customer used to call them) and dials it back. MN1 only routes Customer → Partner, so the partner's FROM isn't in the mapping. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Native dialer / call-log redial</b></td>
+      <td>Partner or customer dials the masked number from the phone dialer without a fresh CTA. No <code>initiateCall</code> fires; the mapping has expired (TTL) or never existed for this direction. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Customer callback</b></td>
+      <td>Customer sees a missed call from the masked number and calls back. No live mapping for the customer's FROM. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Forwarded masked number</b></td>
+      <td>Partner shares the masked number with a colleague on chat. Colleague dials from a phone whose SIM isn't in <code>sim_inventory</code> → no mapping. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Telemetry gap</b></td>
+      <td>None of the above failures emit a distinct event. We can't size which bucket is biggest, so any fix today is unprioritised.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="note"><b>Common thread:</b> every failure mode is rooted in the in-app + registered-SIM + fresh-TTL triple. Anything that breaks even one of those three drops the call.</div>
 
 <h2>What this solves</h2>
 <ul class="compact">
