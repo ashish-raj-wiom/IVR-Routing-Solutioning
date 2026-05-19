@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IVR Call Routing — Proposed Design (v1)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --muted: #666;
+    --rule: #e0e0e0;
+    --bg: #ffffff;
+    --panel: #fafafa;
+    --happy: #4caf50;
+    --fallback: #ff9800;
+    --deadend: #e53935;
+    --store: #2196f3;
+    --start: #37474f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 1200px;
+    margin: 40px auto;
+    padding: 0 28px 80px;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+  }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 4px;
+    border-bottom: 2px solid #333;
+    padding-bottom: 12px;
+  }
+  h2 {
+    font-size: 20px;
+    margin-top: 36px;
+    color: #2c3e50;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 6px;
+  }
+  h3 { font-size: 16px; margin-top: 24px; color: #2c3e50; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  .legend {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); }
+  .swatch.start    { background: var(--start); }
+  .swatch.happy    { background: var(--happy); }
+  .swatch.fallback { background: var(--fallback); }
+  .swatch.deadend  { background: var(--deadend); }
+  .swatch.store    { background: var(--store); }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th { background: #f5f5f5; font-weight: 600; }
+  td code { font-size: 13px; }
+  code {
+    background: #f3f3f3;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: "SF Mono", Consolas, Monaco, monospace;
+    font-size: 13px;
+  }
+  ul.compact li { margin: 4px 0; }
+  ol li { margin: 6px 0; }
+  .note {
+    background: #fff8e1;
+    border-left: 4px solid #ffc107;
+    padding: 12px 16px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .tag.new      { background: #ffebee; color: #c62828; }
+  .tag.existing { background: #e8f5e9; color: #2e7d32; }
+
+  .usecase {
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin: 22px 0;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .uc-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    color: #00897b;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .usecase h3 {
+    font-size: 20px;
+    margin: 4px 0 12px;
+    color: #0f1e3a;
+  }
+  .today, .outcome {
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .today {
+    background: #fef3f2;
+    border-left: 4px solid #e53935;
+  }
+  .today::before {
+    content: "Today: ";
+    font-weight: 700;
+    color: #c62828;
+  }
+  .outcome {
+    background: #e8f5e9;
+    border-left: 4px solid #2e7d32;
+    margin-top: 14px;
+  }
+  .outcome::before {
+    content: "Outcome: ";
+    font-weight: 700;
+    color: #2e7d32;
+  }
+  .usecase .diagram {
+    margin: 12px 0;
+    padding: 12px;
+  }
+  .section-intro {
+    color: var(--muted);
+    font-size: 14px;
+    margin: 6px 0 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>IVR Call Routing — Proposed Design (v1)</h1>
+<p class="subtitle">Single masked number · 2 entry paths (app / dialer) · 3 tables · PIN fallback · Drafted 2026-05-18</p>
+
+<h2>What this solves</h2>
+<ul class="compact">
+  <li><b>Single masked number</b> — no MN1/MN2 confusion. Any direction works.</li>
+  <li><b>Two entry paths</b> — App-initiated (Call CTA) and direct-dial (call log, saved contact) handled by the same routing logic.</li>
+  <li><b>Happy path unchanged</b> — Table 1 lookup, instant connect.</li>
+  <li><b>PIN fallback</b> — recovers calls when mapping is stale, FROM is unrecognised, or call comes from the dialer/call log.</li>
+  <li><b>Customer dialing without prior CTA</b> — handled via the existing Cx ↔ Technician mapping (Table 3).</li>
+</ul>
+
+<h2>End-to-end flow</h2>
+
+<div class="legend">
+  <div class="legend-item"><div class="swatch start"></div>Start / user action</div>
+  <div class="legend-item"><div class="swatch happy"></div>Happy path (connect)</div>
+  <div class="legend-item"><div class="swatch fallback"></div>PIN fallback</div>
+  <div class="legend-item"><div class="swatch deadend"></div>Dead-end (nudge to app)</div>
+  <div class="legend-item"><div class="swatch store"></div>Datastore lookup</div>
+</div>
+
+<div class="diagram">
+<pre class="mermaid">
+flowchart TD
+
+    subgraph PA["Path A — App-initiated (user hits Call CTA)"]
+        A([User hits Call CTA in app]):::start --> B[/Gather FROM list:<br/>• all SIMs in sim_inventory<br/>• registered mobile/]
+        B --> C[/Resolve TO number<br/>from ticket context/]
+        C --> D[(Table 1<br/>FROM list → TO<br/>short TTL)]:::store
+        D --> E[/Masked number shown in app/]
+    end
+
+    PB([Path B — User dials masked number directly<br/>dialer · call log · saved contact]):::start
+
+    subgraph P2["Call routing (both paths converge)"]
+        F{Table 1 lookup<br/>FROM → TO}
+        F -->|Hit| H([Connect ✓]):::happy
+        F -->|Miss| I[Resolve-FROM API]
+        I --> J{Classify FROM}
+        J -->|is_customer| K[(Table 3<br/>Cx → Tech)]:::store
+        K --> H
+        J -->|is_partner_user| L[Gather 5-digit PIN]:::fallback
+        J -->|other| L
+        J -->|API failure| L
+        L --> M{Valid PIN?}
+        M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
+        N --> H
+        M -->|No| O([IVR: Call via app]):::deadend
+    end
+
+    E -. user dials .-> F
+    PB -. dials .-> F
+
+    classDef start    fill:#37474f,stroke:#263238,color:#fff
+    classDef happy    fill:#4caf50,stroke:#2e7d32,color:#fff
+    classDef fallback fill:#ff9800,stroke:#ef6c00,color:#fff
+    classDef deadend  fill:#e53935,stroke:#b71c1c,color:#fff
+    classDef store    fill:#2196f3,stroke:#1565c0,color:#fff
+</pre>
+</div>
+
+<h2>Use cases</h2>
+<p class="section-intro">How each path resolves under the new design. The first is the existing happy path (preserved); the rest are the four failure modes the design recovers.</p>
+
+<section class="usecase">
+  <div class="uc-tag">Reference</div>
+  <h3>In-app happy path (preserved)</h3>
+  <div class="today">Works fine today, kept untouched. Partner taps Call CTA in-app from a registered SIM, dials the masked number within TTL.</div>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Partner (in app)
+    participant App
+    participant BE as Backend
+    participant MN as Masked Number
+    participant C as Customer
+
+    P->>App: Tap Call CTA
+    App->>BE: initiateCall (FROM list, TO)
+    Note over BE: Write Table 1 (TTL'd)
+    BE-->>App: Return masked number
+    P->>MN: Dial masked number
+    MN->>BE: Webhook with FROM
+    Note over BE: Table 1 hit → resolves TO
+    BE->>C: Bridge call
+</pre>
+  </div>
+  <div class="outcome">Instant connect, no PIN. The happy path remains the fastest path.</div>
+</section>
+
+<section class="usecase">
+  <div class="uc-tag">Use case 01</div>
+  <h3>Partner calls from an unregistered SIM</h3>
+  <div class="today">Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~30% of the time; call drops.</div>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Partner (unknown SIM)
+    participant MN as Masked Number
+    participant IVR as IVR + Lookup
+    participant C as Customer
+
+    P->>MN: Dial masked number
+    MN->>IVR: Webhook with FROM
+    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other'
+    IVR-->>P: IVR prompt: Enter 5-digit PIN
+    P->>IVR: Enters PIN
+    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
+    IVR->>C: Bridge to customer
+</pre>
+  </div>
+  <div class="outcome">Call connects without needing SIM permissions or app login on this device.</div>
+</section>
+
+<section class="usecase">
+  <div class="uc-tag">Use case 02</div>
+  <h3>Partner forwards the masked number to a colleague</h3>
+  <div class="today">Partner shares the masked number with a colleague (e.g., a field technician on a different phone). Colleague dials it directly. Their SIM isn't in <code>sim_inventory</code>. Call drops.</div>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Col as Colleague (unknown SIM)
+    participant MN as Masked Number
+    participant IVR as IVR + Lookup
+    participant C as Customer
+
+    Col->>MN: Dial masked number
+    MN->>IVR: Webhook with FROM
+    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other'
+    IVR-->>Col: IVR prompt: Enter PIN to connect
+    Col->>IVR: Enters PIN (shared by partner)
+    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
+    IVR->>C: Bridge to customer
+</pre>
+  </div>
+  <div class="outcome">Colleague completes the call without installing the app or logging in.</div>
+</section>
+
+<section class="usecase">
+  <div class="uc-tag">Use case 03</div>
+  <h3>Partner dials the masked number from their native dialer</h3>
+  <div class="today">Partner bypasses the app — redials the masked number from call log or a saved contact with no fresh Call CTA. No <code>initiateCall</code> fires; nothing connects today.</div>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant P as Partner (registered SIM)
+    participant MN as Masked Number
+    participant IVR as IVR + Lookup
+    participant C as Customer
+
+    P->>MN: Dial masked number from dialer
+    MN->>IVR: Webhook with FROM
+    Note over IVR: Table 1 miss (no recent CTA)<br/>Resolve-FROM = 'is_partner_user'
+    IVR-->>P: IVR prompt: Enter customer PIN
+    P->>IVR: Enters PIN
+    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
+    IVR->>C: Bridge to customer
+</pre>
+  </div>
+  <div class="outcome">App is no longer required to place a successful call. (If a recent CTA exists, Table 1 hits and the PIN step is skipped.)</div>
+</section>
+
+<section class="usecase">
+  <div class="uc-tag">Use case 04</div>
+  <h3>Customer calls back the masked number</h3>
+  <div class="today">Customer sees a missed call on the masked number and dials back from their phone's call log. The masked number isn't recognised; call drops.</div>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant C as Customer (registered)
+    participant MN as Masked Number
+    participant IVR as IVR + Lookup
+    participant T as Technician
+
+    C->>MN: Dial masked number from dialer
+    MN->>IVR: Webhook with FROM
+    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'is_customer'
+    Note over IVR: Table 3 lookup<br/>customer → active technician
+    IVR->>T: Bridge to technician
+</pre>
+  </div>
+  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — single-active-ticket assumption resolves the technician.</div>
+</section>
+
+<h2>Tables</h2>
+<table>
+  <thead>
+    <tr><th>Table</th><th>Schema</th><th>Source</th><th>Lifecycle</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Table 1</b> — Active call mapping</td>
+      <td><code>FROM list → TO</code></td>
+      <td><span class="tag new">new</span> Written on every <code>initiateCall</code></td>
+      <td>Short TTL (minutes), GC after expiry</td>
+    </tr>
+    <tr>
+      <td><b>Table 2</b> — PIN registry</td>
+      <td><code>customer_mobile → 5-digit PIN</code></td>
+      <td><span class="tag new">new</span> Generated when a ticket opens</td>
+      <td>Per active ticket; GC on ticket closure</td>
+    </tr>
+    <tr>
+      <td><b>Table 3</b> — Cx ↔ Technician</td>
+      <td><code>customer_mobile → technician_mobile</code></td>
+      <td><span class="tag existing">existing</span> Read from TAS / Connection Lifecycle</td>
+      <td>Maintained by existing systems</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Exotel applet wiring</h2>
+<ol>
+  <li><b>Passthru</b> (Dynamic URL #1) — receives <code>From</code>. Returns either:
+    <ul>
+      <li>A direct destination (Table 1 hit or <code>is_customer</code> path), or</li>
+      <li>An instruction to branch to the Gather applet (fallback paths).</li>
+    </ul>
+  </li>
+  <li><b>Gather / IVR</b> — collects the 5-digit PIN via DTMF.</li>
+  <li><b>Connect</b> (Dynamic URL #2) — receives <code>From</code> + <code>digits</code>. Returns destination after Table 2 lookup, or hands off to the "call via app" IVR message.</li>
+</ol>
+
+<h2>Telemetry events</h2>
+<p>Each branch must emit a typed event so failure-mode bucket sizes are visible:</p>
+<ul class="compact">
+  <li><code>mapping_hit</code> — Table 1 happy path</li>
+  <li><code>is_customer_routed</code> — Table 3 path</li>
+  <li><code>pin_prompted</code> — Gather applet triggered</li>
+  <li><code>pin_success</code> / <code>pin_fail</code></li>
+  <li><code>api_failure_fallback</code> — Resolve-FROM API down, routed to PIN</li>
+  <li><code>nudge_to_app</code> — dead-end IVR played</li>
+</ul>
+
+<h2>PIN distribution <span class="tag new">TBD</span></h2>
+<p>PIN is issued only on the partner side, per ticket. Channel still to decide:</p>
+<ul class="compact">
+  <li>WhatsApp / SMS to the assigned partner-user, OR</li>
+  <li>Surfaced on the ticket card near the Call CTA in the app, OR</li>
+  <li>Both.</li>
+</ul>
+
+<h2>Known limitations (v1 will not solve)</h2>
+<div class="note">
+<ul class="compact">
+  <li><b>Customer calling from an unregistered SIM</b> — no PIN held → IVR nudges to call via app.</li>
+  <li><b>Customer with &gt; 1 active ticket</b> — out of scope. Production reality today is 1 ticket per customer at a time.</li>
+  <li><b>Dual-role caller</b> (same person both customer and partner-user) — disallowed by the system.</li>
+  <li><b>PIN brute-force protection</b> — deferred. Good-to-have, not v1.</li>
+</ul>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    flowchart: { curve: 'basis', useMaxWidth: true, htmlLabels: true }
+  });
+</script>
+
+</body>
+</html>
