@@ -207,10 +207,12 @@
 <body>
 
 <h1>IVR Call Routing — Proposed Design (v1)</h1>
-<p class="subtitle">Single masked number · 2 entry paths (app / dialer) · 3 tables · PIN fallback · Drafted 2026-05-18</p>
+<p class="subtitle"><b>A meaningful share of partner ↔ customer calls drop today.</b> This is the design that closes the gap.</p>
+<p class="subtitle" style="opacity:0.65; margin-top:-6px;">Drafted 2026-05-18 · For leadership review</p>
 
 <h2>The problem we're solving</h2>
-<p class="lead">A significant share of partner ↔ customer call attempts on Wiom's masked-number infrastructure fail to connect today. The current mechanism only works reliably when a partner initiates a call <b>from inside the app, from a registered SIM, within the TTL window</b> — and that narrow path covers only a fraction of how partners and customers actually try to reach each other.</p>
+<p class="lead">A meaningful share of partner ↔ customer calls fail to connect on Wiom's masked-number infrastructure today. The current design only works in one narrow case: a partner taps the in-app Call CTA from a registered SIM and dials within minutes. <b>Everything else drops silently</b> — partner redialing from a call log, customer returning a missed call, a colleague dialing on the partner's behalf, partner using a SIM the app couldn't detect.</p>
+<p>The gap matters because the partner ↔ customer call is load-bearing in every install, service ticket, and router recovery. When the call drops the partner has no fallback — they wait, retry, or escalate; the customer waits with them. Repeated drops translate directly into NPS hits, slot abandonment, and avoidable truck-rolls.</p>
 
 <h3>MN1 / MN2 — how masking works today</h3>
 <p>The current implementation uses <b>two separate masked numbers per call session</b>, one per direction:</p>
@@ -264,14 +266,64 @@
 </table>
 <div class="note"><b>Common thread:</b> every failure mode is rooted in the in-app + registered-SIM + fresh-TTL triple. Anything that breaks even one of those three drops the call.</div>
 
-<h2>What this solves</h2>
+<h2>The proposed solution</h2>
+<p class="lead">Replace the two one-way masked numbers (MN1 / MN2) with <b>one bidirectional masked number</b>, backed by a small lookup engine that always tries to identify the caller — and falls back to a 5-digit PIN when it can't.</p>
+
+<h3>Three pillars</h3>
+<ol>
+  <li><b>One masked number per session, not two.</b> Eliminates MN1 ↔ MN2 confusion and turns the partner's call log into something they can actually dial back.</li>
+  <li><b>PIN fallback for unrecognised callers.</b> When the caller's number isn't in an active mapping, the IVR asks for a short PIN that the partner received at ticket creation. The PIN unlocks the destination.</li>
+  <li><b>Three small tables.</b> One for the active call mapping (today's behaviour), one for per-ticket PINs (new), one read-only customer ↔ technician map (reused from existing systems).</li>
+</ol>
+
+<h3>What stays the same</h3>
 <ul class="compact">
-  <li><b>Single masked number</b> — no MN1/MN2 confusion. Any direction works.</li>
-  <li><b>Two entry paths</b> — App-initiated (Call CTA) and direct-dial (call log, saved contact) handled by the same routing logic.</li>
-  <li><b>Happy path unchanged</b> — Table 1 lookup, instant connect.</li>
-  <li><b>PIN fallback</b> — recovers calls when mapping is stale, FROM is unrecognised, or call comes from the dialer/call log.</li>
-  <li><b>Customer dialing without prior CTA</b> — handled via the existing Cx ↔ Technician mapping (Table 3).</li>
+  <li>The in-app Call CTA still works exactly as today — instant bridge, no PIN, no IVR.</li>
+  <li>Existing telephony provider (Exotel) keeps doing what it does best. We expose two endpoints for the lookup; Exotel does the rest.</li>
 </ul>
+
+<h3>What's newly possible</h3>
+<ul class="compact">
+  <li>Customer who missed a call can dial back from their dialer — bridged to their technician via Table 3, no PIN needed.</li>
+  <li>Partner who switched SIMs, lost the app session, or just prefers their dialer can still place the call by entering their PIN.</li>
+  <li>A partner's colleague can place the call using the same PIN — no new app install required.</li>
+</ul>
+
+<h2>PIN architecture — what it is and how we're using it</h2>
+
+<h3>The general pattern</h3>
+<p>PIN-based call routing is a fallback used by ride-hail, food delivery, and other double-blind calling systems (Ola, Uber, Swiggy, Amazon Logistics, Dunzo). It works in two layers:</p>
+<ol>
+  <li><b>Caller-ID layer (the happy path).</b> When the caller's number matches an active mapping, the system bridges the call instantly. Most calls go through this layer.</li>
+  <li><b>PIN layer (the fallback).</b> When the caller's number doesn't match — different SIM, different person, session expired — the IVR asks for a short PIN that was pre-shared with the legitimate user. Enter the right PIN, and the system bridges the call.</li>
+</ol>
+<p>The PIN exists for one purpose: to disambiguate <em>who</em> the caller wants to reach when their phone number alone can't tell us.</p>
+
+<h3>How it works under the hood</h3>
+<p>During a fallback call, the telephony provider (Exotel) calls our backend twice:</p>
+<ol>
+  <li><b>On ring.</b> Exotel sends the caller's number (FROM) to our backend. The backend decides: bridge directly (caller is recognised) or branch to a PIN prompt.</li>
+  <li><b>After PIN entry.</b> Exotel sends the FROM + the digits the user entered. The backend looks up the PIN, resolves the destination, and tells Exotel where to bridge.</li>
+</ol>
+<p>This is Exotel's <b>Connect Applet with Dynamic URL</b> pattern — a public, documented mechanism. We don't need to invent telephony; we just expose two endpoints and run lookups fast (&lt; 200 ms) inside Exotel's 5-second timeout budget. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
+
+<h3>How we're using it here</h3>
+<p>The PIN layer activates in three specific scenarios — all of which fail today:</p>
+<ul class="compact">
+  <li><b>Partner calls from an unregistered SIM</b> → unknown FROM → ask for PIN.</li>
+  <li><b>Partner redials from the dialer / call log</b> → known SIM, but no live mapping → ask for PIN to identify which customer.</li>
+  <li><b>Colleague dials on the partner's behalf</b> → unknown FROM → ask for PIN.</li>
+</ul>
+<p>For <b>customers</b>, we <em>skip</em> the PIN entirely. Today every customer has exactly one active ticket and one assigned technician — so the moment we recognise the customer's FROM, we know who they want to call. No PIN entry, no friction.</p>
+
+<h3>PIN distribution <span class="tag new">TBD</span></h3>
+<p>PINs are issued <b>only to the partner side</b>, one per active ticket, valid until the ticket closes. Distribution channel still to decide:</p>
+<ul class="compact">
+  <li>WhatsApp / SMS to the assigned partner-user at ticket creation, OR</li>
+  <li>Surfaced on the ticket card near the Call CTA in the app, OR</li>
+  <li>Both.</li>
+</ul>
+<div class="note"><b>Comms is a first-class part of this build, not an afterthought.</b> Without reliable PIN delivery the fallback breaks. DLT templates, WhatsApp BSP setup, and missed-call SMS fallbacks all need to land alongside the routing changes.</div>
 
 <h2>End-to-end flow</h2>
 
@@ -499,14 +551,6 @@ sequenceDiagram
   <li><code>pin_success</code> / <code>pin_fail</code></li>
   <li><code>api_failure_fallback</code> — Resolve-FROM API down, routed to PIN</li>
   <li><code>nudge_to_app</code> — dead-end IVR played</li>
-</ul>
-
-<h2>PIN distribution <span class="tag new">TBD</span></h2>
-<p>PIN is issued only on the partner side, per ticket. Channel still to decide:</p>
-<ul class="compact">
-  <li>WhatsApp / SMS to the assigned partner-user, OR</li>
-  <li>Surfaced on the ticket card near the Call CTA in the app, OR</li>
-  <li>Both.</li>
 </ul>
 
 <h2>Known limitations (v1 will not solve)</h2>
