@@ -501,8 +501,8 @@ sequenceDiagram
         <td><code>other</code></td>
       </tr>
       <tr>
-        <td><b>UC 03</b> — Partner redials from native dialer</td>
-        <td>Partner bypasses the app — redials from the call log with no fresh <code>initiateCall</code>. Mapping has expired (TTL) or never existed. Call drops.</td>
+        <td><b>UC 03</b> — Partner calls back on a masked number originally initiated by the customer</td>
+        <td>Customer initiates a call via in-app CTA → partner misses it → partner taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → Partner — so the callback drops. (Same path also covers other dialer redials by the partner, e.g. from a saved contact or older call-log entry.)</td>
         <td><code>is_partner_user</code></td>
       </tr>
     </tbody>
@@ -513,7 +513,7 @@ sequenceDiagram
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant Caller as Caller<br/>(UC01: unknown SIM /<br/>UC02: colleague /<br/>UC03: partner registered SIM)
+    participant Caller as Caller<br/>UC01: partner on unknown SIM<br/>UC02: partner's colleague<br/>UC03: partner calling back<br/>customer-initiated MN
     participant MN as Masked Number
     participant IVR as IVR + Lookup
     participant C as Customer
@@ -528,7 +528,7 @@ sequenceDiagram
 </pre>
   </div>
 
-  <div class="outcome">All three connect end-to-end via the same PIN-based fallback. The only difference is how Resolve-FROM classifies the caller (unknown SIM → <code>other</code>; known partner SIM with no live mapping → <code>is_partner_user</code>); the path after that is identical. UC03 also has a fast-lane: if a recent CTA still has a live Table 1 entry, the PIN step is skipped.</div>
+  <div class="outcome">All three connect end-to-end via the same PIN-based fallback. The only thing that differs is how Resolve-FROM classifies the caller — unknown SIM → <code>other</code>; known partner SIM with no live mapping → <code>is_partner_user</code> — the path after that is identical. In UC03 specifically, the customer-initiated Table 1 mapping holds the customer's FROM (not the partner's), so the partner's callback necessarily misses Table 1 and falls into PIN.</div>
 </section>
 
 <section class="usecase">
