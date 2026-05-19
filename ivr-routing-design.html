@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>IVR Call Routing — Proposed Design (v1)</title>
+<title>IVR Call Routing — Proposed Design</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   :root {
@@ -628,14 +628,14 @@ sequenceDiagram
   <li><code>nudge_to_app</code> — dead-end IVR played</li>
 </ul>
 
-<h2>Known limitations (v1 will not solve)</h2>
+<h2>Known limitations (out of scope for this build)</h2>
 <div class="note">
 <ul class="compact">
   <li><b>Customer calling from an unregistered SIM</b> — no PIN held → IVR nudges to call via app.</li>
   <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR nudges to call via app (rather than dropping).</li>
   <li><b>Customer with &gt; 1 active ticket</b> — out of scope. Production reality today is 1 ticket per customer at a time.</li>
   <li><b>Dual-role caller</b> (same person both customer and partner-user) — disallowed by the system.</li>
-  <li><b>PIN brute-force protection</b> — deferred. Good-to-have, not v1.</li>
+  <li><b>PIN brute-force protection</b> — deferred. Good-to-have, not in current scope.</li>
 </ul>
 </div>
 
