@@ -481,78 +481,54 @@ sequenceDiagram
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use case 01</div>
-  <h3>Partner calls from an unregistered SIM</h3>
-  <div class="today">Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~30% of the time; call drops.</div>
+  <div class="uc-tag">Use cases 01 – 03</div>
+  <h3>Partner-side fallback — three distinct problems, one shared resolution</h3>
+  <p class="section-intro" style="margin: 0 0 12px;">These three scenarios fail for different reasons today but all resolve through the same PIN-based path. Listed separately so the failure modes stay distinct in conversation; shipped as a single code path.</p>
+
+  <table style="font-size: 13px; margin: 12px 0;">
+    <thead>
+      <tr><th style="width:24%">Use case</th><th>Today (why it fails)</th><th style="width:18%">Resolve-FROM</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>UC 01</b> — Partner calls from an unregistered SIM</td>
+        <td>Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~30% of the time; call drops.</td>
+        <td><code>other</code></td>
+      </tr>
+      <tr>
+        <td><b>UC 02</b> — Partner forwards the masked number to a colleague</td>
+        <td>Partner shares the masked number with a colleague on a different phone. Colleague's SIM isn't in <code>sim_inventory</code>. Call drops.</td>
+        <td><code>other</code></td>
+      </tr>
+      <tr>
+        <td><b>UC 03</b> — Partner redials from native dialer</td>
+        <td>Partner bypasses the app — redials from the call log with no fresh <code>initiateCall</code>. Mapping has expired (TTL) or never existed. Call drops.</td>
+        <td><code>is_partner_user</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p style="margin: 14px 0 6px; font-size: 14px;"><b>Shared resolution path:</b></p>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant P as Partner (unknown SIM)
+    participant Caller as Caller<br/>(UC01: unknown SIM /<br/>UC02: colleague /<br/>UC03: partner registered SIM)
     participant MN as Masked Number
     participant IVR as IVR + Lookup
     participant C as Customer
 
-    P->>MN: Dial masked number
+    Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other'
-    IVR-->>P: IVR prompt: Enter 5-digit PIN
-    P->>IVR: Enters PIN
+    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other' or 'is_partner_user'
+    IVR-->>Caller: IVR: 'Enter 5-digit PIN'
+    Caller->>IVR: Enters PIN
     Note over IVR: Table 2 lookup<br/>PIN → customer mobile
     IVR->>C: Bridge to customer
 </pre>
   </div>
-  <div class="outcome">Call connects without needing SIM permissions or app login on this device.</div>
-</section>
 
-<section class="usecase">
-  <div class="uc-tag">Use case 02</div>
-  <h3>Partner forwards the masked number to a colleague</h3>
-  <div class="today">Partner shares the masked number with a colleague (e.g., a field technician on a different phone). Colleague dials it directly. Their SIM isn't in <code>sim_inventory</code>. Call drops.</div>
-  <div class="diagram">
-<pre class="mermaid">
-sequenceDiagram
-    autonumber
-    participant Col as Colleague (unknown SIM)
-    participant MN as Masked Number
-    participant IVR as IVR + Lookup
-    participant C as Customer
-
-    Col->>MN: Dial masked number
-    MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss<br/>Resolve-FROM = 'other'
-    IVR-->>Col: IVR prompt: Enter PIN to connect
-    Col->>IVR: Enters PIN (shared by partner)
-    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
-    IVR->>C: Bridge to customer
-</pre>
-  </div>
-  <div class="outcome">Colleague completes the call without installing the app or logging in.</div>
-</section>
-
-<section class="usecase">
-  <div class="uc-tag">Use case 03</div>
-  <h3>Partner dials the masked number from their native dialer</h3>
-  <div class="today">Partner bypasses the app — redials the masked number from call log or a saved contact with no fresh Call CTA. No <code>initiateCall</code> fires; nothing connects today.</div>
-  <div class="diagram">
-<pre class="mermaid">
-sequenceDiagram
-    autonumber
-    participant P as Partner (registered SIM)
-    participant MN as Masked Number
-    participant IVR as IVR + Lookup
-    participant C as Customer
-
-    P->>MN: Dial masked number from dialer
-    MN->>IVR: Webhook with FROM
-    Note over IVR: Table 1 miss (no recent CTA)<br/>Resolve-FROM = 'is_partner_user'
-    IVR-->>P: IVR prompt: Enter customer PIN
-    P->>IVR: Enters PIN
-    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
-    IVR->>C: Bridge to customer
-</pre>
-  </div>
-  <div class="outcome">App is no longer required to place a successful call. (If a recent CTA exists, Table 1 hits and the PIN step is skipped.)</div>
+  <div class="outcome">All three connect end-to-end via the same PIN-based fallback. The only difference is how Resolve-FROM classifies the caller (unknown SIM → <code>other</code>; known partner SIM with no live mapping → <code>is_partner_user</code>); the path after that is identical. UC03 also has a fast-lane: if a recent CTA still has a live Table 1 entry, the PIN step is skipped.</div>
 </section>
 
 <section class="usecase">
