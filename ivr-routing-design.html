@@ -292,44 +292,10 @@
 <h3>Trust layer — recipient-side pickup (already in place)</h3>
 <p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. This whitelisting is already live, and the single-masked-number proposal preserves that verified status across both call directions — no regression on recipient-side trust as part of this build.</p>
 
-<h2>PIN architecture — what it is and how we're using it</h2>
-
-<h3>The general pattern</h3>
-<p>PIN-based call routing is a fallback used by ride-hail, food delivery, and other double-blind calling systems (Ola, Uber, Swiggy, Amazon Logistics, Dunzo). It works in two layers:</p>
-<ol>
-  <li><b>Caller-ID layer (the happy path).</b> When the caller's number matches an active mapping, the system bridges the call instantly. Most calls go through this layer.</li>
-  <li><b>PIN layer (the fallback).</b> When the caller's number doesn't match — different SIM, different person, session expired — the IVR asks for a short PIN that was pre-shared with the legitimate user. Enter the right PIN, and the system bridges the call.</li>
-</ol>
-<p>The PIN exists for one purpose: to disambiguate <em>who</em> the caller wants to reach when their phone number alone can't tell us.</p>
-
-<h3>How it works under the hood</h3>
-<p>During a fallback call, the telephony provider (Exotel) calls our backend twice:</p>
-<ol>
-  <li><b>On ring.</b> Exotel sends the caller's number (FROM) to our backend. The backend decides: bridge directly (caller is recognised) or branch to a PIN prompt.</li>
-  <li><b>After PIN entry.</b> Exotel sends the FROM + the digits the user entered. The backend looks up the PIN, resolves the destination, and tells Exotel where to bridge.</li>
-</ol>
-<p>This is Exotel's <b>Connect Applet with Dynamic URL</b> pattern — a public, documented mechanism. We don't need to invent telephony; we just expose two endpoints and run lookups fast (&lt; 200 ms) inside Exotel's 5-second timeout budget. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
-
-<h3>How we're using it here</h3>
-<p>We've kept the classification deliberately simple: <b>Resolve-FROM only answers one question</b> — <em>"is this caller a customer?"</em> (a boolean). Anything else — partner, colleague, unknown SIM, or even an API failure — falls into the same PIN prompt. We don't need to know <em>who</em> the non-customer caller is; the PIN they enter will tell us which customer they want to reach.</p>
-<p>Concrete scenarios this covers — all of which fail today:</p>
-<ul class="compact">
-  <li>Partner calls from an unregistered SIM (UC01)</li>
-  <li>Partner forwards the masked number to a colleague (UC02)</li>
-  <li>Partner calls back on a customer-initiated masked number (UC03)</li>
-  <li>Partner re-dials from the dialer after a previous call ended (UC04; fast-lane via Table 1 if still within TTL)</li>
-  <li>Resolve-FROM API failure — default to "not a customer" → PIN (safer than skipping)</li>
-</ul>
-<p>For <b>customers</b>, we skip the PIN entirely. Every customer has at most one active ticket and one assigned technician — so the moment Resolve-FROM returns <code>is_customer = true</code>, Table 3 resolves the technician and we bridge. No PIN, no friction.</p>
-
-<h3>PIN distribution <span class="tag new">TBD</span></h3>
-<p>PINs are issued <b>only to the partner side</b>, one per active ticket, valid until the ticket closes. Distribution channel still to decide:</p>
-<ul class="compact">
-  <li>WhatsApp / SMS to the assigned partner-user at ticket creation, OR</li>
-  <li>Surfaced on the ticket card near the Call CTA in the app, OR</li>
-  <li>Both.</li>
-</ul>
-<div class="note"><b>Comms is a first-class part of this build, not an afterthought.</b> Without reliable PIN delivery the fallback breaks. DLT templates, WhatsApp BSP setup, and missed-call SMS fallbacks all need to land alongside the routing changes.</div>
+<h2>PIN architecture</h2>
+<p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
+<p><b>PIN distribution <span class="tag new">TBD</span></b> — issued per active ticket, only to the partner side. Channel TBD: WhatsApp / SMS at ticket creation, or surfaced on the ticket card near the Call CTA, or both. Without reliable PIN delivery the fallback breaks; comms is part of the build.</p>
+<p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
 <h2>End-to-end flow</h2>
 
