@@ -440,29 +440,44 @@ flowchart TD
 
 <section class="usecase">
   <div class="uc-tag">Reference</div>
-  <h3>In-app happy path (preserved)</h3>
-  <div class="today">Works fine today, kept untouched. <b>Either party</b> (partner or customer) taps Call CTA in-app from a registered SIM or any SIM already in <code>sim_inventory</code> (captured on prior logins), and dials the masked number within TTL. Same plumbing in both directions; the diagram below uses a partner as the example.</div>
+  <h3>In-app happy path (preserved) — identical flow for Partner App and Customer App</h3>
+  <div class="today">Works fine today, kept untouched. <b>Either side can initiate</b> the call from their own app: a partner from the <b>Partner App</b>, or a customer from the <b>Customer App</b>. The system runs the same code path either way — same <code>initiateCall</code>, same Table 1 write, same masked number, same dial → bridge. Only the FROM list and the TO number flip depending on who tapped.</div>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant P as Partner (in app)
+    participant U as Caller (Partner App / Customer App)
     participant App
     participant BE as Backend
     participant MN as Masked Number
-    participant C as Customer
+    participant R as Recipient (other party)
 
-    P->>App: Tap Call CTA
+    U->>App: Tap Call CTA
     App->>BE: initiateCall (FROM list, TO)
     Note over BE: Write Table 1 (TTL'd)
     BE-->>App: Return masked number
-    P->>MN: Dial masked number
+    U->>MN: Dial masked number
     MN->>BE: Webhook with FROM
     Note over BE: Table 1 hit → resolves TO
-    BE->>C: Bridge call
+    BE->>R: Bridge call
 </pre>
   </div>
-  <div class="outcome">Instant connect, no PIN. The happy path remains the fastest path.</div>
+
+  <p style="margin: 14px 0 6px; font-size: 14px;"><b>Same flow, two concrete instances:</b></p>
+  <table style="font-size: 13px;">
+    <thead>
+      <tr><th style="width:18%"></th><th>Partner-initiated</th><th>Customer-initiated</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><b>Caller</b></td><td>Partner-user in Partner App</td><td>Customer in Customer App</td></tr>
+      <tr><td><b>FROM list</b></td><td>Partner's SIMs in <code>sim_inventory</code> + registered mobile</td><td>Customer's SIMs in <code>sim_inventory</code> + registered mobile</td></tr>
+      <tr><td><b>TO</b></td><td>customer_mobile (for the active ticket)</td><td>technician_mobile (for the active ticket)</td></tr>
+      <tr><td><b>Table 1 write</b></td><td><code>partner_FROM_list → customer_mobile</code></td><td><code>customer_FROM_list → technician_mobile</code></td></tr>
+      <tr><td><b>Bridges to</b></td><td>Customer</td><td>Technician</td></tr>
+    </tbody>
+  </table>
+
+  <div class="outcome">Instant connect, no PIN, no IVR — for either initiation side. The <b>same single masked number</b> serves both call directions because resolution is FROM-based, not direction-based. This symmetry is what eliminates the old MN1 / MN2 split.</div>
 </section>
 
 <section class="usecase">
