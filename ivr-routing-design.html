@@ -293,7 +293,7 @@
 
 <h2>PIN architecture</h2>
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
-<p><b>PIN distribution <span class="tag new">TBD</span></b> — issued per active ticket, only to the partner side. Channel TBD: WhatsApp / SMS at ticket creation, or surfaced on the ticket card near the Call CTA, or both. Without reliable PIN delivery the fallback breaks; comms is part of the build.</p>
+<p><b>PIN distribution</b> — issued per active ticket on the partner side. Shown in the partner app on the ticket card (with a push notification as reinforcement if needed). The IVR audio message tells the caller where to find their PIN.</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
 <h2>End-to-end flow</h2>
