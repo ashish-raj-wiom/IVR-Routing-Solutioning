@@ -383,7 +383,7 @@ flowchart TD
 <section class="usecase">
   <div class="uc-tag">Reference</div>
   <h3>In-app happy path (preserved)</h3>
-  <div class="today">Works fine today, kept untouched. Partner taps Call CTA in-app from a registered SIM, dials the masked number within TTL.</div>
+  <div class="today">Works fine today, kept untouched. Partner taps Call CTA in-app from a registered SIM <b>or any SIM already in <code>sim_inventory</code></b> (captured on prior logins), dials the masked number within TTL.</div>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
