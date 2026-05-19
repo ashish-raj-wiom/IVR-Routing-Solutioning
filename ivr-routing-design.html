@@ -239,8 +239,8 @@
   </thead>
   <tbody>
     <tr>
-      <td><b>Unregistered / undetected SIM</b></td>
-      <td>SIM capture at app login works ~70% of the time. The remaining ~30% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops.</td>
+      <td><b>Unregistered / undetected SIM (CSP side)</b></td>
+      <td>On the CSP side, SIM capture at app login works ~70% of the time. The remaining ~30% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
     </tr>
     <tr>
       <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
@@ -398,7 +398,7 @@
 flowchart TD
 
     subgraph PA["Path A — App-initiated (user hits Call CTA)"]
-        A([User hits Call CTA in app]):::start --> B[/Gather FROM list:<br/>• all SIMs in sim_inventory<br/>• registered mobile/]
+        A([User hits Call CTA in app]):::start --> B[/Gather FROM list<br/>CSP: sim_inventory SIMs + registered mobile<br/>Customer: registered mobile only/]
         B --> C[/Resolve TO number<br/>from ticket context/]
         C --> D[(Table 1<br/>FROM list → TO<br/>short TTL)]:::store
         D --> E[/Masked number shown in app/]
@@ -441,7 +441,7 @@ flowchart TD
 <section class="usecase">
   <div class="uc-tag">Reference</div>
   <h3>In-app happy path (preserved) — identical flow for Partner App and Customer App</h3>
-  <div class="today">Works fine today, kept untouched. <b>Either side can initiate</b> the call from their own app: a partner from the <b>Partner App</b>, or a customer from the <b>Customer App</b>. The system runs the same code path either way — same <code>initiateCall</code>, same Table 1 write, same masked number, same dial → bridge. Only the FROM list and the TO number flip depending on who tapped.</div>
+  <div class="today">Works fine today, kept untouched. <b>Either side can initiate</b> the call from their own app: a partner from the <b>Partner App</b>, or a customer from the <b>Customer App</b>. The system runs the same code path either way — same <code>initiateCall</code>, same Table 1 write, same masked number, same dial → bridge. Only the FROM list and the TO number flip depending on who tapped. <br/><br/><b>One asymmetry to be aware of:</b> on the CSP side we capture all SIMs into <code>sim_inventory</code> at login, so the FROM list can hold multiple numbers. On the customer side we use the <b>registered mobile only</b> — customer SIMs are never captured in <code>sim_inventory</code>.</div>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
@@ -470,7 +470,7 @@ sequenceDiagram
     </thead>
     <tbody>
       <tr><td><b>Caller</b></td><td>Partner-user in Partner App</td><td>Customer in Customer App</td></tr>
-      <tr><td><b>FROM list</b></td><td>Partner's SIMs in <code>sim_inventory</code> + registered mobile</td><td>Customer's SIMs in <code>sim_inventory</code> + registered mobile</td></tr>
+      <tr><td><b>FROM list</b></td><td>Partner's SIMs in <code>sim_inventory</code> + registered mobile</td><td>Customer's <b>registered mobile only</b> (no SIM capture on customer side)</td></tr>
       <tr><td><b>TO</b></td><td>customer_mobile (for the active ticket)</td><td>technician_mobile (for the active ticket)</td></tr>
       <tr><td><b>Table 1 write</b></td><td><code>partner_FROM_list → customer_mobile</code></td><td><code>customer_FROM_list → technician_mobile</code></td></tr>
       <tr><td><b>Bridges to</b></td><td>Customer</td><td>Technician</td></tr>
