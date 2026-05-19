@@ -481,9 +481,9 @@ sequenceDiagram
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use cases 01 – 03</div>
-  <h3>Partner-side fallback — three distinct problems, one shared resolution</h3>
-  <p class="section-intro" style="margin: 0 0 12px;">These three scenarios fail for different reasons today but all resolve through the same PIN-based path. Listed separately so the failure modes stay distinct in conversation; shipped as a single code path.</p>
+  <div class="uc-tag">Use cases 01 – 04</div>
+  <h3>Partner-side fallback — four distinct problems, one shared resolution</h3>
+  <p class="section-intro" style="margin: 0 0 12px;">These four scenarios fail for different reasons today but all resolve through the same PIN-based path (UC04 has a fast-lane when Table 1 is still alive). Listed separately so the failure modes stay distinct in conversation; shipped as a single code path.</p>
 
   <table style="font-size: 13px; margin: 12px 0;">
     <thead>
@@ -502,7 +502,12 @@ sequenceDiagram
       </tr>
       <tr>
         <td><b>UC 03</b> — Partner calls back on a masked number originally initiated by the customer</td>
-        <td>Customer initiates a call via in-app CTA → partner misses it → partner taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → Partner — so the callback drops. (Same path also covers other dialer redials by the partner, e.g. from a saved contact or older call-log entry.)</td>
+        <td>Customer initiates a call via in-app CTA → partner misses it → partner taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → Partner — so the callback drops.</td>
+        <td><code>is_partner_user</code></td>
+      </tr>
+      <tr>
+        <td><b>UC 04</b> — Partner re-dials the same customer from the dialer after a previous call ended</td>
+        <td>Partner called the customer earlier via in-app CTA — call connected and ended. Some time later the partner wants to call the same customer again, taps the masked number in their dialer / call log. In today's setup, the original MN2 mapping has expired (TTL) by the second attempt, and no fresh <code>initiateCall</code> fires because the partner is dialing outside the app. Call drops.</td>
         <td><code>is_partner_user</code></td>
       </tr>
     </tbody>
@@ -513,7 +518,7 @@ sequenceDiagram
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant Caller as Caller<br/>UC01: partner on unknown SIM<br/>UC02: partner's colleague<br/>UC03: partner calling back<br/>customer-initiated MN
+    participant Caller as Caller<br/>UC01: partner on unknown SIM<br/>UC02: partner's colleague<br/>UC03: partner callback on<br/>customer-initiated MN<br/>UC04: partner re-dial from dialer
     participant MN as Masked Number
     participant IVR as IVR + Lookup
     participant C as Customer
@@ -528,11 +533,11 @@ sequenceDiagram
 </pre>
   </div>
 
-  <div class="outcome">All three connect end-to-end via the same PIN-based fallback. The only thing that differs is how Resolve-FROM classifies the caller — unknown SIM → <code>other</code>; known partner SIM with no live mapping → <code>is_partner_user</code> — the path after that is identical. In UC03 specifically, the customer-initiated Table 1 mapping holds the customer's FROM (not the partner's), so the partner's callback necessarily misses Table 1 and falls into PIN.</div>
+  <div class="outcome">All four connect end-to-end via the same fallback family. UC01 / UC02 (unknown SIM) and UC03 (callback on customer-initiated MN — Table 1 holds the customer's FROM, not the partner's) <em>always</em> go through PIN. UC04 is the exception: if the partner re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges instantly with no PIN; after TTL it joins the same PIN path as the others.</div>
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use case 04</div>
+  <div class="uc-tag">Use case 05</div>
   <h3>Customer calls back the masked number</h3>
   <div class="today">Customer sees a missed call on the masked number and dials back from their phone's call log. The masked number isn't recognised; call drops.</div>
   <div class="diagram">
