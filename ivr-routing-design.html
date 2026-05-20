@@ -357,7 +357,6 @@
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
 <p><b>PIN distribution</b> — issued per active ticket on the CSP side. <b>Primary channel: SMS</b> to the CSP-org's Owner / Admin registered mobile at ticket creation (WhatsApp may be sent as a second channel). The ticket card in the app shows the same PIN as reinforcement. The IVR PIN prompt reminds the caller of the SMS they received and also points them to the in-app ticket card — covering both the Bharat field user and the CSP who has the app handy.</p>
 <p><b>PIN format (TBD):</b> either the last 5 digits of the ticket ID, or a randomly generated 5-digit value unique across active tickets. <b>UC02 (forwarding to a colleague):</b> the CSP forwards the same SMS / WhatsApp message directly to the colleague — it carries the PIN, the masked number, and the ticket details (exact format to be specified by the solution team).</p>
-<p><b>Registered-number capture (audit step, before PIN entry).</b> For any caller flagged as <code>not customer</code>, the IVR first asks the caller to enter their <b>registered mobile number</b>, then the PIN. The IVR waits for input before moving on to the PIN prompt — no application-level timeout. The <code>(FROM → entered registered mobile)</code> pair is written to <b>Table 4</b> for audit. (For UC02, the colleague is typically a technician with their own Wiom-registered number — they enter that.)</p>
 <p><b>PIN retry policy:</b> capped at 3 attempts per call; on the third wrong entry the call drops to the dead-end IVR (trust line). With a 5-digit space (100,000 combos), 3 tries gives a 0.003% brute-force probability per call — sufficient for this surface.</p>
 <p><b>PIN scoping (guardrail):</b> when the caller is identified as a CSP Owner / User (their FROM is in <code>sim_inventory</code>), the Table 2 lookup is <b>scoped to customers on that CSP's active tickets only</b>. A PIN belonging to a customer outside their assigned set is treated as invalid — preventing a CSP from guessing or reaching a customer they aren't tagged to. Side benefit: collapses any cross-CSP PIN collision risk in the 5-digit space for identified callers.</p>
 <p><b>PIN rotation:</b> PINs rotate daily over the ticket lifetime to limit exposure on multi-day jobs. Each rotation triggers a fresh SMS to the Owner / Admin; the previous PIN expires the moment a new one is issued.</p>
@@ -399,9 +398,7 @@ flowchart TD
     K --> K2{Active<br/>tech found?}
     K2 -->|Yes| H
     K2 -->|No| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
-    J -->|No / API fail| LR[Gather registered<br/>mobile number]:::fallback
-    LR --> AUD[(Table 4 write<br/>FROM → reg mobile)]:::store
-    AUD --> L[Gather 5-digit PIN]:::fallback
+    J -->|No / API fail| L[Gather 5-digit PIN]:::fallback
     L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
     N --> H
@@ -578,9 +575,6 @@ sequenceDiagram
     Note over IVR: Table 1 lookup → miss
     IVR->>API: is_customer(FROM)?
     API-->>IVR: false
-    IVR-->>Caller: IVR: 'Enter your registered mobile'
-    Caller->>IVR: Enters registered mobile
-    Note over IVR: Table 4 write<br/>FROM → registered mobile (audit)
     IVR-->>Caller: IVR: 'Enter 5-digit PIN'
     Caller->>IVR: Enters PIN
     Note over IVR: Table 2 lookup<br/>PIN → customer mobile
@@ -641,12 +635,6 @@ sequenceDiagram
       <td><span class="tag new">new</span> TAS doesn't carry customer_mobile, so this mapping doesn't exist anywhere today. Build it by joining TAS (for the active technician assignment per ticket) with customer-service (for the customer_mobile). Exposed as a fast lookup API for IVR.</td>
       <td>Refresh on ticket open / technician reassignment; GC on ticket closure</td>
     </tr>
-    <tr>
-      <td><b>Table 4</b> — Unknown-FROM audit / SIM-mapping</td>
-      <td><code>FROM → entered_registered_mobile, captured_at</code></td>
-      <td><span class="tag new">new</span> Written when the IVR captures a registered mobile from a caller flagged as <code>not customer</code>. Doubles as an audit log and as a lookup so future calls from the same FROM can be recognised without re-prompting.</td>
-      <td>Append-only; long-lived for audit + future SIM matching</td>
-    </tr>
   </tbody>
 </table>
 
@@ -680,7 +668,6 @@ sequenceDiagram
   <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR plays "Contact call centre 88803 22222" (no silent drop).</li>
   <li><b>Customer with &gt; 1 active ticket</b> — Table 3 returns the most recent ticket (created_at DESC); customer is bridged to that technician.</li>
   <li><b>Dual-role caller</b> (same person both customer and CSP-user) — disallowed by the system.</li>
-  <li><b>Auto-recognition of repeat unknown-SIM callers via Table 4</b> — deferred to a future version. Table 4 is populated for audit today; once we have response-pattern data we can add it as a Resolve-FROM input so repeat callers skip the registered-mobile + PIN re-prompt.</li>
 </ul>
 </div>
 
