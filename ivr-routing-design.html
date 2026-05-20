@@ -215,7 +215,7 @@
 <h3>Constraints — what makes this hard</h3>
 <p>The conditions of today's call surface the design has to handle:</p>
 <ul class="compact">
-  <li><b>Caller may not be on their registered number.</b> They may be on a secondary SIM, a family phone, or an unregistered device — we can't always identify them by their FROM.</li>
+  <li><b>Caller may not be on their registered number.</b> They may be on a secondary SIM, a family phone, or an unregistered device — we can't always <em>recognise</em> them by their FROM.</li>
   <li><b>A CSP can have many active customers at once.</b> Knowing it's the CSP doesn't tell us <em>which</em> customer they want to reach.</li>
   <li><b>Multiple humans may share one CSP App login.</b> A technician (e.g., Rohit) signing into the Owner's CSP App is the canonical case — the dialing identity and the logged-in identity don't match.</li>
   <li><b>A customer may have multiple active tickets simultaneously.</b> Restore + Pickup can co-exist; the system needs to disambiguate which technician they want to reach.</li>
@@ -255,12 +255,12 @@
 </table>
 
 <h2>The proposed solution</h2>
-<p class="lead"><b>One bidirectional masked number</b> serves both call directions, backed by a small lookup engine that always tries to identify the caller. When the caller can't be identified from their number alone, an authorisation step (below) takes over.</p>
+<p class="lead"><b>One bidirectional masked number</b> serves both call directions, backed by a small lookup engine that always tries to <em>recognise</em> the caller. When the caller isn't recognised from their number alone, an <em>authorisation</em> step (below) takes over — and on terminal failure a <em>graceful fallback</em> tells the user what to do next.</p>
 
 <h3>Three pillars</h3>
 <ol>
-  <li><b>One bidirectional masked number.</b> Serves both call directions; preserves in-app flows; opens up off-app initiation patterns (callbacks, dialer redials, calls from new SIMs, multi-ticket cases, colleague forwarding).</li>
-  <li><b>Authorisation fallback for unrecognised callers.</b> When the caller's number alone can't identify them, an IVR step confirms identity. See <em>Authorization resolution</em> below.</li>
+  <li><b>One bidirectional masked number.</b> Serves both call directions; preserves the seamless in-app dial; opens up off-app initiation patterns (callbacks, dialer redials, calls from new SIMs, multi-ticket cases, colleague forwarding).</li>
+  <li><b>Authorisation fallback for unrecognised callers.</b> When the caller isn't recognised by their number, an IVR step authorises them via PIN. See <em>Authorization resolution</em> below.</li>
   <li><b>Two small tables.</b> Table 1 for the active call mapping (today's behaviour, kept) and Table 2 for per-ticket credentials (new).</li>
 </ol>
 
@@ -407,7 +407,7 @@ sequenceDiagram
     BE->>C: Bridge to customer
 </pre>
   </div>
-  <div class="outcome">Instant bridge — Table 1 hit, no PIN, no IVR. The fastest path.</div>
+  <div class="outcome">Seamless — Table 1 hit, no PIN, no IVR. The caller is recognised and authorised in one step.</div>
 </section>
 
 <section class="usecase">
@@ -434,7 +434,7 @@ sequenceDiagram
     BE->>T: Bridge to technician
 </pre>
   </div>
-  <div class="outcome">Instant bridge — Table 1 hit, no PIN, no IVR. The fastest path.</div>
+  <div class="outcome">Seamless — Table 1 hit, no PIN, no IVR. The caller is recognised and authorised in one step.</div>
 </section>
 
 <section class="usecase">
@@ -486,7 +486,7 @@ sequenceDiagram
 </pre>
   </div>
 
-  <div class="outcome">All four connect end-to-end via the same PIN fallback. UC06 has a sub-case fast-lane: if the CSP re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges instantly with no PIN. In every other case (UC03 / UC04 / UC05, plus UC06 fresh-dial), Table 1 misses and the PIN path runs.</div>
+  <div class="outcome">All four connect end-to-end via the same authorisation path — caller is not recognised by FROM, PIN authorises them, bridge follows. UC06 has a sub-case fast-lane: if the CSP re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges seamlessly with no PIN. In every other case (UC03 / UC04 / UC05, plus UC06 fresh-dial), Table 1 misses and the PIN path runs.</div>
 </section>
 
 <section class="usecase">
@@ -534,7 +534,7 @@ sequenceDiagram
 </pre>
   </div>
 
-  <div class="outcome">All three connect end-to-end via the same PIN path. The PIN itself identifies the ticket (each ticket has its own customer-side PIN), so multi-ticket disambiguation is implicit. If the customer's ticket is already closed (PIN no longer valid), three wrong attempts route to the dead-end IVR: <em>"Open the app or call 88803 22222"</em> (call centre), because <code>is_customer</code> returns true at that point.</div>
+  <div class="outcome">All three connect end-to-end via the same authorisation path — caller is not recognised by FROM, PIN authorises them. The PIN itself identifies the ticket (each ticket has its own customer-side PIN), so multi-ticket disambiguation is implicit. If the customer's ticket is already closed (PIN no longer valid), three wrong attempts route to the graceful fallback IVR — <em>"Open the app or call 88803 22222"</em> (call centre), because <code>is_customer</code> returns true at that point.</div>
 </section>
 
 <h2>Tables</h2>
