@@ -275,6 +275,15 @@
   <li><b>Three small tables.</b> Table 1 for the active call mapping (today's behaviour, kept), Table 2 for per-ticket PINs (new), and Table 3 — a customer ↔ technician resolver (also new, because TAS doesn't store customer_mobile; we'll build it by joining TAS with customer-service and expose it via a fast lookup API).</li>
 </ol>
 
+<h3>Calling eligibility</h3>
+<p>Calls in either direction are enabled <b>only when the customer has an active ticket</b> of one of these types:</p>
+<ul class="compact">
+  <li><b>Install</b> — onboarding ticket (booking → installed)</li>
+  <li><b>Restore</b> — service-restoration ticket (recovery after outage / issue)</li>
+  <li><b>Pickup</b> — equipment / router pickup ticket</li>
+</ul>
+<p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued, and Table 3 returns nothing. Any inbound dial in that state lands in the dead-end IVR (call centre or trust line, depending on path).</p>
+
 <h3>What stays the same</h3>
 <ul class="compact">
   <li>The in-app Call CTA still works exactly as today — instant bridge, no PIN, no IVR.</li>
