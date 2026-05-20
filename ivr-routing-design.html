@@ -213,8 +213,24 @@
 <p class="lead">A meaningful share of CSP ↔ customer calls fail to connect today. The current design only works when the CSP taps the in-app Call CTA from a recognised SIM and dials immediately — every other initiation pattern (callbacks, dialer redials, calls from unregistered SIMs, multi-ticket customers, colleague forwarding) drops silently.</p>
 <p>For the full breakdown of today's two-masked-number mechanism and the specific failure modes it produces, see <a href="#archives"><b>Archives</b></a> at the bottom.</p>
 
+<h3>Constraints — what makes this hard</h3>
+<p>The conditions of today's call surface the design has to handle:</p>
+<ul class="compact">
+  <li><b>Caller may not be on their registered number.</b> They may be on a secondary SIM, a family phone, or an unregistered device — we can't always identify them by their FROM.</li>
+  <li><b>A CSP can have many active customers at once.</b> Knowing it's the CSP doesn't tell us <em>which</em> customer they want to reach.</li>
+  <li><b>Multiple humans may share one CSP App login.</b> A technician (e.g., Rohit) signing into the Owner's CSP App is the canonical case — the dialing identity and the logged-in identity don't match.</li>
+  <li><b>A customer may have multiple active tickets simultaneously.</b> Install + Restore can co-exist; the system needs to disambiguate which technician they want to reach.</li>
+  <li><b>The customer may call back from their dialer with no context.</b> They've seen a missed call on a masked number and dial back — in their mental model, calling back "just works." It doesn't today.</li>
+  <li><b>A CSP may forward the call to a colleague.</b> Common informal field-ops practice; the colleague has no Wiom app installed and is on a different phone.</li>
+  <li><b>Either party may miss calls.</b> Field CSPs are on rooftops, in cable ducts, on patchy signal; customers are busy or screening.</li>
+  <li><b>Customer SIMs are not captured.</b> Only the customer's registered mobile is on file — we cannot recognise a customer dialing from any other SIM.</li>
+  <li><b>Today's MN1 / MN2 split is direction-bound.</b> A number dialled in the wrong direction (e.g., CSP dialling back on MN1) drops silently — the FROM isn't in the mapping for that direction.</li>
+  <li><b>The masked number itself is recycled.</b> The same physical number is reused across many CSP ↔ customer pairs over time, so a number sitting in someone's call log has no guaranteed meaning later.</li>
+  <li><b>The persona is voice-first and non-app-engaged.</b> A graceful fallback can't rely on opening an app or reading a screen mid-call.</li>
+</ul>
+
 <h2>Objective &amp; framing</h2>
-<p class="lead">At its core, this spec describes an <b>authentication system</b>. Every routing decision is an identity resolution; the three tables are the identity store; the PIN is the credential. Failure modes are best understood through this lens — anything that fails is an identity-resolution failure, and the question is whether the failure is graceful or silent.</p>
+<p class="lead">At its core, this spec describes an <b>authentication system</b>. Every routing decision is an identity resolution; the tables are the identity store; the PIN is the credential. Failure modes are best understood through this lens — anything that fails is an identity-resolution failure, and the question is whether the failure is graceful or silent.</p>
 
 <h3>Four terms used throughout</h3>
 <table>
@@ -224,11 +240,11 @@
   <tbody>
     <tr>
       <td><b>Recognised</b></td>
-      <td>The caller's identity can be resolved — their number is in an active mapping (Table 1), they are a known customer (Table 3), or they hold a valid PIN (Table 2).</td>
+      <td>The caller's identity can be resolved — their number is in an active mapping (Table 1), or they hold a valid PIN (Table 2).</td>
     </tr>
     <tr>
       <td><b>Authorised</b></td>
-      <td>The connection is legitimate — the CSP is assigned to that customer's active ticket, and the PIN was issued for that ticket.</td>
+      <td>The connection is legitimate — the PIN entered (or the FROM matched) belongs to an active ticket for the party being reached.</td>
     </tr>
     <tr>
       <td><b>Seamless</b></td>
@@ -240,46 +256,6 @@
     </tr>
   </tbody>
 </table>
-
-<h2>Constraints</h2>
-<ul class="compact">
-  <li><b>Calling is enabled only on active tickets</b> — Install, Restore, or Pickup. Once a ticket is closed, calls in either direction are no longer routable for that ticket.</li>
-  <li><b>No guest access</b> — an unrecognised caller without a valid PIN cannot connect a call. The PIN is the credential.</li>
-  <li><b>Dual-role caller disallowed</b> — the same person cannot be both a customer and a CSP user; Wiom's data model excludes this.</li>
-  <li><b>PIN retry cap = 3</b> per call. Three wrong entries route to the dead-end IVR.</li>
-  <li><b>Single masked number</b> — the new design uses one number for both directions (no MN1 / MN2 split).</li>
-  <li><b>Customer-side SIM is never captured</b> — only the customer's registered mobile is on file.</li>
-</ul>
-
-<h2>Assumptions</h2>
-<h3>Access &amp; authorisation</h3>
-<table>
-  <thead>
-    <tr><th style="width:42%">Assumption</th><th>Implication</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td>A valid PIN equals authorisation.</td>
-      <td>Holding the PIN is treated as proof that the caller is the legitimate party for the ticket. We do not verify identity beyond PIN possession. A leaked / shared / observed PIN bypasses authorisation.</td>
-    </tr>
-    <tr>
-      <td>PIN issuance assumes successful delivery.</td>
-      <td>When a ticket opens, the system assumes the customer received their PIN via SMS/WhatsApp and the CSP can see theirs in the app. Silent SMS failures leave the customer without a credential and no path forward — comms-layer reliability is a first-class build dependency.</td>
-    </tr>
-    <tr>
-      <td>The party holding the PIN is the authorised caller — including colleagues to whom the CSP forwards it.</td>
-      <td>UC02 (colleague forwarding) is an explicit supported case. PIN possession is sufficient authorisation regardless of who holds it. Deliberate usability ↔ security trade-off.</td>
-    </tr>
-  </tbody>
-</table>
-
-<h3>User behaviour &amp; environment</h3>
-<ul class="compact">
-  <li>The customer is voice-first and Bharat-resident — Hindi IVR and SMS as the primary channel.</li>
-  <li>The CSP is app-engaged at ticket level (sees the PIN on the ticket card) but may be in the field when calling.</li>
-  <li>Both parties may miss calls; missed-call notifications are the primary re-engagement mechanism.</li>
-  <li>The customer's registered mobile is on file and stable for the ticket lifetime.</li>
-</ul>
 
 <h2>The proposed solution</h2>
 <p class="lead">Replace the two one-way masked numbers (MN1 / MN2) with <b>one bidirectional masked number</b>, backed by a small lookup engine that always tries to identify the caller — and falls back to a 5-digit PIN when it can't.</p>
@@ -579,6 +555,46 @@ sequenceDiagram
     </tr>
   </tbody>
 </table>
+
+<h2>Assumptions</h2>
+<p class="section-intro">System rules we enforce, operational beliefs we depend on, and the user-behaviour expectations baked into the design.</p>
+
+<h3>System rules</h3>
+<ul class="compact">
+  <li><b>CSP and Customer cannot share the same registered mobile.</b> Wiom's data model rejects this; the same human cannot be both a customer and a CSP user.</li>
+  <li><b>Calling is disabled once a ticket is closed.</b> No calls outside active Install / Restore / Pickup tickets. A caller from a closed-ticket context lands at the dead-end IVR.</li>
+  <li><b>No guest access.</b> An unrecognised caller without a valid PIN cannot connect a call. The PIN is the credential.</li>
+  <li><b>Single masked number</b> for both call directions (no MN1 / MN2 split).</li>
+  <li><b>3-retry cap on PIN</b> per call; on the third wrong entry the call routes to the dead-end IVR.</li>
+  <li><b>Customer-side SIMs are never captured.</b> Only the registered mobile is on file.</li>
+  <li><b>PINs are unique across all active tickets at any moment</b> (generation enforces this) and rotate daily.</li>
+</ul>
+
+<h3>Authorisation model</h3>
+<ul class="compact">
+  <li><b>A valid PIN equals authorisation.</b> Holding the PIN is treated as proof that the caller is the legitimate party for the ticket. We do not verify identity beyond PIN possession; a leaked / shared / observed PIN bypasses authorisation.</li>
+  <li><b>PIN issuance assumes successful delivery.</b> When a ticket opens, we assume the customer received the PIN via SMS / WhatsApp and the CSP can see theirs on the ticket card. Silent SMS failures leave the customer with no credential — comms-layer reliability is a first-class build dependency.</li>
+  <li><b>PIN possession is sufficient regardless of who holds it.</b> UC04 (colleague forwarding) is an explicit supported case. Deliberate usability ↔ security trade-off.</li>
+  <li><b>`is_customer` is consulted only at the dead-end junction.</b> The main routing path doesn't classify the caller as customer vs CSP; that branching exists only to pick the right dead-end message.</li>
+</ul>
+
+<h3>Operational</h3>
+<ul class="compact">
+  <li><b>IVR / PIN resolution works flawlessly</b> with no noticeable delay in API or webhook calls. Target: backend lookups &lt; 200 ms p95, within Exotel's 5-second Primary URL budget.</li>
+  <li><b>SMS / WhatsApp delivery to the customer is reliable enough</b> that the customer-side PIN is on their phone before the call is attempted.</li>
+  <li><b>Truecaller whitelisting carries forward</b> for the chosen masked number (one of MN1 / MN2). Verified pre-launch — operational check, not a runtime dependency.</li>
+  <li><b>Exotel disposition webhooks are delivered reliably</b> so that missed-call alerts fire deterministically.</li>
+  <li><b>CleverTap campaigns trigger and deliver</b> for both <code>missed_call_csp_to_customer</code> and <code>missed_call_customer_to_csp</code> events.</li>
+</ul>
+
+<h3>User behaviour &amp; environment</h3>
+<ul class="compact">
+  <li>The customer is voice-first and Bharat-resident — Hindi IVR and SMS as the primary channel.</li>
+  <li>The CSP is app-engaged at ticket level (sees the PIN on the ticket card) but may be in the field when calling.</li>
+  <li>Both parties may miss calls; missed-call notifications are the primary re-engagement mechanism.</li>
+  <li>The customer's registered mobile is on file and stable for the ticket lifetime.</li>
+  <li>The CSP will share the PIN with a colleague (UC04) by forwarding the SMS / WhatsApp they received themselves, which carries the PIN + masked number + ticket details.</li>
+</ul>
 
 <h2>Metrics</h2>
 <p>Top-line metrics for tracking this build's impact (full event catalog in the <a href="IVR-Routing-Solutioning-technical-notes.md">technical notes</a>):</p>
