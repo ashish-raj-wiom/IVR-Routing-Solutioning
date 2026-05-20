@@ -325,7 +325,7 @@ flowchart TD
     E -. dials .-> F
     PB -. dials .-> F
 
-    F -->|Hit| H([Connect ✓]):::happy
+    F -->|Hit| H([Dial recipient]):::happy
     F -->|Miss| I[Resolve-FROM API]
     I --> J{Is caller<br/>a customer?}
     J -->|Yes| K[(Table 3<br/>Cx → Tech)]:::store
@@ -338,6 +338,11 @@ flowchart TD
     N --> H
     M -->|No| O([IVR: Call via app]):::deadend
 
+    H --> Z{Picked up?<br/>via Exotel disposition}
+    Z -->|Yes| ZP([Call connected ✓]):::happy
+    Z -->|No| ZE[(CleverTap event<br/>missed_call_*)]:::store
+    ZE --> ZA([Missed-call alert<br/>SMS / PN to missed party]):::fallback
+
     classDef start    fill:#37474f,stroke:#263238,color:#fff
     classDef happy    fill:#4caf50,stroke:#2e7d32,color:#fff
     classDef fallback fill:#ff9800,stroke:#ef6c00,color:#fff
@@ -345,6 +350,24 @@ flowchart TD
     classDef store    fill:#2196f3,stroke:#1565c0,color:#fff
 </pre>
 </div>
+
+<h2>Missed-call notifications</h2>
+<p>Successfully dialling the recipient does not mean the call was picked. Field CSPs are often on rooftops, in cable ducts, or low-signal areas; customers are busy, away, or screening. A missed call without a follow-up is a silent failure — exactly what leadership flagged as the most damaging trust failure mode today.</p>
+
+<p>We close this gap by ingesting Exotel's call-disposition webhook and triggering a CleverTap campaign:</p>
+
+<ol>
+  <li><b>Exotel disposition webhook</b> — Exotel fires a callback for every call with the outcome (answered / no-answer / busy / failed). We listen on this webhook.</li>
+  <li><b>Backend → CleverTap event</b> — On any non-answered outcome, the backend fires a typed CleverTap event (e.g. <code>missed_call_partner_to_customer</code> or <code>missed_call_customer_to_partner</code>) with the parties involved.</li>
+  <li><b>CleverTap campaign → notification</b> — The campaign sends an SMS / push to the party who missed the call:
+    <ul>
+      <li><b>Customer missed</b> → notify customer ("Your technician tried to reach you. Call back on [number]").</li>
+      <li><b>CSP missed</b> → notify CSP ("Your customer tried to reach you. Call back on [number]").</li>
+    </ul>
+  </li>
+</ol>
+
+<div class="note"><b>IVR language: Hindi.</b> All IVR prompts (PIN entry, "call via app" message, any future menus) and all outbound notification copy default to Hindi, in line with Wiom's voice-first Bharat user. Regional-language expansion based on CSP geography will follow. Exact copy is TBD.</div>
 
 <h2>Use cases</h2>
 <p class="section-intro">Six scenarios cover the full call surface. The table below shows what works today vs what this solution recovers. Detailed sequence diagrams follow.</p>
