@@ -265,6 +265,59 @@
 </table>
 <div class="note"><b>Common thread:</b> every failure mode is rooted in the in-app + registered-SIM + fresh-TTL triple. Anything that breaks even one of those three drops the call.</div>
 
+<h2>Objective &amp; framing</h2>
+<p class="lead">At its core, this spec describes an <b>authentication system</b>. Every routing decision is an identity resolution; the three tables are the identity store; the PIN is the credential. Failure modes are best understood through this lens — anything that fails is an identity-resolution failure, and the question is whether the failure is graceful or silent.</p>
+
+<h3>Four terms used throughout</h3>
+<table>
+  <thead>
+    <tr><th style="width:20%">Term</th><th>Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Recognised</b></td>
+      <td>The caller's identity can be resolved — their number is in an active mapping (Table 1), they are a known customer (Table 3), or they hold a valid PIN (Table 2).</td>
+    </tr>
+    <tr>
+      <td><b>Authorised</b></td>
+      <td>The connection is legitimate — the CSP is assigned to that customer's active ticket, and the PIN was issued for that ticket.</td>
+    </tr>
+    <tr>
+      <td><b>Seamless</b></td>
+      <td>The call connects without the user opening an app, navigating UI, or understanding masked numbers. For the in-app CTA path: zero friction. For the fallback path: friction survivable by a voice-first, non-app field user.</td>
+    </tr>
+    <tr>
+      <td><b>Graceful fallback</b></td>
+      <td>For unrecognised or unauthorised callers — the user understands why the call did not connect and has a clear, achievable next step. Not a dead-end.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Access &amp; authorisation assumptions</h3>
+<table>
+  <thead>
+    <tr><th style="width:42%">Assumption</th><th>Implication</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>An unrecognised caller who does not hold a valid PIN cannot connect a call.</td>
+      <td>By design — the PIN is the credential. The system does not provide a path for an unauthorised caller. <b>No guest access.</b></td>
+    </tr>
+    <tr>
+      <td>A valid PIN equals authorisation.</td>
+      <td>Holding the PIN is treated as proof that the caller is the legitimate partner assigned to the ticket. We do not verify identity beyond PIN possession. A leaked / shared / observed PIN bypasses authorisation.</td>
+    </tr>
+    <tr>
+      <td>PIN issuance assumes successful delivery.</td>
+      <td>When a ticket opens and a PIN is generated, the system assumes the partner received and noted their PIN via SMS. If SMS delivery fails silently, the partner arrives at the IVR with no credential and no path forward — making comms-layer reliability a first-class build dependency.</td>
+    </tr>
+    <tr>
+      <td>The assigned CSP is the authorised caller — and so is any person they share the PIN with.</td>
+      <td>UC02 (colleague forwarding) is an explicit supported use case. The system therefore treats PIN possession as sufficient authorisation, regardless of who holds it. This is a deliberate usability ↔ security trade-off.</td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>The proposed solution</h2>
 <p class="lead">Replace the two one-way masked numbers (MN1 / MN2) with <b>one bidirectional masked number</b>, backed by a small lookup engine that always tries to identify the caller — and falls back to a 5-digit PIN when it can't.</p>
 
@@ -298,7 +351,7 @@
 </ul>
 
 <h3>Trust layer — recipient-side pickup (already in place)</h3>
-<p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. The new single masked number will reuse one of the two existing (already-whitelisted) MN1 / MN2 numbers, so the verified status carries forward as-is — no fresh whitelisting work, no regression on recipient-side trust.</p>
+<p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. The new single masked number will reuse one of the two existing (already-whitelisted) MN1 / MN2 numbers, so the verified status carries forward as-is — no fresh whitelisting work, no regression on recipient-side trust. <b>Pre-launch verification:</b> confirm the chosen number is actively whitelisted on Truecaller before go-live — operational check, not an assumption.</p>
 
 <h2>PIN architecture</h2>
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
@@ -379,6 +432,8 @@ flowchart TD
     </ul>
   </li>
 </ol>
+
+<p><b>Dead-end SMS (recipient = the caller who hit the dead-end).</b> When the IVR reaches a dead-end state (no active tech / PIN exhausted), an SMS is also sent to the caller's number with the relevant helpline (call-centre or trust line) — so the caller has the number in writing once the call ends. This is in addition to the voice message, not a replacement.</p>
 
 <div class="note"><b>IVR language: Hindi.</b> All IVR prompts (PIN entry, dead-end messages, any future menus) and all outbound notification copy default to Hindi, in line with Wiom's voice-first Bharat user. Regional-language expansion based on CSP geography will follow. <b>Exact wording — for every IVR prompt, SMS template, missed-call alert, and notification — will be decided by the solutions team.</b></div>
 
