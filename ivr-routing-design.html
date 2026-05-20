@@ -210,8 +210,7 @@
 <p class="subtitle"><b>A meaningful share of CSP ↔ customer calls drop today.</b> This is the design that closes the gap.</p>
 
 <h2>The problem (in brief)</h2>
-<p class="lead">A meaningful share of CSP ↔ customer calls fail to connect today. The current design only works when the CSP taps the in-app Call CTA from a recognised SIM and dials immediately — every other initiation pattern (callbacks, dialer redials, calls from unregistered SIMs, multi-ticket customers, colleague forwarding) drops silently.</p>
-<p>For the full breakdown of today's two-masked-number mechanism and the specific failure modes it produces, see <a href="#archives"><b>Archives</b></a> at the bottom.</p>
+<p class="lead">A meaningful share of CSP ↔ customer calls fail to connect today. The current design only works when the <b>User (CSP / Customer)</b> taps the in-app Call CTA from a recognised SIM and dials immediately — every other initiation pattern (callbacks, dialer redials, calls from unregistered SIMs, multi-ticket customers, colleague forwarding) drops silently.</p>
 
 <h3>Constraints — what makes this hard</h3>
 <p>The conditions of today's call surface the design has to handle:</p>
@@ -219,11 +218,13 @@
   <li><b>Caller may not be on their registered number.</b> They may be on a secondary SIM, a family phone, or an unregistered device — we can't always identify them by their FROM.</li>
   <li><b>A CSP can have many active customers at once.</b> Knowing it's the CSP doesn't tell us <em>which</em> customer they want to reach.</li>
   <li><b>Multiple humans may share one CSP App login.</b> A technician (e.g., Rohit) signing into the Owner's CSP App is the canonical case — the dialing identity and the logged-in identity don't match.</li>
-  <li><b>A customer may have multiple active tickets simultaneously.</b> Restore + Pickup can co-exist (Install is pre-service so it doesn't overlap with the others); the system needs to disambiguate which technician they want to reach.</li>
+  <li><b>A customer may have multiple active tickets simultaneously.</b> Restore + Pickup can co-exist; the system needs to disambiguate which technician they want to reach.</li>
   <li><b>The customer may call back from their dialer with no context.</b> They've seen a missed call on a masked number and dial back — in their mental model, calling back "just works." It doesn't today.</li>
   <li><b>A CSP may forward the call to a colleague.</b> Common informal field-ops practice; the colleague has no Wiom app installed and is on a different phone.</li>
   <li><b>The persona is voice-first and non-app-engaged.</b> A graceful fallback can't rely on opening an app or reading a screen mid-call.</li>
 </ul>
+
+<p class="section-intro">For the full breakdown of today's two-masked-number mechanism and the specific failure modes it produces, see <a href="#archives"><b>Archives</b></a> at the bottom.</p>
 
 <h2>Objective &amp; framing</h2>
 <p class="lead">At its core, this spec describes an <b>authentication system</b>. Every routing decision is an identity resolution; the tables are the identity store; the PIN is the credential. Failure modes are best understood through this lens — anything that fails is an identity-resolution failure, and the question is whether the failure is graceful or silent.</p>
@@ -270,29 +271,13 @@
   <li><b>Restore</b> — service-restoration ticket (recovery after outage / issue)</li>
   <li><b>Pickup</b> — equipment / router pickup ticket</li>
 </ul>
-<p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued, and Table 3 returns nothing. Any inbound dial in that state lands in the dead-end IVR (call centre or trust line, depending on path).</p>
-
-<h3>What stays the same</h3>
-<ul class="compact">
-  <li>The in-app Call CTA still works exactly as today — instant bridge, no PIN, no IVR.</li>
-  <li>Existing telephony provider (Exotel) keeps doing what it does best. We expose two endpoints for the lookup; Exotel does the rest.</li>
-</ul>
-
-<h3>What's newly possible</h3>
-<ul class="compact">
-  <li>Customer who missed a call can dial back from their dialer — IVR asks for the PIN they received via SMS, then bridges to their technician.</li>
-  <li>CSP who switched SIMs, lost the app session, or just prefers their dialer can still place the call by entering their PIN.</li>
-  <li>A CSP's colleague can place the call using the same PIN — no new app install required.</li>
-</ul>
-
-<h3>Trust layer — recipient-side pickup (already in place)</h3>
-<p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. The new single masked number will reuse one of the two existing (already-whitelisted) MN1 / MN2 numbers, so the verified status carries forward as-is — no fresh whitelisting work, no regression on recipient-side trust. <b>Pre-launch verification:</b> confirm the chosen number is actively whitelisted on Truecaller before go-live — operational check, not an assumption.</p>
+<p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued. Any inbound dial in that state lands in the dead-end IVR.</p>
 
 <h2>Authorization resolution</h2>
 <p>When the caller's FROM isn't in an active Table 1 mapping, the IVR asks for a <b>5-digit PIN</b> — the credential. Each ticket has two PINs (one for the customer, one for the CSP); Table 2 looks up <code>PIN → other_party_mobile</code>. Standard double-blind routing pattern used by Ola, Uber, Swiggy.</p>
 <p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC04), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
 <p><b>Guardrails:</b> 3-retry cap per call (drops to dead-end IVR); PIN rotates daily; CSP-side lookups are scoped to that CSP's active tickets.</p>
-<p style="font-size:13px; color:var(--muted); margin-top:6px;">Full mechanism, schemas, retry math, and trade-offs in the <a href="IVR-Routing-Solutioning-technical-notes.md">technical notes</a>. Underlying telephony: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
+<p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
 
 <h2>Assumptions</h2>
 <ul class="compact">
@@ -303,11 +288,6 @@
   <li>PIN possession is sufficient regardless of who holds it — colleague forwarding (UC04) is an explicit supported case.</li>
   <li>PIN delivery is reliable — customer's SMS / WhatsApp reaches them before the call is needed; CSP's ticket card is current.</li>
   <li>IVR / PIN resolution runs without noticeable delay — backend lookups &lt; 200 ms p95 within Exotel's 5-second budget.</li>
-  <li>Exotel disposition webhooks and CleverTap campaigns trigger reliably (missed-call alerts depend on both).</li>
-  <li>Truecaller whitelisting carries forward for the chosen masked number — verified pre-launch.</li>
-  <li>The customer is voice-first and Bharat-resident; Hindi IVR and SMS are the primary surface.</li>
-  <li>The CSP is app-engaged at ticket level but may be in the field when calling.</li>
-  <li>Either party may miss calls; missed-call notifications are the primary re-engagement mechanism.</li>
 </ul>
 
 <h2>End-to-end flow</h2>
