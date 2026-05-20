@@ -239,7 +239,7 @@
   <tbody>
     <tr>
       <td><b>Unregistered / undetected SIM (CSP side)</b></td>
-      <td>On the CSP side, SIM capture at app login works ~70% of the time. The remaining ~30% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
+      <td>On the CSP side, SIM capture at app login works ~85% of the time. The remaining ~15% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
     </tr>
     <tr>
       <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
@@ -289,11 +289,12 @@
 </ul>
 
 <h3>Trust layer — recipient-side pickup (already in place)</h3>
-<p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. This whitelisting is already live, and the single-masked-number proposal preserves that verified status across both call directions — no regression on recipient-side trust as part of this build.</p>
+<p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. The new single masked number will reuse one of the two existing (already-whitelisted) MN1 / MN2 numbers, so the verified status carries forward as-is — no fresh whitelisting work, no regression on recipient-side trust.</p>
 
 <h2>PIN architecture</h2>
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
-<p><b>PIN distribution</b> — issued per active ticket on the partner side. Shown in the partner app on the ticket card (with a push notification as reinforcement if needed). The IVR audio message tells the caller where to find their PIN.</p>
+<p><b>PIN distribution</b> — issued per active ticket on the partner side. <b>Primary channel: SMS</b> to the partner-org's Owner / Admin registered mobile at ticket creation (WhatsApp may be sent as a second channel). The ticket card in the app shows the same PIN as reinforcement. The IVR PIN prompt is a reminder of the SMS the caller already received — it does not redirect them to the app.</p>
+<p><b>PIN format (TBD):</b> either the last 5 digits of the ticket ID, or a randomly generated 5-digit value unique across active tickets. <b>UC02 (forwarding to a colleague):</b> the partner forwards the same SMS / WhatsApp message directly to the colleague — it carries the PIN, the masked number, and the ticket details (exact format to be specified by the solution team).</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
 <h2>End-to-end flow</h2>
@@ -302,7 +303,7 @@
   <div class="legend-item"><div class="swatch start"></div>Start / user action</div>
   <div class="legend-item"><div class="swatch happy"></div>Happy path (connect)</div>
   <div class="legend-item"><div class="swatch fallback"></div>PIN fallback</div>
-  <div class="legend-item"><div class="swatch deadend"></div>Dead-end (nudge to app)</div>
+  <div class="legend-item"><div class="swatch deadend"></div>Dead-end (open app / contact support)</div>
   <div class="legend-item"><div class="swatch store"></div>Datastore lookup</div>
 </div>
 
@@ -336,7 +337,7 @@ flowchart TD
     L --> M{Valid PIN?}
     M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
     N --> H
-    M -->|No| O([IVR: Call via app]):::deadend
+    M -->|No| O([IVR: Open the app<br/>or contact support]):::deadend
 
     H --> Z{Picked up?<br/>via Exotel disposition}
     Z -->|Yes| ZP([Call connected ✓]):::happy
@@ -468,7 +469,7 @@ sequenceDiagram
     <tbody>
       <tr>
         <td><b>UC 01</b> — Partner calls from an unregistered SIM</td>
-        <td>Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~30% of the time; call drops.</td>
+        <td>Partner's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~15% of the time; call drops.</td>
         <td><code>not customer</code></td>
       </tr>
       <tr>
@@ -538,7 +539,7 @@ sequenceDiagram
     IVR->>T: Bridge to technician
 </pre>
   </div>
-  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — single-active-ticket assumption resolves the technician. If the customer's ticket is already closed (no active technician found in Table 3), the IVR plays "Please call via app" instead of dropping silently.</div>
+  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — Table 3 resolves the technician (most recent ticket wins if more than one is active). If the customer's ticket is already closed (no active technician found), the IVR plays "Open the app or contact support" instead of dropping silently.</div>
 </section>
 
 <h2>Tables</h2>
@@ -551,7 +552,7 @@ sequenceDiagram
       <td><b>Table 1</b> — Active call mapping</td>
       <td><code>FROM list → TO</code></td>
       <td><span class="tag existing">existing</span> Already written on every <code>initiateCall</code> today; we keep this behaviour unchanged</td>
-      <td>Short TTL (minutes), GC after expiry</td>
+      <td>TTL = min(call connected, 5 minutes) — today's logic, unchanged</td>
     </tr>
     <tr>
       <td><b>Table 2</b> — PIN registry</td>
@@ -596,9 +597,9 @@ sequenceDiagram
 <ul class="compact">
   <li><b>Customer calling from an unregistered SIM</b> — no PIN held → IVR nudges to call via app.</li>
   <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR nudges to call via app (rather than dropping).</li>
-  <li><b>Customer with &gt; 1 active ticket</b> — out of scope. Production reality today is 1 ticket per customer at a time.</li>
+  <li><b>Customer with &gt; 1 active ticket</b> — Table 3 returns the most recent ticket (created_at DESC); customer is bridged to that technician.</li>
   <li><b>Dual-role caller</b> (same person both customer and partner-user) — disallowed by the system.</li>
-  <li><b>PIN brute-force protection</b> — deferred. Good-to-have, not in current scope.</li>
+  <li><b>PIN brute-force protection</b> — pending decision; per leadership review, at minimum a retry cap is required before production.</li>
 </ul>
 </div>
 
