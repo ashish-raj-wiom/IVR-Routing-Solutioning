@@ -209,61 +209,9 @@
 <h1>IVR Call Routing — Proposed Solution</h1>
 <p class="subtitle"><b>A meaningful share of CSP ↔ customer calls drop today.</b> This is the design that closes the gap.</p>
 
-<h2>The problem we're solving</h2>
-<p class="lead">A meaningful share of CSP ↔ customer calls fail to connect on Wiom's masked-number infrastructure today. The current design only works in one narrow case: a CSP taps the in-app Call CTA from a registered SIM and dials within minutes. <b>Everything else drops silently</b> — CSP redialing from a call log, customer returning a missed call, a colleague dialing on the CSP's behalf, CSP using a SIM the app couldn't detect.</p>
-<p>The gap matters because the CSP ↔ customer call is load-bearing in every install, service ticket, and router recovery. When the call drops the CSP has no fallback — they wait, retry, or escalate; the customer waits with them. Repeated drops translate directly into NPS hits, slot abandonment, and avoidable truck-rolls.</p>
-
-<h3>MN1 / MN2 — how masking works today</h3>
-<p>The current implementation uses <b>two separate masked numbers per call session</b>, one per direction:</p>
-
-<div class="mn-grid">
-  <div class="mn-box">
-    <div class="mn-label">MN1</div>
-    <div class="mn-flow">Customer → MN1 → CSP</div>
-    <div class="mn-note">One-way route. Only customer-initiated calls work.</div>
-  </div>
-  <div class="mn-box">
-    <div class="mn-label">MN2</div>
-    <div class="mn-flow">CSP → MN2 → Customer</div>
-    <div class="mn-note">One-way route. Only CSP-initiated calls work.</div>
-  </div>
-</div>
-
-<p>Each is minted via <code>initiateCall</code> when the originating side taps the Call CTA in their app, and bound to a short-lived FROM → TO mapping in the backend. MN1 only knows how to route Customer → CSP; MN2 only the reverse. The masked number is also recycled across sessions — the same physical number is reused across many pairs over time, so a stale number in someone's call log has no guaranteed meaning later.</p>
-
-<h3>Where it breaks today</h3>
-<table>
-  <thead>
-    <tr><th style="width:32%">Failure mode</th><th>What happens today</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><b>Unregistered / undetected SIM (CSP side)</b></td>
-      <td>On the CSP side, SIM capture at app login works ~85% of the time. The remaining ~15% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
-    </tr>
-    <tr>
-      <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
-      <td>CSP sees MN1 in their call log (the number a customer used to call them) and dials it back. MN1 only routes Customer → CSP, so the CSP's FROM isn't in the mapping. Call drops.</td>
-    </tr>
-    <tr>
-      <td><b>Native dialer / call-log redial</b></td>
-      <td>CSP or customer dials the masked number from the phone dialer without a fresh CTA. No <code>initiateCall</code> fires; the mapping has expired (TTL) or never existed for this direction. Call drops.</td>
-    </tr>
-    <tr>
-      <td><b>Customer callback</b></td>
-      <td>Customer sees a missed call from the masked number and calls back. No live mapping for the customer's FROM. Call drops.</td>
-    </tr>
-    <tr>
-      <td><b>Forwarded masked number</b></td>
-      <td>CSP shares the masked number with a colleague on chat. Colleague dials from a phone whose SIM isn't in <code>sim_inventory</code> → no mapping. Call drops.</td>
-    </tr>
-    <tr>
-      <td><b>Telemetry gap</b></td>
-      <td>None of the above failures emit a distinct event. We can't size which bucket is biggest, so any fix today is unprioritised.</td>
-    </tr>
-  </tbody>
-</table>
-<div class="note"><b>Common thread:</b> every failure mode is rooted in the in-app + registered-SIM + fresh-TTL triple. Anything that breaks even one of those three drops the call.</div>
+<h2>The problem (in brief)</h2>
+<p class="lead">A meaningful share of CSP ↔ customer calls fail to connect today. The current design only works when the CSP taps the in-app Call CTA from a recognised SIM and dials immediately — every other initiation pattern (callbacks, dialer redials, calls from unregistered SIMs, multi-ticket customers, colleague forwarding) drops silently.</p>
+<p>For the full breakdown of today's two-masked-number mechanism and the specific failure modes it produces, see <a href="#archives"><b>Archives</b></a> at the bottom.</p>
 
 <h2>Objective &amp; framing</h2>
 <p class="lead">At its core, this spec describes an <b>authentication system</b>. Every routing decision is an identity resolution; the three tables are the identity store; the PIN is the credential. Failure modes are best understood through this lens — anything that fails is an identity-resolution failure, and the question is whether the failure is graceful or silent.</p>
@@ -293,30 +241,46 @@
   </tbody>
 </table>
 
-<h3>Access &amp; authorisation assumptions</h3>
+<h2>Constraints</h2>
+<ul class="compact">
+  <li><b>Calling is enabled only on active tickets</b> — Install, Restore, or Pickup. Once a ticket is closed, calls in either direction are no longer routable for that ticket.</li>
+  <li><b>No guest access</b> — an unrecognised caller without a valid PIN cannot connect a call. The PIN is the credential.</li>
+  <li><b>Dual-role caller disallowed</b> — the same person cannot be both a customer and a CSP user; Wiom's data model excludes this.</li>
+  <li><b>PIN retry cap = 3</b> per call. Three wrong entries route to the dead-end IVR.</li>
+  <li><b>Single masked number</b> — the new design uses one number for both directions (no MN1 / MN2 split).</li>
+  <li><b>Customer-side SIM is never captured</b> — only the customer's registered mobile is on file.</li>
+</ul>
+
+<h2>Assumptions</h2>
+<h3>Access &amp; authorisation</h3>
 <table>
   <thead>
     <tr><th style="width:42%">Assumption</th><th>Implication</th></tr>
   </thead>
   <tbody>
     <tr>
-      <td>An unrecognised caller who does not hold a valid PIN cannot connect a call.</td>
-      <td>By design — the PIN is the credential. The system does not provide a path for an unauthorised caller. <b>No guest access.</b></td>
-    </tr>
-    <tr>
       <td>A valid PIN equals authorisation.</td>
-      <td>Holding the PIN is treated as proof that the caller is the legitimate CSP assigned to the ticket. We do not verify identity beyond PIN possession. A leaked / shared / observed PIN bypasses authorisation.</td>
+      <td>Holding the PIN is treated as proof that the caller is the legitimate party for the ticket. We do not verify identity beyond PIN possession. A leaked / shared / observed PIN bypasses authorisation.</td>
     </tr>
     <tr>
       <td>PIN issuance assumes successful delivery.</td>
-      <td>When a ticket opens and a PIN is generated, the system assumes the CSP received and noted their PIN via SMS. If SMS delivery fails silently, the CSP arrives at the IVR with no credential and no path forward — making comms-layer reliability a first-class build dependency.</td>
+      <td>When a ticket opens, the system assumes the customer received their PIN via SMS/WhatsApp and the CSP can see theirs in the app. Silent SMS failures leave the customer without a credential and no path forward — comms-layer reliability is a first-class build dependency.</td>
     </tr>
     <tr>
-      <td>The assigned CSP is the authorised caller — and so is any person they share the PIN with.</td>
-      <td>UC02 (colleague forwarding) is an explicit supported use case. The system therefore treats PIN possession as sufficient authorisation, regardless of who holds it. This is a deliberate usability ↔ security trade-off.</td>
+      <td>The party holding the PIN is the authorised caller — including colleagues to whom the CSP forwards it.</td>
+      <td>UC02 (colleague forwarding) is an explicit supported case. PIN possession is sufficient authorisation regardless of who holds it. Deliberate usability ↔ security trade-off.</td>
     </tr>
   </tbody>
 </table>
+
+<h3>User behaviour &amp; environment</h3>
+<ul class="compact">
+  <li>The customer is voice-first and Bharat-resident — Hindi IVR and SMS as the primary channel.</li>
+  <li>The CSP is app-engaged at ticket level (sees the PIN on the ticket card) but may be in the field when calling.</li>
+  <li>Both parties may miss calls; missed-call notifications are the primary re-engagement mechanism.</li>
+  <li>The customer's registered mobile is on file and stable for the ticket lifetime.</li>
+  <li>Truecaller whitelisting of the chosen masked number is verified at go-live (operational check).</li>
+</ul>
 
 <h2>The proposed solution</h2>
 <p class="lead">Replace the two one-way masked numbers (MN1 / MN2) with <b>one bidirectional masked number</b>, backed by a small lookup engine that always tries to identify the caller — and falls back to a 5-digit PIN when it can't.</p>
@@ -325,7 +289,7 @@
 <ol>
   <li><b>One masked number per session, not two.</b> Eliminates MN1 ↔ MN2 confusion and turns the CSP's call log into something they can actually dial back.</li>
   <li><b>PIN fallback for unrecognised callers.</b> When the caller's number isn't in an active mapping, the IVR asks for a short PIN that the CSP received at ticket creation. The PIN unlocks the destination.</li>
-  <li><b>Three small tables.</b> Table 1 for the active call mapping (today's behaviour, kept), Table 2 for per-ticket PINs (new), and Table 3 — a customer ↔ technician resolver (also new, because TAS doesn't store customer_mobile; we'll build it by joining TAS with customer-service and expose it via a fast lookup API).</li>
+  <li><b>Two small tables.</b> Table 1 for the active call mapping (today's behaviour, kept) and Table 2 for per-ticket PINs (new) — each ticket gets two PINs, one per side, each routing to the other party.</li>
 </ol>
 
 <h3>Calling eligibility</h3>
@@ -345,7 +309,7 @@
 
 <h3>What's newly possible</h3>
 <ul class="compact">
-  <li>Customer who missed a call can dial back from their dialer — bridged to their technician via Table 3, no PIN needed.</li>
+  <li>Customer who missed a call can dial back from their dialer — IVR asks for the PIN they received via SMS, then bridges to their technician.</li>
   <li>CSP who switched SIMs, lost the app session, or just prefers their dialer can still place the call by entering their PIN.</li>
   <li>A CSP's colleague can place the call using the same PIN — no new app install required.</li>
 </ul>
@@ -353,8 +317,8 @@
 <h3>Trust layer — recipient-side pickup (already in place)</h3>
 <p>Routing the call is only half the job; the recipient still has to <em>pick up</em>. Our masked numbers are <b>whitelisted with Truecaller</b>, so the recipient's phone shows a green verified banner with the Wiom name instead of an unknown number or a "Suspected spam" flag. The new single masked number will reuse one of the two existing (already-whitelisted) MN1 / MN2 numbers, so the verified status carries forward as-is — no fresh whitelisting work, no regression on recipient-side trust. <b>Pre-launch verification:</b> confirm the chosen number is actively whitelisted on Truecaller before go-live — operational check, not an assumption.</p>
 
-<h2>PIN architecture</h2>
-<p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
+<h2>Authorization resolution</h2>
+<p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's FROM isn't already in an active Table 1 mapping, the IVR asks for a short PIN that was pre-shared with the legitimate party. The PIN itself identifies the ticket and the direction — Table 2 looks up <code>PIN → other_party_mobile</code>. Full mechanism in the <a href="IVR-Routing-Solutioning-technical-notes.md">technical notes</a>.</p>
 <p><b>PIN distribution.</b> Each active ticket gets <b>two PINs</b> — one for the customer (routes to that ticket's technician), one for the CSP (routes to that ticket's customer). Delivery channels are different on each side:</p>
 <ul class="compact">
   <li><b>Customer-side PIN</b> — sent to the customer's registered mobile via <b>SMS / WhatsApp</b> at ticket creation. The same message carries the masked number to dial, so the customer has both pieces in one place before they ever need to call.</li>
@@ -543,28 +507,24 @@ sequenceDiagram
 
   <table style="font-size: 13px; margin: 12px 0;">
     <thead>
-      <tr><th style="width:24%">Use case</th><th>Today (why it fails)</th><th style="width:18%">Resolve-FROM</th></tr>
+      <tr><th style="width:32%">Use case</th><th>Today (why it fails)</th></tr>
     </thead>
     <tbody>
       <tr>
         <td><b>UC 01</b> — CSP calls from an unregistered SIM</td>
-        <td>CSP's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~15% of the time; call drops.</td>
-        <td><code>not customer</code></td>
+        <td>CSP's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, never logged in from this SIM). The FROM isn't in any active mapping; call drops.</td>
       </tr>
       <tr>
         <td><b>UC 02</b> — CSP forwards the masked number to a colleague</td>
-        <td>CSP shares the masked number with a colleague on a different phone. Colleague's SIM isn't in <code>sim_inventory</code>. Call drops.</td>
-        <td><code>not customer</code></td>
+        <td>CSP shares the masked number with a colleague on a different phone. The colleague's FROM isn't in any active mapping. Call drops.</td>
       </tr>
       <tr>
         <td><b>UC 03</b> — CSP calls back on a masked number originally initiated by the customer</td>
         <td>Customer initiates a call via in-app CTA → CSP misses it → CSP taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → CSP — so the callback drops.</td>
-        <td><code>not customer</code></td>
       </tr>
       <tr>
         <td><b>UC 04</b> — CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td>
-        <td>CSP bypasses the in-app CTA — dials the Wiom number from their dialer, call log, or saved contact. This may be a fresh call (CSP knows the PIN from the ticket card and prefers dialing directly) or a re-dial after a previous call ended. Today no fresh <code>initiateCall</code> fires, any prior mapping has expired (TTL), and the call drops.</td>
-        <td><code>not customer</code></td>
+        <td>CSP bypasses the in-app CTA — dials the Wiom number from their dialer, call log, or saved contact. No fresh <code>initiateCall</code> fires, any prior mapping has expired (TTL), and the call drops.</td>
       </tr>
     </tbody>
   </table>
@@ -661,27 +621,17 @@ sequenceDiagram
   </tbody>
 </table>
 
-<h2>Exotel applet wiring</h2>
-<ol>
-  <li><b>Passthru</b> (Dynamic URL #1) — receives <code>From</code>. Returns either:
-    <ul>
-      <li>A direct destination (Table 1 hit or <code>is_customer</code> path), or</li>
-      <li>An instruction to branch to the Gather applet (fallback paths).</li>
-    </ul>
-  </li>
-  <li><b>Gather / IVR</b> — collects the 5-digit PIN via DTMF.</li>
-  <li><b>Connect</b> (Dynamic URL #2) — receives <code>From</code> + <code>digits</code>. Returns destination after Table 2 lookup, or hands off to the "call via app" IVR message.</li>
-</ol>
-
-<h2>Telemetry events</h2>
-<p>Each branch must emit a typed event so failure-mode bucket sizes are visible:</p>
+<h2>Metrics</h2>
+<p>Top-line metrics for tracking this build's impact (full event catalog in the <a href="IVR-Routing-Solutioning-technical-notes.md">technical notes</a>):</p>
 <ul class="compact">
-  <li><code>mapping_hit</code> — Table 1 happy path</li>
-  <li><code>is_customer_routed</code> — Table 3 path</li>
-  <li><code>pin_prompted</code> — Gather applet triggered</li>
-  <li><code>pin_success</code> / <code>pin_fail</code></li>
-  <li><code>api_failure_fallback</code> — Resolve-FROM API down, routed to PIN</li>
-  <li><code>nudge_to_app</code> — dead-end IVR played</li>
+  <li><b>Connect rate</b> — share of dialled calls that reach the recipient's phone ringing.</li>
+  <li><b>Happy-path hit rate</b> — share of calls that resolve via Table 1 (no PIN needed).</li>
+  <li><b>PIN entry success rate</b> — share of PIN prompts where the caller enters a valid PIN within 3 attempts.</li>
+  <li><b>PIN abandonment rate</b> — share of PIN prompts where the caller hangs up without entering anything.</li>
+  <li><b>Missed-call recovery rate</b> — share of missed calls where the missed party calls back (within 24 h).</li>
+  <li><b>Dead-end exit rate</b> — share of calls that end at the call-centre or trust-line IVR; split by which exit was played.</li>
+  <li><b>CSP-side vs Customer-side PIN usage</b> — split of which side enters PIN, to size demand and abuse signals.</li>
+  <li><b>Recipient pickup rate</b> — share of bridged calls that are answered; tracked against Truecaller-recognised vs not.</li>
 </ul>
 
 <h2>Known limitations (out of scope for this build)</h2>
@@ -691,6 +641,66 @@ sequenceDiagram
   <li><b>Dual-role caller</b> (same person both customer and CSP-user) — disallowed by the system.</li>
 </ul>
 </div>
+
+<hr style="margin: 60px 0 20px; border: none; border-top: 2px dashed var(--rule);">
+
+<h2 id="archives">Archives — today's mechanism, in detail</h2>
+<p class="section-intro">Full breakdown of how masking works today and the failure modes it produces. Kept here for context; not part of the proposed solution above.</p>
+
+<h3>Why it matters</h3>
+<p>The CSP ↔ customer call is load-bearing in every install, service ticket, and router recovery. When the call drops the CSP has no fallback — they wait, retry, or escalate; the customer waits with them. Repeated drops translate directly into NPS hits, slot abandonment, and avoidable truck-rolls.</p>
+
+<h3>MN1 / MN2 — how masking works today</h3>
+<p>The current implementation uses <b>two separate masked numbers per call session</b>, one per direction:</p>
+
+<div class="mn-grid">
+  <div class="mn-box">
+    <div class="mn-label">MN1</div>
+    <div class="mn-flow">Customer → MN1 → CSP</div>
+    <div class="mn-note">One-way route. Only customer-initiated calls work.</div>
+  </div>
+  <div class="mn-box">
+    <div class="mn-label">MN2</div>
+    <div class="mn-flow">CSP → MN2 → Customer</div>
+    <div class="mn-note">One-way route. Only CSP-initiated calls work.</div>
+  </div>
+</div>
+
+<p>Each is minted via <code>initiateCall</code> when the originating side taps the Call CTA in their app, and bound to a short-lived FROM → TO mapping in the backend. MN1 only knows how to route Customer → CSP; MN2 only the reverse. The masked number is also recycled across sessions — the same physical number is reused across many pairs over time, so a stale number in someone's call log has no guaranteed meaning later.</p>
+
+<h3>Where it breaks today</h3>
+<table>
+  <thead>
+    <tr><th style="width:32%">Failure mode</th><th>What happens today</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Unregistered / undetected SIM (CSP side)</b></td>
+      <td>On the CSP side, SIM capture at app login works ~85% of the time. The remaining ~15% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
+    </tr>
+    <tr>
+      <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
+      <td>CSP sees MN1 in their call log (the number a customer used to call them) and dials it back. MN1 only routes Customer → CSP, so the CSP's FROM isn't in the mapping. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Native dialer / call-log redial</b></td>
+      <td>CSP or customer dials the masked number from the phone dialer without a fresh CTA. No <code>initiateCall</code> fires; the mapping has expired (TTL) or never existed for this direction. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Customer callback</b></td>
+      <td>Customer sees a missed call from the masked number and calls back. No live mapping for the customer's FROM. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Forwarded masked number</b></td>
+      <td>CSP shares the masked number with a colleague on chat. Colleague dials from a phone whose SIM isn't in <code>sim_inventory</code> → no mapping. Call drops.</td>
+    </tr>
+    <tr>
+      <td><b>Telemetry gap</b></td>
+      <td>None of the above failures emit a distinct event. We can't size which bucket is biggest, so any fix today is unprioritised.</td>
+    </tr>
+  </tbody>
+</table>
+<p style="margin-top: 12px;"><b>Common thread:</b> every failure mode is rooted in the in-app + registered-SIM + fresh-TTL triple. Anything that breaks even one of those three drops the call.</p>
 
 <script>
   mermaid.initialize({
