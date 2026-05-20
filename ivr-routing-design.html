@@ -363,6 +363,14 @@ flowchart TD
 
 <div class="note"><b>Comms layer dependencies (must land before launch).</b> All outbound SMS — PIN delivery, PIN rotation, missed-call alerts — must be sent via <b>DLT-registered templates with the "Wiom" sender ID</b>, so recipients see "Wiom" as the sender rather than a generic 11444XXXX phone number. WhatsApp comms require the corresponding WhatsApp BSP setup with approved templates.</div>
 
+<h2>Building trust for the masked number</h2>
+<p>Routing the call is only half the job — the recipient still has to <em>pick up</em>. Two whitelisting layers are in place so the masked number shows as a recognised Wiom caller rather than an unknown or "suspected spam" number. Together they directly attack the DNP (Did-Not-Pick) issue:</p>
+<ul class="compact">
+  <li><b>Truecaller whitelisting</b> — the masked number shows with a green verified banner and the Wiom name in Truecaller (which the majority of Bharat users have installed).</li>
+  <li><b>VLT whitelisting</b> — telco-level verified-logo trust mark; the number is flagged at the network layer as a legitimate business caller.</li>
+</ul>
+<p>The two layers are independent and complementary — Truecaller covers app-side identification, VLT covers network-side identification. Both build trust that the call is legitimate, not spam.</p>
+
 <h2>Use cases</h2>
 <p class="section-intro">Nine scenarios — two that already work today (the in-app dial from either side) and seven fallback paths recovered by this design.</p>
 
