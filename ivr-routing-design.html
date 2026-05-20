@@ -238,8 +238,8 @@
   </thead>
   <tbody>
     <tr>
-      <td><b>Unregistered / undetected SIM (CSP side)</b></td>
-      <td>On the CSP side, SIM capture at app login works ~85% of the time. The remaining ~15% (eSIM, dual-SIM secondary slot, <code>READ_PHONE_STATE</code> denied) produce a FROM that isn't in any active mapping. Call drops. (Customer side has no SIM capture at all — only the registered mobile is known, so any call from a different SIM falls through.)</td>
+      <td><b>Call from a phone other than the registered one</b></td>
+      <td>Only the registered mobile is on file (for both CSP and customer). A call from any other SIM or phone produces a FROM that isn't in any active mapping. Call drops.</td>
     </tr>
     <tr>
       <td><b>Wrong-direction dial (MN1 ↔ MN2 confusion)</b></td>
@@ -255,7 +255,7 @@
     </tr>
     <tr>
       <td><b>Forwarded masked number</b></td>
-      <td>CSP shares the masked number with a colleague on chat. Colleague dials from a phone whose SIM isn't in <code>sim_inventory</code> → no mapping. Call drops.</td>
+      <td>CSP shares the masked number with a colleague on chat. Colleague dials from a phone whose number isn't in any active mapping. Call drops.</td>
     </tr>
     <tr>
       <td><b>Telemetry gap</b></td>
@@ -359,7 +359,7 @@
 <p><b>PIN format (TBD):</b> either the last 5 digits of the ticket ID, or a randomly generated 5-digit value unique across active tickets. <b>UC02 (forwarding to a colleague):</b> the CSP forwards the same SMS / WhatsApp message directly to the colleague — it carries the PIN, the masked number, and the ticket details (exact format to be specified by the solution team).</p>
 <p><b>Registered-number capture (audit step, before PIN entry).</b> For any caller flagged as <code>not customer</code>, the IVR first asks the caller to enter their <b>registered mobile number</b>, then the PIN. The IVR waits for input before moving on to the PIN prompt — no application-level timeout. The <code>(FROM → entered registered mobile)</code> pair is written to <b>Table 4</b> for audit. (For UC02, the colleague is typically a technician with their own Wiom-registered number — they enter that.)</p>
 <p><b>PIN retry policy:</b> capped at 3 attempts per call; on the third wrong entry the call drops to the dead-end IVR (trust line). With a 5-digit space (100,000 combos), 3 tries gives a 0.003% brute-force probability per call — sufficient for this surface.</p>
-<p><b>PIN scoping (guardrail):</b> when the caller is identified as a CSP Owner / User (their FROM is in <code>sim_inventory</code>), the Table 2 lookup is <b>scoped to customers on that CSP's active tickets only</b>. A PIN belonging to a customer outside their assigned set is treated as invalid — preventing a CSP from guessing or reaching a customer they aren't tagged to. Side benefit: collapses any cross-CSP PIN collision risk in the 5-digit space for identified callers.</p>
+<p><b>PIN scoping (guardrail):</b> when the caller is identified as a CSP Owner / User (their FROM matches a CSP-registered mobile), the Table 2 lookup is <b>scoped to customers on that CSP's active tickets only</b>. A PIN belonging to a customer outside their assigned set is treated as invalid — preventing a CSP from guessing or reaching a customer they aren't tagged to. Side benefit: collapses any cross-CSP PIN collision risk in the 5-digit space for identified callers.</p>
 <p><b>PIN rotation:</b> PINs rotate daily over the ticket lifetime to limit exposure on multi-day jobs. Each rotation triggers a fresh SMS to the Owner / Admin; the previous PIN expires the moment a new one is issued.</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
@@ -380,7 +380,7 @@ flowchart TD
 
     subgraph PA["Path A — In-app CTA (either party)"]
         direction LR
-        A([Tap Call CTA]):::start --> B[/Gather FROM<br/>CSP: SIMs + registered<br/>Customer: registered only/]
+        A([Tap Call CTA]):::start --> B[/Gather FROM<br/>registered mobile/]
         B --> C[/Resolve TO/]
         C --> D[(Table 1 write<br/>FROM list → TO)]:::store
         D --> E[/Masked number/]
@@ -490,7 +490,7 @@ flowchart TD
 <section class="usecase">
   <div class="uc-tag">Reference</div>
   <h3>In-app happy path (preserved) — identical flow for CSP App and Customer App</h3>
-  <div class="today">Works fine today, kept untouched. <b>Either side can initiate</b> the call from their own app: a CSP from the <b>CSP App</b>, or a customer from the <b>Customer App</b>. The system runs the same code path either way — same <code>initiateCall</code>, same Table 1 write, same masked number, same dial → bridge. Only the FROM list and the TO number flip depending on who tapped. <br/><br/><b>One asymmetry to be aware of:</b> on the CSP side we capture all SIMs into <code>sim_inventory</code> at login, so the FROM list can hold multiple numbers. On the customer side we use the <b>registered mobile only</b> — customer SIMs are never captured in <code>sim_inventory</code>.</div>
+  <div class="today">Works fine today, kept untouched. <b>Either side can initiate</b> the call from their own app: a CSP from the <b>CSP App</b>, or a customer from the <b>Customer App</b>. The system runs the same code path either way — same <code>initiateCall</code>, same Table 1 write, same masked number, same dial → bridge. Only the FROM and the TO flip depending on who tapped. The FROM is the caller's <b>registered mobile</b> in both directions.</div>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
@@ -519,7 +519,7 @@ sequenceDiagram
     </thead>
     <tbody>
       <tr><td><b>Caller</b></td><td>CSP-user in CSP App</td><td>Customer in Customer App</td></tr>
-      <tr><td><b>FROM list</b></td><td>CSP's SIMs in <code>sim_inventory</code> + registered mobile</td><td>Customer's <b>registered mobile only</b> (no SIM capture on customer side)</td></tr>
+      <tr><td><b>FROM</b></td><td>CSP's registered mobile</td><td>Customer's registered mobile</td></tr>
       <tr><td><b>TO</b></td><td>customer_mobile (for the active ticket)</td><td>technician_mobile (for the active ticket)</td></tr>
       <tr><td><b>Table 1 write</b></td><td><code>CSP_FROM_list → customer_mobile</code></td><td><code>customer_FROM_list → technician_mobile</code></td></tr>
       <tr><td><b>Bridges to</b></td><td>Customer</td><td>Technician</td></tr>
@@ -541,12 +541,12 @@ sequenceDiagram
     <tbody>
       <tr>
         <td><b>UC 01</b> — CSP calls from an unregistered SIM</td>
-        <td>CSP's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, permission denied, never logged in from this SIM). SIM-detect fails ~15% of the time; call drops.</td>
+        <td>CSP dials from a phone other than the one whose number is registered with Wiom (different SIM, second phone, etc.). The dialing FROM isn't in any active Table 1 mapping; call drops.</td>
         <td><code>not customer</code></td>
       </tr>
       <tr>
         <td><b>UC 02</b> — CSP forwards the masked number to a colleague</td>
-        <td>CSP shares the masked number with a colleague on a different phone. Colleague's SIM isn't in <code>sim_inventory</code>. Call drops.</td>
+        <td>CSP shares the masked number with a colleague on a different phone. The colleague's number isn't in any active mapping. Call drops.</td>
         <td><code>not customer</code></td>
       </tr>
       <tr>
