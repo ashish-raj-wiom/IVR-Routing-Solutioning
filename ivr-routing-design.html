@@ -594,6 +594,40 @@ sequenceDiagram
 
 <p>Each is minted via <code>initiateCall</code> when the originating side taps the Call CTA in their app, and bound to a short-lived FROM → TO mapping in the backend. MN1 only knows how to route Customer → CSP; MN2 only the reverse.</p>
 
+<h3>Today's flow</h3>
+
+<div class="diagram">
+<pre class="mermaid">
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 30, 'rankSpacing': 35}, 'themeVariables': {'fontSize': '13px'}}}%%
+flowchart TD
+
+    subgraph PCST["Path A — Customer initiates"]
+        direction LR
+        A1([Customer taps<br/>Call CTA]):::start --> D1[(MN1 mapping<br/>customer FROM → CSP)]:::store
+        D1 --> E1[/MN1 shown<br/>in Customer App/]
+    end
+
+    subgraph PCSP["Path B — CSP initiates"]
+        direction LR
+        A2([CSP taps<br/>Call CTA]):::start --> D2[(MN2 mapping<br/>CSP FROM → customer)]:::store
+        D2 --> E2[/MN2 shown<br/>in CSP App/]
+    end
+
+    F{Caller dials MN1 or MN2}
+    E1 -. dials .-> F
+    E2 -. dials .-> F
+
+    F --> G{FROM matches the<br/>mapping for that MN?}
+    G -->|Yes| H([Bridge to TO ✓]):::happy
+    G -->|No<br/>TTL expired / wrong direction /<br/>unknown SIM / colleague phone| X([Call drops silently]):::deadend
+
+    classDef start    fill:#37474f,stroke:#263238,color:#fff
+    classDef happy    fill:#4caf50,stroke:#2e7d32,color:#fff
+    classDef deadend  fill:#e53935,stroke:#b71c1c,color:#fff
+    classDef store    fill:#2196f3,stroke:#1565c0,color:#fff
+</pre>
+</div>
+
 <h3>Use-case coverage — today vs this solution</h3>
 <table>
   <thead>
