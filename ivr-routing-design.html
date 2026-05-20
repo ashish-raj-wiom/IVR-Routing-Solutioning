@@ -295,6 +295,7 @@
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
 <p><b>PIN distribution</b> — issued per active ticket on the partner side. <b>Primary channel: SMS</b> to the partner-org's Owner / Admin registered mobile at ticket creation (WhatsApp may be sent as a second channel). The ticket card in the app shows the same PIN as reinforcement. The IVR PIN prompt is a reminder of the SMS the caller already received — it does not redirect them to the app.</p>
 <p><b>PIN format (TBD):</b> either the last 5 digits of the ticket ID, or a randomly generated 5-digit value unique across active tickets. <b>UC02 (forwarding to a colleague):</b> the partner forwards the same SMS / WhatsApp message directly to the colleague — it carries the PIN, the masked number, and the ticket details (exact format to be specified by the solution team).</p>
+<p><b>PIN retry policy:</b> capped at 3 attempts per call; on the third wrong entry the call drops to the dead-end IVR. With a 5-digit space (100,000 combos), 3 tries gives a 0.003% brute-force probability per call — sufficient for this surface.</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
 <h2>End-to-end flow</h2>
@@ -334,7 +335,7 @@ flowchart TD
     K2 -->|Yes| H
     K2 -->|No| O
     J -->|No / API fail| L[Gather 5-digit PIN]:::fallback
-    L --> M{Valid PIN?}
+    L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
     N --> H
     M -->|No| O([IVR: Open the app<br/>or contact support]):::deadend
@@ -599,7 +600,6 @@ sequenceDiagram
   <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR nudges to call via app (rather than dropping).</li>
   <li><b>Customer with &gt; 1 active ticket</b> — Table 3 returns the most recent ticket (created_at DESC); customer is bridged to that technician.</li>
   <li><b>Dual-role caller</b> (same person both customer and partner-user) — disallowed by the system.</li>
-  <li><b>PIN brute-force protection</b> — pending decision; per leadership review, at minimum a retry cap is required before production.</li>
 </ul>
 </div>
 
