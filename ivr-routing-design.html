@@ -617,7 +617,7 @@ flowchart TD
 
     subgraph PCSP["Path B — CSP initiates"]
         direction LR
-        A2([CSP taps<br/>Call CTA]):::start --> D2[(MN2 mapping<br/>CSP FROM → customer)]:::store
+        A2([CSP taps<br/>Call CTA]):::start --> D2[(MN2 mapping<br/>CSP FROM (sim_inventory<br/>+ registered mobile) → customer)]:::store
         D2 --> E2[/MN2 shown<br/>in CSP App/]
     end
 
