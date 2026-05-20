@@ -27,10 +27,12 @@
 
 The system is, at its core, an **authentication system** for masked phone calls between a CSP (Connection Service Provider / field technician) and a customer assigned to one of their active tickets.
 
-- **Recognised callers** (FROM in Table 1) bridge directly — happy path.
-- **Unrecognised callers** authenticate by entering a PIN; Table 2 lookup returns the other party's mobile. PIN encodes the ticket + direction.
-- **Failed authentication** (3 wrong PIN attempts) drops to a dead-end IVR. `is_customer(FROM)` is consulted *only* at this point to decide which dead-end message plays.
-- **Single masked number** for both directions — eliminates today's MN1/MN2 split.
+The HTML spec uses four defined terms throughout — **Recognised, Authorised, Seamless, Graceful fallback** — see the [Glossary](#glossary) for definitions.
+
+- **Recognised callers** (FROM in Table 1) bridge directly — seamless.
+- **Unrecognised callers** authorise themselves by entering a PIN; Table 2 lookup returns the other party's mobile. PIN encodes the ticket + direction.
+- **Failed authorisation** (3 wrong PIN attempts) drops to a graceful-fallback IVR. `is_customer(FROM)` is consulted *only* at this point to decide which message plays (call centre vs trust line).
+- **Single masked number** for both directions.
 
 ### Identity store at a glance
 
@@ -256,7 +258,7 @@ Messages that must ship before launch:
 | Trade-off | Resolution |
 |---|---|
 | Removing `is_customer` from main routing means customer callback from dialer now requires a PIN (it didn't before). | Accepted. Customer has the PIN via SMS from the same message that carried the masked number. The friction is one IVR step. |
-| PIN possession = authorisation, regardless of who holds it (UC02 colleague forwarding). | Accepted. Usability ↔ security trade-off — the colleague case is a real CSP workflow and we don't want to block it. |
+| PIN possession = authorisation, regardless of who holds it (UC04 colleague forwarding). | Accepted. Usability ↔ security trade-off — the colleague case is a real CSP workflow and we don't want to block it. |
 | Customer-side PIN lookup is unscoped (no equivalent to the CSP sim_inventory scoping). | Accepted. 3-retry cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step. |
 | Daily PIN rotation adds SMS volume. | Accepted. SMS is cheap relative to a dropped call (NPS hit, retry truck-roll). |
 | Dead-end can't distinguish "customer with closed ticket" from "stranger" without `is_customer`. | Resolved — `is_customer` is kept for exactly this purpose. |
@@ -286,9 +288,7 @@ Messages that must ship before launch:
 | PIN format (last 5 of ticket ID vs random 5-digit) | Solution team |
 | Exact wording of every IVR prompt and SMS / WA template (Hindi-first) | Solution team |
 | Final list of regional languages (post-Hindi) | Solution team |
-| Trust-line number `78368 11111` — confirm this is the right support number for masked-call dead-ends | Ops |
-| Call-centre number `88803 22222` — confirm available for IVR-handoff use | Ops |
-| Daily PIN rotation time of day (avoid mid-call rotation conflicts) | Tech |
+| Daily PIN rotation time of day (avoid mid-rotation cutover) | Tech |
 | TTL on Table 1 — confirm `min(call connected, 5 min)` is sufficient given typical field retry patterns | Tech |
 | Missed-call CleverTap event payload schema — finalise fields before backend implementation | Tech + Solution team |
 | DLT template registration for all SMS variants | Comms / Ops |
@@ -316,11 +316,15 @@ Messages that must ship before launch:
 
 | Term | Meaning |
 |---|---|
+| **Recognised** | The caller's identity can be resolved — their number is in an active mapping (Table 1), or they hold a valid PIN (Table 2). |
+| **Authorised** | The connection is legitimate — the PIN entered (or the FROM matched) belongs to an active ticket for the party being reached. |
+| **Seamless** | The call connects without the user opening an app, navigating UI, or understanding masked numbers. Zero friction in-app; survivable friction in fallback. |
+| **Graceful fallback** | For unrecognised or unauthorised callers — the user understands why the call did not connect and has a clear, achievable next step. Not a dead-end. |
 | **Masked number** | A virtual phone number provisioned by Exotel that routes via a dynamic lookup on our backend; replaces direct CSP ↔ customer number exchange. |
 | **MN1 / MN2** | Today's two-masked-number scheme — one for each direction (Customer→CSP, CSP→Customer). To be retired. |
 | **CSP** | Connection Service Provider — Wiom's field partner; the technician installing / fixing / picking up. |
 | **PIN** | 5-digit numeric credential, issued per ticket per side, used as fallback authorisation when FROM isn't recognised. |
-| **Table 1** | Active call mapping (FROM → TO), short-lived, the "happy path" lookup. |
+| **Table 1** | Active call mapping (FROM → TO), short-lived; a hit here means the caller is recognised and the bridge is seamless. |
 | **Table 2** | PIN registry (PIN → other_party_mobile), per-ticket, per-side. |
 | **`is_customer` API** | Binary lookup ("is this number a known customer?"); called only at the dead-end junction. |
 | **`sim_inventory`** | Existing CSP-SIM capture set; used for PIN scoping. |
