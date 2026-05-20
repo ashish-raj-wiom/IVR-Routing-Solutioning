@@ -219,7 +219,7 @@
   <li><b>Caller may not be on their registered number.</b> They may be on a secondary SIM, a family phone, or an unregistered device — we can't always identify them by their FROM.</li>
   <li><b>A CSP can have many active customers at once.</b> Knowing it's the CSP doesn't tell us <em>which</em> customer they want to reach.</li>
   <li><b>Multiple humans may share one CSP App login.</b> A technician (e.g., Rohit) signing into the Owner's CSP App is the canonical case — the dialing identity and the logged-in identity don't match.</li>
-  <li><b>A customer may have multiple active tickets simultaneously.</b> Install + Restore can co-exist; the system needs to disambiguate which technician they want to reach.</li>
+  <li><b>A customer may have multiple active tickets simultaneously.</b> Restore + Pickup can co-exist (Install is pre-service so it doesn't overlap with the others); the system needs to disambiguate which technician they want to reach.</li>
   <li><b>The customer may call back from their dialer with no context.</b> They've seen a missed call on a masked number and dial back — in their mental model, calling back "just works." It doesn't today.</li>
   <li><b>A CSP may forward the call to a colleague.</b> Common informal field-ops practice; the colleague has no Wiom app installed and is on a different phone.</li>
   <li><b>Either party may miss calls.</b> Field CSPs are on rooftops, in cable ducts, on patchy signal; customers are busy or screening.</li>
