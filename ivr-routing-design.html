@@ -339,7 +339,7 @@ flowchart TD
     L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
     N --> H
-    M -->|No| OT([IVR: Contact trust line<br/>number TBD]):::deadend
+    M -->|No| OT([IVR: Contact trust line<br/>78368 11111]):::deadend
 
     H --> Z{Picked up?<br/>via Exotel disposition}
     Z -->|Yes| ZP([Call connected ✓]):::happy
