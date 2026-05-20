@@ -355,10 +355,14 @@
 
 <h2>PIN architecture</h2>
 <p>PIN-based fallback is the standard pattern in double-blind calling systems (Ola, Uber, Swiggy). When the caller's number can't be matched to a recipient, the IVR asks for a short PIN that was pre-shared with the legitimate user — entering it unlocks the destination. In our design the PIN activates whenever Resolve-FROM says "not a customer" (UC01–UC04); customers skip it entirely since Table 3 resolves their technician directly.</p>
-<p><b>PIN distribution</b> — issued per active ticket on the CSP side. <b>Primary channel: SMS</b> to the CSP-org's Owner / Admin registered mobile at ticket creation (WhatsApp may be sent as a second channel). The ticket card in the app shows the same PIN as reinforcement. The IVR PIN prompt reminds the caller of the SMS they received and also points them to the in-app ticket card — covering both the Bharat field user and the CSP who has the app handy.</p>
+<p><b>PIN distribution.</b> Each active ticket gets <b>two PINs</b> — one for the customer (routes to that ticket's technician), one for the CSP (routes to that ticket's customer). Delivery channels are different on each side:</p>
+<ul class="compact">
+  <li><b>Customer-side PIN</b> — sent to the customer's registered mobile via <b>SMS / WhatsApp</b> at ticket creation. The same message carries the masked number to dial, so the customer has both pieces in one place before they ever need to call.</li>
+  <li><b>CSP-side PIN</b> — shown on the ticket card in the <b>CSP App</b>. No SMS — CSPs are app-engaged at ticket level. The IVR PIN prompt points them to the app ticket card.</li>
+</ul>
 <p><b>PIN format (TBD):</b> either the last 5 digits of the ticket ID, or a randomly generated 5-digit value unique across active tickets. <b>UC02 (forwarding to a colleague):</b> the CSP forwards the same SMS / WhatsApp message directly to the colleague — it carries the PIN, the masked number, and the ticket details (exact format to be specified by the solution team).</p>
 <p><b>PIN retry policy:</b> capped at 3 attempts per call; on the third wrong entry the call drops to the dead-end IVR (trust line). With a 5-digit space (100,000 combos), 3 tries gives a 0.003% brute-force probability per call — sufficient for this surface.</p>
-<p><b>PIN scoping (guardrail):</b> when the caller is identified as a CSP Owner / User (their FROM is in <code>sim_inventory</code>), the Table 2 lookup is <b>scoped to customers on that CSP's active tickets only</b>. A PIN belonging to a customer outside their assigned set is treated as invalid — preventing a CSP from guessing or reaching a customer they aren't tagged to. Side benefit: collapses any cross-CSP PIN collision risk in the 5-digit space for identified callers.</p>
+<p><b>PIN scoping (guardrail).</b> When the caller's FROM is recognised as a CSP (in <code>sim_inventory</code>), the Table 2 lookup is restricted to <b>CSP-side PINs belonging to that CSP's active tickets</b>. A PIN belonging to another CSP's customer is treated as invalid — preventing a CSP from guessing or reaching a customer they aren't tagged to. Customer-side PIN lookups are unscoped (acceptable given the 3-retry cap and per-ticket PIN issuance).</p>
 <p><b>PIN rotation:</b> PINs rotate daily over the ticket lifetime to limit exposure on multi-day jobs. Each rotation triggers a fresh SMS to the Owner / Admin; the previous PIN expires the moment a new one is issued.</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony mechanism: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Learn more &rarr;</a></p>
 
@@ -392,17 +396,13 @@ flowchart TD
     PB -. dials .-> F
 
     F -->|Hit| H([Dial recipient]):::happy
-    F -->|Miss| I[Resolve-FROM API]
-    I --> J{Is caller<br/>a customer?}
-    J -->|Yes| K[(Table 3<br/>Cx → Tech)]:::store
-    K --> K2{Active<br/>tech found?}
-    K2 -->|Yes| H
-    K2 -->|No| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
-    J -->|No / API fail| L[Gather 5-digit PIN]:::fallback
+    F -->|Miss| L[Gather 5-digit PIN]:::fallback
     L --> M{Valid PIN?<br/>up to 3 tries}
-    M -->|Yes| N[(Table 2<br/>PIN → Cx mobile)]:::store
+    M -->|Yes| N[(Table 2<br/>PIN → other party)]:::store
     N --> H
-    M -->|No| OT([IVR: Open the app or<br/>call 78368 11111]):::deadend
+    M -->|No| IC{is_customer<br/>FROM?}
+    IC -->|Yes| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
+    IC -->|No| OT([IVR: Open the app or<br/>call 78368 11111]):::deadend
 
     H --> Z{Picked up?<br/>via Exotel disposition}
     Z -->|Yes| ZP([Call connected ✓]):::happy
@@ -478,6 +478,16 @@ flowchart TD
     </tr>
     <tr>
       <td><b>UC 05</b> — Customer calls back after a missed call</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 06</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 07</b> — Customer has more than one active ticket</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
@@ -567,16 +577,13 @@ sequenceDiagram
     participant Caller as Caller<br/>UC01 unknown SIM · UC02 colleague<br/>UC03 callback · UC04 dial / re-dial
     participant MN as Masked Number
     participant IVR as IVR
-    participant API as Is-Customer API
     participant C as Customer
 
     Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
     Note over IVR: Table 1 lookup → miss
-    IVR->>API: is_customer(FROM)?
-    API-->>IVR: false
     IVR-->>Caller: IVR: 'Enter 5-digit PIN'
-    Caller->>IVR: Enters PIN
+    Caller->>IVR: Enters CSP-side PIN
     Note over IVR: Table 2 lookup<br/>PIN → customer mobile
     IVR->>C: Bridge to customer
 </pre>
@@ -586,29 +593,51 @@ sequenceDiagram
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use case 05</div>
-  <h3>Customer calls back the masked number</h3>
-  <div class="today">Customer sees a missed call on the masked number and dials back from their phone's call log. The masked number isn't recognised; call drops.</div>
+  <div class="uc-tag">Use cases 05 – 07</div>
+  <h3>Customer-side fallback — three distinct problems, one shared resolution</h3>
+  <p class="section-intro" style="margin: 0 0 12px;">Three customer-side scenarios that fail today; all resolve through the same PIN path. The customer holds their PIN via SMS / WhatsApp sent at ticket creation (along with the masked number to dial).</p>
+
+  <table style="font-size: 13px; margin: 12px 0;">
+    <thead>
+      <tr><th style="width:32%">Use case</th><th>Today (why it fails)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>UC 05</b> — Customer calls back after a missed call</td>
+        <td>Customer sees a missed call on the masked number and dials back from their call log. The masked number isn't recognised; call drops.</td>
+      </tr>
+      <tr>
+        <td><b>UC 06</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
+        <td>Customer's FROM doesn't match the registered mobile on file. No active mapping; call drops.</td>
+      </tr>
+      <tr>
+        <td><b>UC 07</b> — Customer has more than one active ticket</td>
+        <td>Even if the customer is recognised, the system can't tell which ticket / technician they want to reach. Today the routing is ambiguous.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p style="margin: 14px 0 6px; font-size: 14px;"><b>Shared resolution path:</b></p>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant C as Customer (registered)
+    participant C as Customer<br/>UC05 callback · UC06 unknown SIM<br/>UC07 multi-ticket
     participant MN as Masked Number
     participant IVR as IVR
-    participant API as Is-Customer API
     participant T as Technician
 
-    C->>MN: Dial masked number from dialer
+    C->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
     Note over IVR: Table 1 lookup → miss
-    IVR->>API: is_customer(FROM)?
-    API-->>IVR: true
-    Note over IVR: Table 3 lookup<br/>customer → active technician
+    IVR-->>C: IVR: 'Enter the PIN from your SMS'
+    C->>IVR: Enters customer-side PIN
+    Note over IVR: Table 2 lookup<br/>PIN → technician mobile<br/>(PIN identifies the ticket)
     IVR->>T: Bridge to technician
 </pre>
   </div>
-  <div class="outcome">Customer-initiated callbacks connect end-to-end. No PIN needed — Table 3 resolves the technician (most recent ticket wins if more than one is active). If the customer's ticket is already closed (no active technician found), the IVR plays "Open the app or call 88803 22222" instead of dropping silently.</div>
+
+  <div class="outcome">All three connect end-to-end via the same PIN path. The PIN itself identifies the ticket (each ticket has its own customer-side PIN), so multi-ticket disambiguation is implicit. If the customer's ticket is already closed (PIN no longer valid), three wrong attempts route to the dead-end IVR: <em>"Open the app or call 88803 22222"</em> (call centre), because <code>is_customer</code> returns true at that point.</div>
 </section>
 
 <h2>Tables</h2>
@@ -624,16 +653,10 @@ sequenceDiagram
       <td>TTL = min(call connected, 5 minutes) — today's logic, unchanged</td>
     </tr>
     <tr>
-      <td><b>Table 2</b> — PIN registry</td>
-      <td><code>customer_mobile → 5-digit PIN</code></td>
-      <td><span class="tag new">new</span> Generated when a ticket opens</td>
+      <td><b>Table 2</b> — PIN registry (both sides)</td>
+      <td><code>PIN → other_party_mobile</code></td>
+      <td><span class="tag new">new</span> Two PINs per active ticket — one for the customer (routes to the technician), one for the CSP (routes to the customer). Generated on ticket open, rotated daily.</td>
       <td>Per active ticket; GC on ticket closure</td>
-    </tr>
-    <tr>
-      <td><b>Table 3</b> — Cx ↔ Technician resolver</td>
-      <td><code>customer_mobile → technician_mobile</code></td>
-      <td><span class="tag new">new</span> TAS doesn't carry customer_mobile, so this mapping doesn't exist anywhere today. Build it by joining TAS (for the active technician assignment per ticket) with customer-service (for the customer_mobile). Exposed as a fast lookup API for IVR.</td>
-      <td>Refresh on ticket open / technician reassignment; GC on ticket closure</td>
     </tr>
   </tbody>
 </table>
@@ -664,9 +687,7 @@ sequenceDiagram
 <h2>Known limitations (out of scope for this build)</h2>
 <div class="note">
 <ul class="compact">
-  <li><b>Customer calling from an unregistered SIM (incl. dual-SIM / family phone)</b> — explicitly out of scope. Falls into the not-customer PIN path; with no PIN held the call ends at the trust-line IVR after 3 attempts.</li>
-  <li><b>Customer dialing back after their ticket is closed</b> — Table 3 has no active technician → IVR plays "Contact call centre 88803 22222" (no silent drop).</li>
-  <li><b>Customer with &gt; 1 active ticket</b> — Table 3 returns the most recent ticket (created_at DESC); customer is bridged to that technician.</li>
+  <li><b>Customer dialing back after their ticket is closed</b> — PIN is no longer valid; three wrong attempts route to the dead-end IVR ("Open the app or call 88803 22222") since <code>is_customer</code> still returns true.</li>
   <li><b>Dual-role caller</b> (same person both customer and CSP-user) — disallowed by the system.</li>
 </ul>
 </div>
