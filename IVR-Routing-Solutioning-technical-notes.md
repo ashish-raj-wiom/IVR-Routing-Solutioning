@@ -80,12 +80,17 @@ PIN is therefore an *exception path* — used only when the routing is genuinely
 | `rotated_at` | timestamp | Updated on daily rotation. |
 | `expires_at` | timestamp | Set on ticket closure. |
 
-**Lookup contract:**
+**Two access patterns** (same physical table):
 
-- Input: `pin` (DTMF digits from IVR), optional `caller_from`.
-- If `caller_from` is in `sim_inventory`: restrict to rows where `side = 'csp'` AND `csp_id` matches the calling CSP. (PIN scoping guardrail.)
-- Otherwise: unrestricted lookup across active PINs.
-- Return: `other_party_mobile` if exactly one match; null if no match or scoping rejected.
+1. **By `pin`** — used by the PIN-prompt flow (Path 3, Path 4). Primary key on `pin`.
+   - Input: `pin` (DTMF digits from IVR), optional `caller_from`.
+   - If `caller_from` is in `sim_inventory`: restrict to rows where `side = 'csp'` AND `csp_id` matches the calling CSP. (PIN scoping guardrail.)
+   - Otherwise: unrestricted lookup across active PINs.
+   - Return: `other_party_mobile` if exactly one match; null if no match or scoping rejected.
+
+2. **By `(ticket_id, side)`** — used by `user_identification` to fetch `other_party_mobile` for the single-counterparty bridge (Path 2). Requires a secondary index on `(ticket_id, side)`.
+   - Input: `ticket_id`, `side`.
+   - Return: `other_party_mobile` from that row.
 
 **Generation:**
 

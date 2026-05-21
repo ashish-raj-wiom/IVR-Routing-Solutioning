@@ -311,7 +311,7 @@
 <p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued. Any inbound dial in that state lands in the dead-end IVR.</p>
 
 <h2>Authorization resolution</h2>
-<p>When Table 1 misses, the system calls <b><code>user_identification(FROM)</code></b>. The response carries three things: the user type (<code>customer</code> / <code>csp</code> / <code>unknown</code>), the number of active tickets, and — if exactly one ticket — the counterparty's mobile.</p>
+<p>When Table 1 misses, the system calls <b><code>user_identification(FROM)</code></b>. The response carries three things: the user type (<code>customer</code> / <code>csp</code> / <code>unknown</code>), the number of active tickets, and — if exactly one ticket — the counterparty's mobile (fetched from Table 2 by <code>ticket_id + side</code>; no separate table needed).</p>
 <ul class="compact">
   <li><b>1 active ticket</b> → bridge directly to the counterparty. No PIN.</li>
   <li><b>2 or more active tickets</b> → IVR asks for a <b>5-digit PIN</b> to disambiguate which ticket; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>.</li>
@@ -633,8 +633,8 @@ sequenceDiagram
     </tr>
     <tr>
       <td><b>Table 2</b> — PIN registry (both sides)</td>
-      <td><code>PIN → other_party_mobile</code></td>
-      <td><span class="tag new">new</span> Two PINs per active ticket — one for the customer (routes to the technician), one for the CSP (routes to the customer). Generated on ticket open, rotated daily.</td>
+      <td><code>PIN → other_party_mobile</code><br/>(also indexed by <code>ticket_id + side</code>)</td>
+      <td><span class="tag new">new</span> Two rows per active ticket — one for the customer (routes to the technician), one for the CSP (routes to the customer). Generated on ticket open, rotated daily.<br/><br/>Two access patterns: <b>by PIN</b> (the PIN-prompt path) and <b>by ticket + side</b> (the <code>user_identification</code> single-counterparty bridge — fetches <code>other_party_mobile</code> without going through a PIN).</td>
       <td>Per active ticket; GC on ticket closure</td>
     </tr>
   </tbody>
