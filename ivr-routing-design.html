@@ -402,12 +402,13 @@ flowchart TD
     F -->|Hit| H([Bridge to other party]):::happy
     F -->|Miss| UI[user_identification API]
     UI --> UC{Active tickets<br/>for this user?}
-    UC -->|Exactly 1| H
+    UC -->|Exactly 1| T2A[(Table 2 lookup<br/>by ticket_id + side)]:::store
+    T2A --> H
     UC -->|2 or more| L[Gather 5-digit PIN]:::fallback
     UC -->|0 / unknown| DE
     L --> M{Valid PIN?<br/>up to 3 tries}
-    M -->|Yes| N[(Table 2<br/>PIN → other party)]:::store
-    N --> H
+    M -->|Yes| T2B[(Table 2 lookup<br/>by PIN)]:::store
+    T2B --> H
     M -->|No| DE
     DE{User type<br/>from user_identification}
     DE -->|Customer| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
