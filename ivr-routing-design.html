@@ -250,6 +250,96 @@
     color: #222;
     margin: 12px 0 16px;
   }
+
+  /* ---------- Mobile overrides (≤ 720px) ---------- */
+  @media (max-width: 720px) {
+    body {
+      padding: 0 14px 40px;
+      margin: 16px auto;
+      line-height: 1.5;
+    }
+    h1 {
+      font-size: 22px;
+      padding-bottom: 8px;
+      line-height: 1.25;
+    }
+    h2 {
+      font-size: 17px;
+      margin-top: 28px;
+      padding-bottom: 5px;
+    }
+    h3 {
+      font-size: 14px;
+      margin-top: 18px;
+    }
+    .subtitle { font-size: 13px; }
+    .lead { font-size: 14px; line-height: 1.55; margin: 10px 0 12px; }
+    p, li { font-size: 14px; }
+    .section-intro { font-size: 13px; }
+
+    /* Tables — horizontal scroll if they overflow, but keep table semantics */
+    table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      font-size: 13px;
+    }
+    th, td { padding: 8px 10px; }
+    /* Allow long cell text to wrap rather than force-stretch the table */
+    td, th { word-break: normal; overflow-wrap: anywhere; }
+
+    /* Tree section — tighter nesting indents */
+    .usecase-tree h3 {
+      font-size: 14px;
+      margin-top: 16px;
+    }
+    .usecase-tree h3 small { font-size: 12px; }
+    .usecase-tree ul { padding-left: 14px; }
+    .usecase-tree li { font-size: 13px; line-height: 1.5; }
+
+    /* Use case sections — tighter padding */
+    .usecase {
+      padding: 14px 14px;
+      margin: 16px 0;
+    }
+    .usecase h3 {
+      font-size: 16px;
+      margin: 4px 0 10px;
+    }
+
+    /* Diagrams — tighter and keep horizontal scroll on overflow */
+    .diagram {
+      padding: 10px;
+      margin: 10px 0;
+    }
+    pre.mermaid { font-size: 12px; }
+
+    /* Notes / today / outcome — tighter padding + font */
+    .note, .today, .outcome {
+      font-size: 13px;
+      padding: 9px 11px;
+    }
+
+    /* Legend — smaller chips */
+    .legend { gap: 10px; font-size: 12px; }
+    .swatch { width: 12px; height: 12px; }
+
+    /* Path + coverage chips — keep on one line, smaller */
+    .path, .cov-yes, .cov-no {
+      font-size: 10px;
+      padding: 1px 6px;
+      margin-left: 4px;
+    }
+
+    /* MN1 / MN2 cards a bit tighter */
+    .mn-box { padding: 12px 14px; }
+    .mn-flow { font-size: 14px; }
+    .mn-note { font-size: 12px; }
+
+    /* Tag chips */
+    .tag { font-size: 10px; padding: 1px 6px; }
+  }
 </style>
 </head>
 <body>
