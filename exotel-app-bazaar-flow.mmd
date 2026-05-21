@@ -1,0 +1,35 @@
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 35, 'rankSpacing': 45}, 'themeVariables': {'fontSize': '14px'}}}%%
+flowchart TD
+
+    Start([Caller dials masked number]):::start --> A2
+
+    A2["<b>Applet 2 — Connect #1</b><br/>Mode: Dynamic URL<br/>POST /ivr/resolve-caller<br/>Timeout: 5s<br/>Caller-ID: masked number"]:::connect
+
+    A2 -->|destination returned<br/>Path 1 or Path 2| Bridge1([Bridges to counterparty]):::happy
+    A2 -->|no destination<br/>multi-ticket / unknown| A4
+
+    A4["<b>Applet 4 — Gather / IVR</b><br/>Prompt: 'Enter your 5-digit PIN'<br/>Digits: 5  |  Retries: 3<br/>Per-attempt timeout: 5s"]:::gather
+
+    A4 -->|PIN entered| A5
+    A4 -->|3 wrong attempts| A6
+
+    A5["<b>Applet 5 — Connect #2</b><br/>Mode: Dynamic URL<br/>POST /ivr/resolve-pin?digits={digits}<br/>Timeout: 5s"]:::connect
+
+    A5 -->|destination returned<br/>Path 3 or Path 4| Bridge2([Bridges to counterparty]):::happy
+    A5 -->|no destination<br/>PIN invalid| A6
+
+    A6["<b>Applet 6 — Playback</b><br/>Audio source: Dynamic URL<br/>GET /audio/deadend?call_id={call_id}<br/><br/>Backend serves:<br/>• customer audio  (call centre 88803 22222)<br/>• non-customer audio  (trust line 78368 11111)"]:::playback
+
+    A6 --> EndCall
+
+    Bridge1 --> EndCall
+    Bridge2 --> EndCall
+
+    EndCall(["End call<br/><br/><b>Disposition webhook</b> (account-level)<br/>POST /log/disposition<br/>→ Backend fires CleverTap missed-call<br/>event if disposition ≠ answered"]):::disposition
+
+    classDef start       fill:#37474f,stroke:#263238,color:#fff
+    classDef connect     fill:#e3f2fd,stroke:#1976d2,color:#0d47a1
+    classDef gather      fill:#f3e5f5,stroke:#7b1fa2,color:#4a148c
+    classDef playback    fill:#fff3e0,stroke:#ef6c00,color:#bf360c
+    classDef happy       fill:#4caf50,stroke:#2e7d32,color:#fff
+    classDef disposition fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
