@@ -322,13 +322,23 @@
 <p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued. Any inbound dial in that state lands in the dead-end IVR.</p>
 
 <h2>Authorization resolution</h2>
+
+<h3>The problem this solves</h3>
+<p>Once Table 1 doesn't tell us where to bridge a call, we need to figure out the right counterparty. Two flavours of "don't know where to bridge":</p>
+<ul class="compact">
+  <li><b>The caller is unknown</b> — their FROM doesn't match any customer or CSP we recognise. We can't route them anywhere safely without further proof of who they are or who they want to reach.</li>
+  <li><b>The caller is known, but ambiguous</b> — we recognise them (customer or CSP user), but they have multiple active tickets. We don't know <em>which</em> counterparty they want to reach.</li>
+</ul>
+<p>Authorization resolution closes both gaps using one mechanism: identify what we can, then ask the caller for a PIN only when identification alone isn't enough.</p>
+
+<h3>How it works</h3>
 <p>When Table 1 misses, the system calls <b><code>user_identification(FROM)</code></b>. The response carries three things: the user type (<code>customer</code> / <code>csp</code> / <code>unknown</code>), the number of active tickets, and — if exactly one ticket — the counterparty's mobile (fetched from Table 2 by <code>ticket_id + side</code>; no separate table needed).</p>
 <ul class="compact">
-  <li><b>1 active ticket</b> → bridge directly to the counterparty. No PIN.</li>
-  <li><b>2 or more active tickets</b> → IVR asks for a <b>5-digit PIN</b> to disambiguate which ticket; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>.</li>
-  <li><b>0 tickets / unknown user</b> → dead-end IVR (the user type decides which message plays).</li>
+  <li><b>1 active ticket</b> → routing is unambiguous → bridge directly to the counterparty. No PIN.</li>
+  <li><b>2 or more active tickets</b> → known caller but ambiguous routing → IVR asks for a <b>5-digit PIN</b>; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>. The PIN itself identifies the ticket.</li>
+  <li><b>0 tickets / unknown user</b> → can't authorise → dead-end IVR (the user type decides which helpline message plays).</li>
 </ul>
-<p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 04), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
+<p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 13), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
 <p><b>Guardrails:</b> 3-retry cap per call; PIN rotates daily; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
 
 <h3>PIN discovery — how each caller gets their PIN</h3>
