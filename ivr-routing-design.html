@@ -201,6 +201,17 @@
     margin-left: 6px;
     letter-spacing: 0.2px;
   }
+  .cov-yes, .cov-no {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-left: 6px;
+    letter-spacing: 0.2px;
+  }
+  .cov-yes { background: #e8f5e9; color: #2e7d32; }
+  .cov-no  { background: #fef3f2; color: #c62828; }
   .mn-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -711,89 +722,64 @@ flowchart TD
 </div>
 
 <h3>Use-case coverage — today vs this solution</h3>
-<table>
-  <thead>
-    <tr>
-      <th style="width:64%">Scenario</th>
-      <th style="text-align:center; width:14%">Today</th>
-      <th style="text-align:center; width:22%">With this solution</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the app</b></td></tr>
-    <tr>
-      <td><b>UC 01</b> — CSP dials from the CSP App via registered SIM</td>
-      <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 02</b> — Customer dials from the Customer App via registered SIM</td>
-      <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
+<p class="section-intro">Same tree as the Use Cases section, with each UC marked for whether it works today and whether it works under this design.</p>
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (CSP user)</b></td></tr>
-    <tr>
-      <td><b>UC 03</b> — Previously-used Wiom number from the dialer · single active ticket</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 04</b> — Previously-used Wiom number from the dialer · multiple active tickets</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 05</b> — Callback on a customer-initiated masked number · single active ticket</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 06</b> — Callback on a customer-initiated masked number · multiple active tickets</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
+<div class="usecase-tree">
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (Customer)</b></td></tr>
-    <tr>
-      <td><b>UC 07</b> — Previously-used Wiom number from the dialer · single active ticket (~99%)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 08</b> — Previously-used Wiom number from the dialer · multiple active tickets (~1%)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 09</b> — Callback on a CSP-initiated masked number · single active ticket (~99%)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 10</b> — Callback on a CSP-initiated masked number · multiple active tickets (~1%)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
+  <h3>Caller identified <small>— FROM is a registered mobile or in <code>sim_inventory</code></small></h3>
+  <ul>
+    <li><b>Calling from the app</b>
+      <ul>
+        <li><b>UC 01</b> — CSP dials from the CSP App via registered SIM <span class="cov-yes">today ✓</span> <span class="cov-yes">solution ✓</span></li>
+        <li><b>UC 02</b> — Customer dials from the Customer App via registered SIM <span class="cov-yes">today ✓</span> <span class="cov-yes">solution ✓</span></li>
+      </ul>
+    </li>
+    <li><b>Calling from the dialer</b>
+      <ul>
+        <li><b>CSP user calling</b>
+          <ul>
+            <li><i>Previously-used Wiom number from the dialer (fresh call or re-dial)</i>
+              <ul>
+                <li><b>UC 03</b> — Single active ticket <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+                <li><b>UC 04</b> — Multiple active tickets <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+              </ul>
+            </li>
+            <li><i>Callback on a customer-initiated masked number</i>
+              <ul>
+                <li><b>UC 05</b> — Single active ticket <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+                <li><b>UC 06</b> — Multiple active tickets <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><b>Customer calling</b>
+          <ul>
+            <li><i>Previously-used Wiom number from the dialer</i>
+              <ul>
+                <li><b>UC 07</b> — Single active ticket (~99%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+                <li><b>UC 08</b> — Multiple active tickets (~1%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+              </ul>
+            </li>
+            <li><i>Callback on a CSP-initiated masked number (after missed call)</i>
+              <ul>
+                <li><b>UC 09</b> — Single active ticket (~99%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+                <li><b>UC 10</b> — Multiple active tickets (~1%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller not identified (FROM is an unregistered SIM)</b></td></tr>
-    <tr>
-      <td><b>UC 11</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 12</b> — CSP user dials from an unregistered SIM</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 13</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-  </tbody>
-</table>
+  <h3>Caller not identified <small>— FROM is an unregistered SIM</small></h3>
+  <ul>
+    <li><b>UC 11</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+    <li><b>UC 12</b> — CSP user dials from an unregistered SIM <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+    <li><b>UC 13</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
+  </ul>
+
+</div>
 
 <script>
   mermaid.initialize({
