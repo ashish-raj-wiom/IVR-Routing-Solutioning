@@ -260,7 +260,7 @@
 <h3>Three pillars</h3>
 <ol>
   <li><b>One bidirectional masked number.</b> Serves both call directions; preserves the seamless in-app dial; opens up off-app initiation patterns (callbacks, dialer redials, calls from new SIMs, multi-ticket cases, colleague forwarding).</li>
-  <li><b>Authorisation fallback for unrecognised callers.</b> When the caller isn't recognised by their number, an IVR step authorises them via PIN. See <em>Authorization resolution</em> below.</li>
+  <li><b>Recognise-then-route.</b> When Table 1 misses, the <code>user_identification</code> API tells us if the caller is a known customer / CSP user and how many active counterparties they have. <b>One counterparty → bridge directly, no PIN.</b> Multiple counterparties or unknown caller → PIN authorises and disambiguates. See <em>Authorization resolution</em> below.</li>
   <li><b>Two small tables.</b> Table 1 for the active call mapping (today's behaviour, kept) and Table 2 for per-ticket credentials (new).</li>
 </ol>
 
@@ -274,9 +274,14 @@
 <p>When no active ticket exists for a customer, no Table 1 mapping is written, no PIN is issued. Any inbound dial in that state lands in the dead-end IVR.</p>
 
 <h2>Authorization resolution</h2>
-<p>When the caller's FROM isn't in an active Table 1 mapping, the IVR asks for a <b>5-digit PIN</b> — the credential. Each ticket has two PINs (one for the customer, one for the CSP); Table 2 looks up <code>PIN → other_party_mobile</code>. Standard double-blind routing pattern used by Ola, Uber, Swiggy.</p>
-<p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC04), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
-<p><b>Guardrails:</b> 3-retry cap per call (drops to dead-end IVR); PIN rotates daily; CSP-side lookups are scoped to that CSP's active tickets.</p>
+<p>When Table 1 misses, the system calls <b><code>user_identification(FROM)</code></b>. The response carries three things: the user type (<code>customer</code> / <code>csp</code> / <code>unknown</code>), the number of active tickets, and — if exactly one ticket — the counterparty's mobile.</p>
+<ul class="compact">
+  <li><b>1 active ticket</b> → bridge directly to the counterparty. No PIN.</li>
+  <li><b>2 or more active tickets</b> → IVR asks for a <b>5-digit PIN</b> to disambiguate which ticket; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>.</li>
+  <li><b>0 tickets / unknown user</b> → dead-end IVR (the user type decides which message plays).</li>
+</ul>
+<p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 04), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
+<p><b>Guardrails:</b> 3-retry cap per call; PIN rotates daily; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
 <p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
 
 <h2>Assumptions</h2>
@@ -319,14 +324,19 @@ flowchart TD
     E -. dials .-> F
     PB -. dials .-> F
 
-    F -->|Hit| H([Dial recipient]):::happy
-    F -->|Miss| L[Gather 5-digit PIN]:::fallback
+    F -->|Hit| H([Bridge to other party]):::happy
+    F -->|Miss| UI[user_identification API]
+    UI --> UC{Active tickets<br/>for this user?}
+    UC -->|Exactly 1| H
+    UC -->|2 or more| L[Gather 5-digit PIN]:::fallback
+    UC -->|0 / unknown| DE
     L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| N[(Table 2<br/>PIN → other party)]:::store
     N --> H
-    M -->|No| IC{is_customer<br/>FROM?}
-    IC -->|Yes| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
-    IC -->|No| OT([IVR: Open the app or<br/>call 78368 11111]):::deadend
+    M -->|No| DE
+    DE{User type<br/>from user_identification}
+    DE -->|Customer| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
+    DE -->|CSP / unknown| OT([IVR: Open the app or<br/>call 78368 11111]):::deadend
 
     H --> Z{Picked up?<br/>via Exotel disposition}
     Z -->|Yes| ZP([Call connected ✓]):::happy
@@ -372,177 +382,135 @@ flowchart TD
 <p>The two layers are independent and complementary — Truecaller covers app-side identification, VLT covers network-side identification. Both build trust that the call is legitimate, not spam.</p>
 
 <h2>Use cases</h2>
-<p class="section-intro">Nine scenarios — two that already work today (the in-app dial from either side) and seven fallback paths recovered by this design.</p>
+<p class="section-intro">Nine scenarios. They resolve through four paths depending on whether the caller is recognised and how many active counterparties they have.</p>
 
 <table style="font-size: 14px;">
   <thead>
-    <tr><th style="width:14%">UC</th><th>Scenario</th></tr>
+    <tr><th style="width:8%">UC</th><th>Scenario</th><th style="width:18%">Path</th></tr>
   </thead>
   <tbody>
-    <tr><td><b>01</b></td><td>CSP dials from CSP App via registered SIM</td></tr>
-    <tr><td><b>02</b></td><td>Customer dials from Customer App via registered SIM</td></tr>
-    <tr><td><b>03</b></td><td>CSP calls from an unregistered SIM</td></tr>
-    <tr><td><b>04</b></td><td>CSP forwards the masked number to a colleague</td></tr>
-    <tr><td><b>05</b></td><td>CSP calls back on a customer-initiated masked number</td></tr>
-    <tr><td><b>06</b></td><td>CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td></tr>
-    <tr><td><b>07</b></td><td>Customer calls back after a missed call</td></tr>
-    <tr><td><b>08</b></td><td>Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td></tr>
-    <tr><td><b>09</b></td><td>Customer has more than one active ticket</td></tr>
+    <tr><td><b>01</b></td><td>CSP dials from CSP App via registered SIM</td><td>Path 1</td></tr>
+    <tr><td><b>02</b></td><td>Customer dials from Customer App via registered SIM</td><td>Path 1</td></tr>
+    <tr><td><b>03</b></td><td>CSP calls from an unregistered SIM</td><td>Path 4</td></tr>
+    <tr><td><b>04</b></td><td>CSP forwards the masked number to a colleague</td><td>Path 4</td></tr>
+    <tr><td><b>05</b></td><td>CSP calls back on a customer-initiated masked number</td><td>Path 2</td></tr>
+    <tr><td><b>06</b></td><td>CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td><td>Path 2 / 3</td></tr>
+    <tr><td><b>07</b></td><td>Customer calls back after a missed call</td><td>Path 2</td></tr>
+    <tr><td><b>08</b></td><td>Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td><td>Path 4</td></tr>
+    <tr><td><b>09</b></td><td>Customer has more than one active ticket</td><td>Path 3</td></tr>
   </tbody>
 </table>
 
 <section class="usecase">
-  <div class="uc-tag">Use case 01</div>
-  <h3>CSP dials from the CSP App via registered SIM</h3>
-  <div class="today">CSP-user opens the CSP App, taps Call CTA, the system writes a Table 1 mapping (CSP's <code>sim_inventory</code> SIMs + registered mobile → customer's mobile), and returns the masked number. CSP dials it from one of those SIMs within TTL → Table 1 hit → bridge.</div>
+  <div class="uc-tag">Path 1</div>
+  <h3>Direct bridge — Table 1 hit</h3>
+  <p><b>Covers:</b> UC 01 (CSP in-app), UC 02 (Customer in-app).</p>
+  <p>The user tapped the in-app Call CTA, dialled the returned masked number within TTL, and Table 1 still holds the mapping. Seamless bridge.</p>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant CSP as CSP (CSP App)
-    participant App as CSP App
+    participant U as Caller (CSP or Customer)
+    participant App
     participant BE as Backend
     participant MN as Masked Number
-    participant C as Customer
+    participant R as Recipient
 
-    CSP->>App: Tap Call CTA
-    App->>BE: initiateCall (FROM list, customer_mobile)
+    U->>App: Tap Call CTA
+    App->>BE: initiateCall (FROM, TO)
     Note over BE: Write Table 1 (TTL'd)
     BE-->>App: Return masked number
-    CSP->>MN: Dial masked number
+    U->>MN: Dial masked number
     MN->>BE: Webhook with FROM
-    Note over BE: Table 1 hit → customer_mobile
-    BE->>C: Bridge to customer
+    Note over BE: Table 1 hit → resolves TO
+    BE->>R: Bridge call
 </pre>
   </div>
-  <div class="outcome">Seamless — Table 1 hit, no PIN, no IVR. The caller is recognised and authorised in one step.</div>
+  <div class="outcome">Seamless. No PIN, no IVR.</div>
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use case 02</div>
-  <h3>Customer dials from the Customer App via registered SIM</h3>
-  <div class="today">Customer opens the Customer App, taps Call CTA, the system writes a Table 1 mapping (registered mobile → assigned technician's mobile), and returns the masked number. Customer dials it from their registered mobile within TTL → Table 1 hit → bridge.</div>
+  <div class="uc-tag">Path 2</div>
+  <h3>Direct bridge — single counterparty identified</h3>
+  <p><b>Covers:</b> UC 05, UC 06 (typical case), UC 07.</p>
+  <p>Table 1 missed, but <code>user_identification</code> recognises the caller and finds exactly one active ticket / counterparty for them. Bridge directly — no PIN needed. Common for technicians with one live job and customers with one open ticket.</p>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant Cust as Customer (Customer App)
-    participant App as Customer App
-    participant BE as Backend
-    participant MN as Masked Number
-    participant T as Technician
-
-    Cust->>App: Tap Call CTA
-    App->>BE: initiateCall (registered_mobile, technician_mobile)
-    Note over BE: Write Table 1 (TTL'd)
-    BE-->>App: Return masked number
-    Cust->>MN: Dial masked number
-    MN->>BE: Webhook with FROM
-    Note over BE: Table 1 hit → technician_mobile
-    BE->>T: Bridge to technician
-</pre>
-  </div>
-  <div class="outcome">Seamless — Table 1 hit, no PIN, no IVR. The caller is recognised and authorised in one step.</div>
-</section>
-
-<section class="usecase">
-  <div class="uc-tag">Use cases 03 – 06</div>
-  <h3>CSP-side fallback — four distinct problems, one shared resolution</h3>
-  <p class="section-intro" style="margin: 0 0 12px;">These four scenarios fail for different reasons today but all resolve through the same PIN-based path (UC06 has a fast-lane when Table 1 is still alive). Listed separately so the failure modes stay distinct in conversation; shipped as a single code path.</p>
-
-  <table style="font-size: 13px; margin: 12px 0;">
-    <thead>
-      <tr><th style="width:32%">Use case</th><th>Today (why it fails)</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><b>UC 03</b> — CSP calls from an unregistered SIM</td>
-        <td>CSP's SIM isn't in <code>sim_inventory</code> (eSIM, dual-SIM secondary, never logged in from this SIM). The FROM isn't in any active mapping; call drops.</td>
-      </tr>
-      <tr>
-        <td><b>UC 04</b> — CSP forwards the masked number to a colleague</td>
-        <td>CSP shares the masked number with a colleague on a different phone. The colleague's FROM isn't in any active mapping. Call drops.</td>
-      </tr>
-      <tr>
-        <td><b>UC 05</b> — CSP calls back on a masked number originally initiated by the customer</td>
-        <td>Customer initiates a call via in-app CTA → CSP misses it → CSP taps the missed-call entry to call back. Today this is the wrong-direction dial — MN1 only routes Customer → CSP — so the callback drops.</td>
-      </tr>
-      <tr>
-        <td><b>UC 06</b> — CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td>
-        <td>CSP bypasses the in-app CTA — dials the Wiom number from their dialer, call log, or saved contact. No fresh <code>initiateCall</code> fires, any prior mapping has expired (TTL), and the call drops.</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <p style="margin: 14px 0 6px; font-size: 14px;"><b>Shared resolution path:</b></p>
-  <div class="diagram">
-<pre class="mermaid">
-sequenceDiagram
-    autonumber
-    participant Caller as Caller<br/>UC03 unknown SIM · UC04 colleague<br/>UC05 callback · UC06 dial / re-dial
+    participant Caller as Caller (recognised)
     participant MN as Masked Number
     participant IVR as IVR
-    participant C as Customer
+    participant API as user_identification
+    participant R as Counterparty
 
     Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
     Note over IVR: Table 1 lookup → miss
-    IVR-->>Caller: IVR: 'Enter 5-digit PIN'
-    Caller->>IVR: Enters CSP-side PIN
-    Note over IVR: Table 2 lookup<br/>PIN → customer mobile
-    IVR->>C: Bridge to customer
+    IVR->>API: user_identification(FROM)
+    API-->>IVR: user found · 1 active ticket → counterparty mobile
+    IVR->>R: Bridge — no PIN
 </pre>
   </div>
-
-  <div class="outcome">All four connect end-to-end via the same authorisation path — caller is not recognised by FROM, PIN authorises them, bridge follows. UC06 has a sub-case fast-lane: if the CSP re-dials within the TTL of their own prior CTA, Table 1 still has their FROM and the call bridges seamlessly with no PIN. In every other case (UC03 / UC04 / UC05, plus UC06 fresh-dial), Table 1 misses and the PIN path runs.</div>
+  <div class="outcome">Seamless. The caller is recognised and the routing is unambiguous — bridge straight through.</div>
 </section>
 
 <section class="usecase">
-  <div class="uc-tag">Use cases 07 – 09</div>
-  <h3>Customer-side fallback — three distinct problems, one shared resolution</h3>
-  <p class="section-intro" style="margin: 0 0 12px;">Three customer-side scenarios that fail today; all resolve through the same PIN path. The customer holds their PIN via SMS / WhatsApp sent at ticket creation (along with the masked number to dial).</p>
-
-  <table style="font-size: 13px; margin: 12px 0;">
-    <thead>
-      <tr><th style="width:32%">Use case</th><th>Today (why it fails)</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><b>UC 07</b> — Customer calls back after a missed call</td>
-        <td>Customer sees a missed call on the masked number and dials back from their call log. The masked number isn't recognised; call drops.</td>
-      </tr>
-      <tr>
-        <td><b>UC 08</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
-        <td>Customer's FROM doesn't match the registered mobile on file. No active mapping; call drops.</td>
-      </tr>
-      <tr>
-        <td><b>UC 09</b> — Customer has more than one active ticket</td>
-        <td>Even if the customer is recognised, the system can't tell which ticket / technician they want to reach. Today the routing is ambiguous.</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <p style="margin: 14px 0 6px; font-size: 14px;"><b>Shared resolution path:</b></p>
+  <div class="uc-tag">Path 3</div>
+  <h3>PIN — multi-ticket disambiguation</h3>
+  <p><b>Covers:</b> UC 09 (customer with multiple active tickets), UC 06 (CSP servicing multiple customers in parallel).</p>
+  <p>Table 1 missed. <code>user_identification</code> recognises the caller but they have two or more active tickets — the system can't tell which counterparty they want. PIN disambiguates.</p>
   <div class="diagram">
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant C as Customer<br/>UC07 callback · UC08 unknown SIM<br/>UC09 multi-ticket
+    participant Caller as Caller (recognised, multi-ticket)
     participant MN as Masked Number
     participant IVR as IVR
-    participant T as Technician
+    participant API as user_identification
+    participant R as Counterparty (the right ticket)
 
-    C->>MN: Dial masked number
+    Caller->>MN: Dial masked number
     MN->>IVR: Webhook with FROM
     Note over IVR: Table 1 lookup → miss
-    IVR-->>C: IVR: 'Enter the PIN from your SMS'
-    C->>IVR: Enters customer-side PIN
-    Note over IVR: Table 2 lookup<br/>PIN → technician mobile<br/>(PIN identifies the ticket)
-    IVR->>T: Bridge to technician
+    IVR->>API: user_identification(FROM)
+    API-->>IVR: user found · 2+ active tickets
+    IVR-->>Caller: IVR: 'Enter 5-digit PIN'
+    Caller->>IVR: Enters PIN
+    Note over IVR: Table 2 lookup<br/>PIN → counterparty
+    IVR->>R: Bridge
 </pre>
   </div>
+  <div class="outcome">PIN identifies which ticket. Bridge after a successful entry; three wrong tries route to the graceful-fallback IVR.</div>
+</section>
 
-  <div class="outcome">All three connect end-to-end via the same authorisation path — caller is not recognised by FROM, PIN authorises them. The PIN itself identifies the ticket (each ticket has its own customer-side PIN), so multi-ticket disambiguation is implicit. If the customer's ticket is already closed (PIN no longer valid), three wrong attempts route to the graceful fallback IVR — <em>"Open the app or call 88803 22222"</em> (call centre), because <code>is_customer</code> returns true at that point.</div>
+<section class="usecase">
+  <div class="uc-tag">Path 4</div>
+  <h3>PIN — unknown caller</h3>
+  <p><b>Covers:</b> UC 03 (CSP from unknown SIM), UC 04 (Colleague forwarding), UC 08 (Customer from unknown SIM).</p>
+  <p>Table 1 missed and <code>user_identification</code> doesn't recognise the FROM (unregistered SIM, colleague's phone, etc.). PIN both authenticates and identifies the counterparty.</p>
+  <div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Caller as Caller (unknown FROM)
+    participant MN as Masked Number
+    participant IVR as IVR
+    participant API as user_identification
+    participant R as Counterparty
+
+    Caller->>MN: Dial masked number
+    MN->>IVR: Webhook with FROM
+    Note over IVR: Table 1 lookup → miss
+    IVR->>API: user_identification(FROM)
+    API-->>IVR: unknown FROM
+    IVR-->>Caller: IVR: 'Enter 5-digit PIN'
+    Caller->>IVR: Enters PIN
+    Note over IVR: Table 2 lookup<br/>PIN → counterparty
+    IVR->>R: Bridge
+</pre>
+  </div>
+  <div class="outcome">PIN serves as both authorisation and routing key. Three wrong tries route to the graceful-fallback IVR (trust line, since the user type is unknown).</div>
 </section>
 
 <h2>Tables</h2>
