@@ -424,9 +424,10 @@
 <h3>How it works</h3>
 <p>When Table 1 misses, the system calls <b><code>user_identification(FROM)</code></b>. The response carries three things: the user type (<code>customer</code> / <code>csp</code> / <code>unknown</code>), the number of active tickets, and — if exactly one ticket — the counterparty's mobile (fetched from Table 2 by <code>ticket_id + side</code>; no separate table needed).</p>
 <ul class="compact">
-  <li><b>1 active ticket</b> → routing is unambiguous → bridge directly to the counterparty. No PIN.</li>
-  <li><b>2 or more active tickets</b> → known caller but ambiguous routing → IVR asks for a <b>5-digit PIN</b>; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>. The PIN itself identifies the ticket.</li>
-  <li><b>0 tickets / unknown user</b> → can't authorise → dead-end IVR (the user type decides which helpline message plays).</li>
+  <li><b>Recognised user, 1 active ticket</b> → routing is unambiguous → bridge directly to the counterparty. No PIN.</li>
+  <li><b>Recognised user, 2 or more active tickets</b> → known caller but ambiguous routing → IVR asks for a <b>5-digit PIN</b>; <code>Table 2</code> looks up <code>PIN → other_party_mobile</code>. The PIN itself identifies the ticket.</li>
+  <li><b>Unknown FROM</b> → caller might still hold a valid PIN (e.g., UC 13 colleague forwarding) → IVR asks for the PIN. If valid → bridge; if 3 wrong → dead-end.</li>
+  <li><b>Recognised user, 0 active tickets</b> (e.g., closed-ticket customer dialling back) → no PIN exists for them in Table 2, so we skip the prompt entirely → dead-end IVR. The user type chooses which helpline message plays.</li>
 </ul>
 <p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 13), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
 <p><b>Guardrails:</b> 3-retry cap per call; PIN rotates daily; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
@@ -501,11 +502,13 @@ flowchart TD
 
     F -->|Hit| H([Bridge to other party]):::happy
     F -->|Miss| UI[user_identification API]
-    UI --> UC{Active tickets<br/>for this user?}
-    UC -->|Exactly 1| T2A[(Table 2 lookup<br/>by ticket_id + side)]:::store
+    UI --> UC{user_identification<br/>result?}
+    UC -->|Recognised user,<br/>exactly 1 active ticket| T2A[(Table 2 lookup<br/>by ticket_id + side)]:::store
     T2A --> H
-    UC -->|2 or more| L[Gather 5-digit PIN]:::fallback
-    UC -->|0 / unknown| DE
+    UC -->|Recognised user,<br/>2 or more active tickets| L
+    UC -->|Unknown FROM<br/>may still hold a PIN| L
+    UC -->|Recognised user,<br/>0 active tickets| DE
+    L[Gather 5-digit PIN]:::fallback
     L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| T2B[(Table 2 lookup<br/>by PIN)]:::store
     T2B --> H

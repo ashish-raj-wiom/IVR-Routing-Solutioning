@@ -122,8 +122,9 @@ Routing decisions driven by this response:
 |---|---|
 | `active_ticket_count == 1` | Bridge directly to `other_party_mobile`. No PIN. |
 | `active_ticket_count >= 2` | IVR prompts for PIN → Table 2 lookup → bridge. |
-| `active_ticket_count == 0` OR `user_type == 'unknown'` | Skip PIN entirely → graceful-fallback IVR, branched by `user_type`. |
-| PIN failure after 3 tries | Same graceful-fallback IVR, using the original `user_type` from the earlier `user_identification` call. |
+| `user_type == 'unknown'` | IVR prompts for PIN — the caller may still hold a valid one (e.g., UC 13 colleague forwarding). If valid → bridge via Table 2 lookup. If 3 wrong → graceful-fallback IVR. |
+| `user_type ∈ {customer, csp}` AND `active_ticket_count == 0` | Skip PIN entirely → graceful-fallback IVR (no PIN exists in Table 2 for this user, so prompting would just frustrate). Branched by `user_type`. |
+| PIN failure after 3 tries | Graceful-fallback IVR, using the `user_type` from the earlier `user_identification` call (defaults to non-customer message if user_type was unknown). |
 
 **Latency budget:** < 200 ms p95 within Exotel's 5 s Primary URL window.
 
