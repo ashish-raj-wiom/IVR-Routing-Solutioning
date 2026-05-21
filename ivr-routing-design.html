@@ -164,6 +164,43 @@
     font-size: 14px;
     margin: 6px 0 8px;
   }
+  .usecase-tree h3 {
+    font-size: 16px;
+    margin-top: 22px;
+    color: #2c3e50;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 4px;
+  }
+  .usecase-tree h3 small {
+    font-weight: 400;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .usecase-tree ul {
+    list-style: none;
+    padding-left: 22px;
+    margin: 6px 0;
+    border-left: 1px solid #e8ecf0;
+  }
+  .usecase-tree > ul {
+    padding-left: 0;
+    border-left: none;
+  }
+  .usecase-tree li {
+    padding: 4px 0;
+    font-size: 14px;
+  }
+  .path {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: #e0f2f1;
+    color: #00695c;
+    font-weight: 600;
+    margin-left: 6px;
+    letter-spacing: 0.2px;
+  }
   .mn-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -409,36 +446,69 @@ flowchart TD
 <p>The two layers are independent and complementary — Truecaller covers app-side identification, VLT covers network-side identification. Both build trust that the call is legitimate, not spam.</p>
 
 <h2>Use cases</h2>
-<p class="section-intro">Nine scenarios, grouped by whether the caller is identified by their FROM and how they're calling. The single-vs-multiple-ticket decision (Path 2 vs Path 3) is made by <code>user_identification</code> at the moment of Table 1 miss.</p>
+<p class="section-intro">Nine scenarios. The single-vs-multiple-ticket decision (Path 2 vs Path 3) is made by <code>user_identification</code> at the moment of Table 1 miss.</p>
 
-<table style="font-size: 14px;">
-  <thead>
-    <tr><th style="width:8%">UC</th><th>Scenario</th><th style="width:18%">Path</th></tr>
-  </thead>
-  <tbody>
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the app</b></td></tr>
-    <tr><td><b>01</b></td><td>CSP dials from CSP App via registered SIM</td><td>Path 1</td></tr>
-    <tr><td><b>02</b></td><td>Customer dials from Customer App via registered SIM</td><td>Path 1</td></tr>
+<div class="usecase-tree">
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (CSP user)</b></td></tr>
-    <tr><td><b>05</b></td><td>CSP calls back on a customer-initiated masked number (after missed call)</td><td>Path 2 / 3</td></tr>
-    <tr><td><b>06</b></td><td>CSP dials a previously-used Wiom number from the dialer (fresh call or re-dial)</td><td>Path 2 / 3</td></tr>
+  <h3>Caller identified <small>— FROM is a registered mobile or in <code>sim_inventory</code></small></h3>
+  <ul>
+    <li><b>Calling from the app</b>
+      <ul>
+        <li><b>UC 01</b> — CSP dials from the CSP App via registered SIM <span class="path">Path 1</span></li>
+        <li><b>UC 02</b> — Customer dials from the Customer App via registered SIM <span class="path">Path 1</span></li>
+      </ul>
+    </li>
+    <li><b>Calling from the dialer</b> (call log / saved contact / missed-call entry)
+      <ul>
+        <li><b>CSP user calling</b>
+          <ul>
+            <li><b>UC 03</b> — Previously-used Wiom number from the dialer (fresh call or re-dial)
+              <ul>
+                <li>Single active ticket → no PIN, bridge directly <span class="path">Path 2</span></li>
+                <li>Multiple active tickets → PIN required <span class="path">Path 3</span></li>
+              </ul>
+            </li>
+            <li><b>UC 04</b> — Callback on a customer-initiated masked number
+              <ul>
+                <li>Single active ticket → no PIN, bridge directly <span class="path">Path 2</span></li>
+                <li>Multiple active tickets → PIN required <span class="path">Path 3</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li><b>Customer calling</b>
+          <ul>
+            <li><b>UC 05</b> — Previously-used Wiom number from the dialer
+              <ul>
+                <li>Single active ticket (~99% of cases) → no PIN, bridge directly <span class="path">Path 2</span></li>
+                <li>Multiple active tickets (~1%) → PIN required <span class="path">Path 3</span></li>
+              </ul>
+            </li>
+            <li><b>UC 06</b> — Callback on a CSP-initiated masked number (after missed call)
+              <ul>
+                <li>Single active ticket (~99%) → no PIN, bridge directly <span class="path">Path 2</span></li>
+                <li>Multiple active tickets (~1%) → PIN required <span class="path">Path 3</span></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </li>
+  </ul>
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (Customer)</b></td></tr>
-    <tr><td><b>07</b></td><td>Customer calls back on a CSP-initiated masked number (after missed call)</td><td>Path 2 / 3</td></tr>
-    <tr><td><b>09</b></td><td>Customer dials a previously-used Wiom number from the dialer</td><td>Path 2 / 3</td></tr>
+  <h3>Caller not identified <small>— FROM is an unregistered SIM</small></h3>
+  <ul>
+    <li><b>UC 07</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM) → PIN required <span class="path">Path 4</span></li>
+    <li><b>UC 08</b> — CSP user dials from an unregistered SIM → PIN required <span class="path">Path 4</span></li>
+    <li><b>UC 09</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered) → PIN required <span class="path">Path 4</span></li>
+  </ul>
 
-    <tr style="background:#eef2f6"><td colspan="3"><b>Caller not identified (FROM is an unregistered SIM)</b></td></tr>
-    <tr><td><b>03</b></td><td>CSP calls from an unregistered SIM</td><td>Path 4</td></tr>
-    <tr><td><b>04</b></td><td>CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td><td>Path 4</td></tr>
-    <tr><td><b>08</b></td><td>Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td><td>Path 4</td></tr>
-  </tbody>
-</table>
+</div>
 
 <section class="usecase">
   <div class="uc-tag">Path 1</div>
   <h3>Direct bridge — Table 1 hit</h3>
-  <p><b>Covers:</b> UC 01 (CSP in-app), UC 02 (Customer in-app).</p>
+  <p><b>Covers:</b> UC 01, UC 02.</p>
   <p>The user tapped the in-app Call CTA, dialled the returned masked number within TTL, and Table 1 still holds the mapping. Seamless bridge.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -466,7 +536,7 @@ sequenceDiagram
 <section class="usecase">
   <div class="uc-tag">Path 2</div>
   <h3>Direct bridge — single counterparty identified</h3>
-  <p><b>Covers:</b> UC 05, UC 06, UC 07, UC 09 — the single-ticket sub-case of each.</p>
+  <p><b>Covers:</b> UC 03, UC 04, UC 05, UC 06 — the single-ticket sub-case of each.</p>
   <p>Table 1 missed, but <code>user_identification</code> recognises the caller and finds exactly one active ticket / counterparty for them. Bridge directly — no PIN needed. Common for technicians with one live job and customers with one open ticket.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -492,7 +562,7 @@ sequenceDiagram
 <section class="usecase">
   <div class="uc-tag">Path 3</div>
   <h3>PIN — multi-ticket disambiguation</h3>
-  <p><b>Covers:</b> UC 05, UC 06, UC 07, UC 09 — the multi-ticket sub-case of each (CSP servicing multiple customers, or customer with multiple open tickets).</p>
+  <p><b>Covers:</b> UC 03, UC 04, UC 05, UC 06 — the multi-ticket sub-case of each (CSP servicing multiple customers, or customer with multiple open tickets).</p>
   <p>Table 1 missed. <code>user_identification</code> recognises the caller but they have two or more active tickets — the system can't tell which counterparty they want. PIN disambiguates.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -521,7 +591,7 @@ sequenceDiagram
 <section class="usecase">
   <div class="uc-tag">Path 4</div>
   <h3>PIN — unknown caller</h3>
-  <p><b>Covers:</b> UC 03 (CSP from unknown SIM), UC 04 (Colleague forwarding), UC 08 (Customer from unknown SIM).</p>
+  <p><b>Covers:</b> UC 07 (Customer from unknown SIM), UC 08 (CSP from unknown SIM), UC 09 (Colleague forwarding).</p>
   <p>Table 1 missed and <code>user_identification</code> doesn't recognise the FROM (unregistered SIM, colleague's phone, etc.). PIN both authenticates and identifies the counterparty.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -652,53 +722,53 @@ flowchart TD
   <tbody>
     <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the app</b></td></tr>
     <tr>
-      <td><b>UC 01</b> — CSP dials from CSP App via registered SIM</td>
+      <td><b>UC 01</b> — CSP dials from the CSP App via registered SIM</td>
       <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 02</b> — Customer dials from Customer App via registered SIM</td>
+      <td><b>UC 02</b> — Customer dials from the Customer App via registered SIM</td>
       <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
 
     <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (CSP user)</b></td></tr>
     <tr>
-      <td><b>UC 05</b> — CSP calls back on a customer-initiated masked number</td>
+      <td><b>UC 03</b> — Previously-used Wiom number from the dialer (fresh call or re-dial)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 06</b> — CSP dials a previously-used Wiom number from the dialer (fresh call or re-dial)</td>
+      <td><b>UC 04</b> — Callback on a customer-initiated masked number</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
 
     <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (Customer)</b></td></tr>
     <tr>
-      <td><b>UC 07</b> — Customer calls back on a CSP-initiated masked number (after missed call)</td>
+      <td><b>UC 05</b> — Previously-used Wiom number from the dialer</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 09</b> — Customer dials a previously-used Wiom number from the dialer</td>
+      <td><b>UC 06</b> — Callback on a CSP-initiated masked number (after missed call)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
 
     <tr style="background:#eef2f6"><td colspan="3"><b>Caller not identified (FROM is an unregistered SIM)</b></td></tr>
     <tr>
-      <td><b>UC 03</b> — CSP calls from an unregistered SIM</td>
+      <td><b>UC 07</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 04</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td>
+      <td><b>UC 08</b> — CSP user dials from an unregistered SIM</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 08</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
+      <td><b>UC 09</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
