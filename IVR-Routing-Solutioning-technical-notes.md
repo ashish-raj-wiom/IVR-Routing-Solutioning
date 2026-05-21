@@ -29,10 +29,15 @@ The system is, at its core, an **authentication system** for masked phone calls 
 
 The HTML spec uses four defined terms throughout — **Recognised, Authorised, Seamless, Graceful fallback** — see the [Glossary](#glossary) for definitions.
 
-- **Recognised callers** (FROM in Table 1) bridge directly — seamless.
-- **Unrecognised callers** authorise themselves by entering a PIN; Table 2 lookup returns the other party's mobile. PIN encodes the ticket + direction.
-- **Failed authorisation** (3 wrong PIN attempts) drops to a graceful-fallback IVR. `is_customer(FROM)` is consulted *only* at this point to decide which message plays (call centre vs trust line).
+- **Table 1 hit** (in-app CTA + within TTL) → bridge directly. Seamless.
+- **Table 1 miss** → call `user_identification(FROM)`. The response carries user type (`customer` / `csp` / `unknown`) + active-ticket count + (if count = 1) the counterparty's mobile.
+  - **1 active ticket** → bridge directly to that counterparty. No PIN.
+  - **2+ active tickets** → IVR asks for PIN; Table 2 disambiguates.
+  - **0 tickets / unknown user** → graceful-fallback IVR (branched by user type).
+- **PIN failure** (3 wrong tries) → same graceful-fallback IVR. The user type returned by the original `user_identification` call decides which message plays (customer → call-centre 88803 22222; otherwise → trust-line 78368 11111).
 - **Single masked number** for both directions.
+
+PIN is therefore an *exception path* — used only when the routing is genuinely ambiguous (multi-ticket caller) or the caller can't be identified at all.
 
 ### Identity store at a glance
 
@@ -40,8 +45,8 @@ The HTML spec uses four defined terms throughout — **Recognised, Authorised, S
 |---|---|
 | **Table 1** | Active call mapping (FROM → TO), short TTL, written on `initiateCall`. Existing today. |
 | **Table 2** | Per-ticket PIN registry (PIN → other_party_mobile); two PINs per ticket, one per side, daily rotation. **New.** |
-| **`is_customer` API** | Boolean check at dead-end junction only — branches between call-centre IVR (customer) and trust-line IVR (non-customer). |
-| **`sim_inventory`** | Existing CSP-SIM capture set; used for PIN-scoping guardrail. |
+| **`user_identification` API** | Called on Table 1 miss. Returns user type (`customer` / `csp` / `unknown`), active-ticket count, and the counterparty mobile if exactly one ticket. Drives the entire post-Table-1 routing — direct bridge for single-ticket, PIN for multi-ticket or unknown, dead-end IVR for zero-tickets. **New (supersedes the old `is_customer`-at-dead-end design).** |
+| **`sim_inventory`** | Existing CSP-SIM capture set; used inside `user_identification` to match a CSP user's FROM, and for PIN scoping. |
 
 ---
 
@@ -96,6 +101,29 @@ The HTML spec uses four defined terms throughout — **Recognised, Authorised, S
 
 Earlier iterations of this design had a Table 3 — `customer_mobile → technician_mobile` — used to route customer-initiated calls without a PIN. **Dropped** when the customer-side PIN was added: the PIN now performs the routing function, so a separate resolver is redundant.
 
+### user_identification API
+
+Called on Table 1 miss. Input: `FROM` (E164). Response:
+
+| Field | Type | Notes |
+|---|---|---|
+| `user_type` | enum: `customer` \| `csp` \| `unknown` | Whether the FROM matches a customer record, a CSP user (`sim_inventory` or registered mobile), or neither. |
+| `active_ticket_count` | integer | Number of active tickets the user is associated with (customer's open tickets, or the CSP user's currently-assigned tickets). |
+| `other_party_mobile` | E164 (nullable) | If `active_ticket_count == 1`, the counterparty mobile — the IVR can bridge directly. Else null. |
+
+Routing decisions driven by this response:
+
+| Response | Action |
+|---|---|
+| `active_ticket_count == 1` | Bridge directly to `other_party_mobile`. No PIN. |
+| `active_ticket_count >= 2` | IVR prompts for PIN → Table 2 lookup → bridge. |
+| `active_ticket_count == 0` OR `user_type == 'unknown'` | Skip PIN entirely → graceful-fallback IVR, branched by `user_type`. |
+| PIN failure after 3 tries | Same graceful-fallback IVR, using the original `user_type` from the earlier `user_identification` call. |
+
+**Latency budget:** < 200 ms p95 within Exotel's 5 s Primary URL window.
+
+**Supersedes:** the old `is_customer` boolean check. `user_identification` is richer — it enables the no-PIN bypass for single-ticket cases and still provides the user-type information needed for dead-end branching.
+
 ---
 
 ## Exotel applet wiring
@@ -123,14 +151,27 @@ Built on Exotel's [Connect Applet with Dynamic URL](https://support.exotel.com/s
         │
         ▼
 ┌──────────────────────────────────────────┐
+│ Connect (Dynamic URL #1.5) — Identify    │
+│ Backend receives FROM, calls             │
+│   user_identification(FROM)              │
+│   ├─ active_ticket_count == 1:           │
+│   │    return other_party; bridge        │
+│   ├─ active_ticket_count >= 2:           │
+│   │    branch to Gather (PIN flow)       │
+│   └─ 0 / unknown:                        │
+│        play dead-end IVR (by user_type)  │
+└──────────────────────────────────────────┘
+        │ (if PIN required)
+        ▼
+┌──────────────────────────────────────────┐
 │ Connect (Dynamic URL #2) — Table 2 check │
 │ Backend receives FROM + digits           │
 │   ├─ Table 2 lookup (scoped if CSP)      │
 │   │    HIT  → return other_party; bridge │
-│   │    MISS / 3 fails → IVR message      │
-│   │      ├─ is_customer(FROM) → true:    │
+│   │    MISS / 3 fails → dead-end IVR     │
+│   │      ├─ user_type == customer:       │
 │   │      │     play "Call 88803 22222"   │
-│   │      └─ is_customer(FROM) → false:   │
+│   │      └─ user_type csp / unknown:     │
 │   │            play "Call 78368 11111"   │
 └──────────────────────────────────────────┘
         │ (if bridge initiated)
@@ -168,7 +209,8 @@ Every IVR branch emits a typed event for analytics and abuse monitoring. All eve
 | `pin_fail` | Table 2 returns no match |
 | `pin_lockout` | Three wrong PINs in a single call |
 | `pin_abandoned` | Caller hangs up during PIN prompt without entering anything |
-| `is_customer_check` | Dead-end junction; `is_customer(FROM)` API called |
+| `user_identification_called` | Backend invoked `user_identification(FROM)` after a Table 1 miss; payload includes the returned user_type and active_ticket_count |
+| `direct_bridge_single_ticket` | `user_identification` returned `active_ticket_count == 1` — bridged without PIN (Path 2) |
 | `deadend_call_centre` | Dead-end IVR played for `is_customer = true` |
 | `deadend_trust_line` | Dead-end IVR played for `is_customer = false` |
 | `deadend_sms_sent` | Dead-end SMS fired to caller's FROM |
@@ -237,7 +279,7 @@ Messages that must ship before launch:
 |---|---|
 | **Single masked number** (not MN1/MN2) | Removes wrong-direction-dial failure. Today CSPs see MN1 in call log and try to dial back — drops because MN1 is one-way. |
 | **PIN as the universal credential** for unrecognised callers | Routes off-CTA calls (dialer, callback, unregistered SIM, colleague forwarding) without needing per-call identity inference. |
-| **`is_customer` API kept only for dead-end branching** | Lets the dead-end IVR play a more helpful message (call centre for customers, trust line for others) without complicating the main routing flow. |
+| **`user_identification` at Table-1 miss (replaces `is_customer` at dead-end only)** | Earlier design called `is_customer` only at the dead-end. New design calls a richer `user_identification` earlier — recognises the caller AND counts active tickets. **One active ticket → bridge directly, no PIN.** Big friction reduction for customer callbacks (UC 07) and CSP technicians with a single live job (UC 05, UC 06 typical case). PIN drops to an exception path used only for multi-ticket disambiguation or genuinely unknown callers. |
 | **Two PINs per ticket** (customer-side + CSP-side) | Symmetric authorisation; either party can authenticate when off-CTA. PIN encodes ticket + direction. |
 | **Customer-side PIN via SMS; CSP-side via app ticket card only** | Customers are not app-engaged; SMS reaches them where they are. CSPs already see ticket details in app — no SMS noise. |
 | **5-digit PIN** | Matches user expectation for IVR codes (OTP-like). 100K combos × 3-retry cap = 0.003% brute-force probability per call. |
@@ -326,7 +368,7 @@ Messages that must ship before launch:
 | **PIN** | 5-digit numeric credential, issued per ticket per side, used as fallback authorisation when FROM isn't recognised. |
 | **Table 1** | Active call mapping (FROM → TO), short-lived; a hit here means the caller is recognised and the bridge is seamless. |
 | **Table 2** | PIN registry (PIN → other_party_mobile), per-ticket, per-side. |
-| **`is_customer` API** | Binary lookup ("is this number a known customer?"); called only at the dead-end junction. |
+| **`user_identification` API** | Called on Table 1 miss. Returns user_type + active_ticket_count + (if count = 1) the counterparty mobile. Replaces the earlier `is_customer` boolean. |
 | **`sim_inventory`** | Existing CSP-SIM capture set; used for PIN scoping. |
 | **Resolve-FROM** | Deprecated. Was the multi-classification API; replaced by Table 1 lookup + `is_customer` at dead-end. |
 | **Dead-end IVR** | Terminal voice message when authorisation fails; routes to call centre (`is_customer = true`) or trust line (`is_customer = false`). |
