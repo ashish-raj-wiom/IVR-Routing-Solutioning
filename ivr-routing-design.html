@@ -282,7 +282,34 @@
 </ul>
 <p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 04), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
 <p><b>Guardrails:</b> 3-retry cap per call; PIN rotates daily; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
-<p style="font-size:13px; color:var(--muted); margin-top:6px;">Underlying telephony: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
+
+<h3>PIN discovery — how each caller gets their PIN</h3>
+<table>
+  <thead>
+    <tr><th style="width:34%">Caller</th><th>PIN delivery channel</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Customer (registered mobile)</td>
+      <td>SMS / WhatsApp at ticket creation — the same message carries the masked number to dial.</td>
+    </tr>
+    <tr>
+      <td>CSP user (on app)</td>
+      <td>Shown on the ticket card in the CSP App. <b>Must be visually prominent so a screenshot of the ticket card includes the PIN cleanly.</b></td>
+    </tr>
+    <tr>
+      <td>Colleague (no app)</td>
+      <td>CSP user forwards the SMS, or shares a screenshot of the ticket card via WhatsApp.</td>
+    </tr>
+    <tr>
+      <td>CSP user on a different phone (without the app)</td>
+      <td>Reads the PIN from the CSP App on their primary device, then dials from the other phone.</td>
+    </tr>
+  </tbody>
+</table>
+<p style="font-size:13px; color:var(--muted); margin-top:6px;"><i>We are currently exploring better ways for PIN discovery — the goal is that the PIN is always reachable by whoever needs to dial, with minimum friction.</i></p>
+
+<p style="font-size:13px; color:var(--muted); margin-top:10px;">Underlying telephony: Exotel's Connect Applet with Dynamic URL. <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank" rel="noopener">Exotel docs &rarr;</a></p>
 
 <h2>Assumptions</h2>
 <ul class="compact">
@@ -382,22 +409,29 @@ flowchart TD
 <p>The two layers are independent and complementary — Truecaller covers app-side identification, VLT covers network-side identification. Both build trust that the call is legitimate, not spam.</p>
 
 <h2>Use cases</h2>
-<p class="section-intro">Nine scenarios. They resolve through four paths depending on whether the caller is recognised and how many active counterparties they have.</p>
+<p class="section-intro">Nine scenarios, grouped by whether the caller is identified by their FROM and how they're calling. The single-vs-multiple-ticket decision (Path 2 vs Path 3) is made by <code>user_identification</code> at the moment of Table 1 miss.</p>
 
 <table style="font-size: 14px;">
   <thead>
     <tr><th style="width:8%">UC</th><th>Scenario</th><th style="width:18%">Path</th></tr>
   </thead>
   <tbody>
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the app</b></td></tr>
     <tr><td><b>01</b></td><td>CSP dials from CSP App via registered SIM</td><td>Path 1</td></tr>
     <tr><td><b>02</b></td><td>Customer dials from Customer App via registered SIM</td><td>Path 1</td></tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (CSP user)</b></td></tr>
+    <tr><td><b>05</b></td><td>CSP calls back on a customer-initiated masked number (after missed call)</td><td>Path 2 / 3</td></tr>
+    <tr><td><b>06</b></td><td>CSP dials a previously-used Wiom number from the dialer (fresh call or re-dial)</td><td>Path 2 / 3</td></tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (Customer)</b></td></tr>
+    <tr><td><b>07</b></td><td>Customer calls back on a CSP-initiated masked number (after missed call)</td><td>Path 2 / 3</td></tr>
+    <tr><td><b>09</b></td><td>Customer dials a previously-used Wiom number from the dialer</td><td>Path 2 / 3</td></tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller not identified (FROM is an unregistered SIM)</b></td></tr>
     <tr><td><b>03</b></td><td>CSP calls from an unregistered SIM</td><td>Path 4</td></tr>
-    <tr><td><b>04</b></td><td>CSP forwards the masked number to a colleague</td><td>Path 4</td></tr>
-    <tr><td><b>05</b></td><td>CSP calls back on a customer-initiated masked number</td><td>Path 2</td></tr>
-    <tr><td><b>06</b></td><td>CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td><td>Path 2 / 3</td></tr>
-    <tr><td><b>07</b></td><td>Customer calls back after a missed call</td><td>Path 2</td></tr>
+    <tr><td><b>04</b></td><td>CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td><td>Path 4</td></tr>
     <tr><td><b>08</b></td><td>Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td><td>Path 4</td></tr>
-    <tr><td><b>09</b></td><td>Customer has more than one active ticket</td><td>Path 3</td></tr>
   </tbody>
 </table>
 
@@ -432,7 +466,7 @@ sequenceDiagram
 <section class="usecase">
   <div class="uc-tag">Path 2</div>
   <h3>Direct bridge — single counterparty identified</h3>
-  <p><b>Covers:</b> UC 05, UC 06 (typical case), UC 07.</p>
+  <p><b>Covers:</b> UC 05, UC 06, UC 07, UC 09 — the single-ticket sub-case of each.</p>
   <p>Table 1 missed, but <code>user_identification</code> recognises the caller and finds exactly one active ticket / counterparty for them. Bridge directly — no PIN needed. Common for technicians with one live job and customers with one open ticket.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -458,7 +492,7 @@ sequenceDiagram
 <section class="usecase">
   <div class="uc-tag">Path 3</div>
   <h3>PIN — multi-ticket disambiguation</h3>
-  <p><b>Covers:</b> UC 09 (customer with multiple active tickets), UC 06 (CSP servicing multiple customers in parallel).</p>
+  <p><b>Covers:</b> UC 05, UC 06, UC 07, UC 09 — the multi-ticket sub-case of each (CSP servicing multiple customers, or customer with multiple open tickets).</p>
   <p>Table 1 missed. <code>user_identification</code> recognises the caller but they have two or more active tickets — the system can't tell which counterparty they want. PIN disambiguates.</p>
   <div class="diagram">
 <pre class="mermaid">
@@ -512,6 +546,8 @@ sequenceDiagram
   </div>
   <div class="outcome">PIN serves as both authorisation and routing key. Three wrong tries route to the graceful-fallback IVR (trust line, since the user type is unknown).</div>
 </section>
+
+<p class="section-intro" style="margin-top: 18px;"><b>Edge cases (terminal states, not standalone use cases).</b> A caller with <b>0 active tickets</b> — a customer whose ticket has closed, or a CSP with no current assignments — lands at the graceful-fallback IVR straight from <code>user_identification</code>, skipping the PIN prompt entirely. The same IVR plays after <b>3 wrong PIN attempts</b> on any path. Message branches by user type: customer → call centre 88803 22222; CSP / unknown → trust line 78368 11111.</p>
 
 <h2>Tables</h2>
 <table>
@@ -614,6 +650,7 @@ flowchart TD
     </tr>
   </thead>
   <tbody>
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the app</b></td></tr>
     <tr>
       <td><b>UC 01</b> — CSP dials from CSP App via registered SIM</td>
       <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
@@ -624,38 +661,44 @@ flowchart TD
       <td style="text-align:center; color:#2e7d32; font-size:18px;">✓</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
-    <tr>
-      <td><b>UC 03</b> — CSP calls from an unregistered SIM</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 04</b> — CSP forwards the masked number to a colleague</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (CSP user)</b></td></tr>
     <tr>
       <td><b>UC 05</b> — CSP calls back on a customer-initiated masked number</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 06</b> — CSP dials the Wiom number directly from the dialer (fresh call or re-dial)</td>
+      <td><b>UC 06</b> — CSP dials a previously-used Wiom number from the dialer (fresh call or re-dial)</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller identified — calling from the dialer (Customer)</b></td></tr>
+    <tr>
+      <td><b>UC 07</b> — Customer calls back on a CSP-initiated masked number (after missed call)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
-      <td><b>UC 07</b> — Customer calls back after a missed call</td>
+      <td><b>UC 09</b> — Customer dials a previously-used Wiom number from the dialer</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+
+    <tr style="background:#eef2f6"><td colspan="3"><b>Caller not identified (FROM is an unregistered SIM)</b></td></tr>
+    <tr>
+      <td><b>UC 03</b> — CSP calls from an unregistered SIM</td>
+      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
+      <td style="text-align:center; color:#2e7d32;">✓</td>
+    </tr>
+    <tr>
+      <td><b>UC 04</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered)</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
     <tr>
       <td><b>UC 08</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM)</td>
-      <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
-      <td style="text-align:center; color:#2e7d32;">✓</td>
-    </tr>
-    <tr>
-      <td><b>UC 09</b> — Customer has more than one active ticket</td>
       <td style="text-align:center; color:#c62828; font-size:18px;">✗</td>
       <td style="text-align:center; color:#2e7d32;">✓</td>
     </tr>
