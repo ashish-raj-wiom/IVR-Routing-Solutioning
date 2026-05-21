@@ -473,7 +473,7 @@ flowchart TD
       <ul>
         <li><b>CSP user calling</b>
           <ul>
-            <li><i>Previously-used Wiom number from the dialer (fresh call or re-dial)</i>
+            <li><i>Previously-used masked number from the dialer (fresh call or re-dial)</i>
               <ul>
                 <li><b>UC 03</b> — Single active ticket → no PIN, bridge directly <span class="path">Path 2</span></li>
                 <li><b>UC 04</b> — Multiple active tickets → PIN required <span class="path">Path 3</span></li>
@@ -489,7 +489,7 @@ flowchart TD
         </li>
         <li><b>Customer calling</b>
           <ul>
-            <li><i>Previously-used Wiom number from the dialer</i>
+            <li><i>Previously-used masked number from the dialer</i>
               <ul>
                 <li><b>UC 07</b> — Single active ticket (~99% of cases) → no PIN, bridge directly <span class="path">Path 2</span></li>
                 <li><b>UC 08</b> — Multiple active tickets (~1%) → PIN required <span class="path">Path 3</span></li>
@@ -738,7 +738,7 @@ flowchart TD
       <ul>
         <li><b>CSP user calling</b>
           <ul>
-            <li><i>Previously-used Wiom number from the dialer (fresh call or re-dial)</i>
+            <li><i>Previously-used masked number from the dialer (fresh call or re-dial)</i>
               <ul>
                 <li><b>UC 03</b> — Single active ticket <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
                 <li><b>UC 04</b> — Multiple active tickets <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
@@ -754,7 +754,7 @@ flowchart TD
         </li>
         <li><b>Customer calling</b>
           <ul>
-            <li><i>Previously-used Wiom number from the dialer</i>
+            <li><i>Previously-used masked number from the dialer</i>
               <ul>
                 <li><b>UC 07</b> — Single active ticket (~99%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
                 <li><b>UC 08</b> — Multiple active tickets (~1%) <span class="cov-no">today ✗</span> <span class="cov-yes">solution ✓</span></li>
