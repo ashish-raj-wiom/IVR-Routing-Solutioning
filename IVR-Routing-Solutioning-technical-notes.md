@@ -109,7 +109,7 @@ Called on Table 1 miss. Input: `FROM` (E164). Response:
 |---|---|---|
 | `user_type` | enum: `customer` \| `csp` \| `unknown` | Whether the FROM matches a customer record, a CSP user (`sim_inventory` or registered mobile), or neither. |
 | `active_ticket_count` | integer | Number of active tickets the user is associated with (customer's open tickets, or the CSP user's currently-assigned tickets). |
-| `other_party_mobile` | E164 (nullable) | If `active_ticket_count == 1`, the counterparty mobile — the IVR can bridge directly. Else null. |
+| `other_party_mobile` | E164 (nullable) | If `active_ticket_count == 1`, the counterparty mobile — the IVR can bridge directly. Else null. **Source:** derived from Table 2 by looking up the row for `(ticket_id, side)` and returning its `other_party_mobile`. No separate table — Table 2 needs a secondary index on `(ticket_id, side)` so this lookup is cheap. |
 
 Routing decisions driven by this response:
 
