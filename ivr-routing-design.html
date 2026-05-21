@@ -443,6 +443,8 @@ flowchart TD
   </li>
 </ol>
 
+<p><b>The missed-call alert is also the natural PIN reminder.</b> When the missed party calls back, the easy case is their FROM is recognised and they have a single active ticket → bridge directly, no PIN (Paths 2). When PIN is needed (multi-ticket caller or callback from an unregistered SIM), the alert message points them to where their PIN lives: <i>customer</i> → the SMS / WhatsApp received at ticket creation (in their inbox); <i>CSP</i> → the ticket card in the CSP App. This keeps PIN discovery zero-friction for the callback flow.</p>
+
 <p><b>Dead-end SMS (recipient = the caller who hit the dead-end).</b> When the IVR reaches a dead-end state (no active tech / PIN exhausted), an SMS is also sent to the caller's number with the relevant helpline (call-centre or trust line) — so the caller has the number in writing once the call ends. This is in addition to the voice message, not a replacement.</p>
 
 <div class="note"><b>IVR language: Hindi.</b> All IVR prompts (PIN entry, dead-end messages, any future menus) and all outbound notification copy default to Hindi, in line with Wiom's voice-first Bharat user. Regional-language expansion based on CSP geography will follow. <b>Exact wording — for every IVR prompt, SMS template, missed-call alert, and notification — will be decided by the solutions team.</b></div>
@@ -512,7 +514,7 @@ flowchart TD
   <ul>
     <li><b>UC 11</b> — Customer dials from an unregistered SIM (relative's phone, secondary SIM) → PIN required <span class="path">Path 4</span></li>
     <li><b>UC 12</b> — CSP user dials from an unregistered SIM → PIN required <span class="path">Path 4</span></li>
-    <li><b>UC 13</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered) → PIN required <span class="path">Path 4</span></li>
+    <li><b>UC 13</b> — CSP forwards the masked number to a colleague (colleague's phone is unregistered) → PIN required <span class="path">Path 4</span><br/><small style="color:var(--muted);">Sharing mechanism: screenshot of the ticket card (PIN visible), or forwarding the masked number + PIN together via WhatsApp / SMS. If the CSP shares only the masked number, the colleague will hit the PIN prompt and have to ask back. See <em>PIN discovery</em> in the Authorization resolution section.</small></li>
   </ul>
 
 </div>
