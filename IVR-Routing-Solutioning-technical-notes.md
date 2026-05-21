@@ -156,14 +156,46 @@ lookup_by_ticket_and_side(ticket_id, side):
 
 #### Lifecycle
 
+The Call CTA in the CSP App and Technician App is gated by **technician assignment**. Table 2 entry must fire on the same signal that turns the CTA visible, so the PIN is in place the first time the user can tap Call. The exact ES event differs per ticket family — see the next subsection for the per-family wiring.
+
 | Phase | Trigger | Action |
 |---|---|---|
-| **Generation** | `ticket_open` event from TAS / ticket system | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). |
+| **Generation (entry)** | Technician-assignment event from one of the three TAS ESs (Install / Restore / Pickup) — see per-family table below | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). Fire customer-side SMS. Surface CSP-side PIN on the ticket card. |
+| **Update (reassignment)** | Same technician-assignment event re-fired with a new `executor_id` (or ES candidate replaced via reassign signal — see per-family table) | Update both rows for this ticket: rewrite `other_party_mobile` on the customer-side row with the new technician's mobile; rewrite `csp_user_id` on the CSP-side row. Rotate PINs and re-distribute (SMS customer; PN to new technician on the ticket card). |
 | **Lookup (by PIN)** | IVR PIN flow | See contract above. |
 | **Lookup (by ticket+side)** | `user_identification` single-counterparty path | See contract above. |
 | **Rotation** | Daily cron at a fixed time (TBD — recommend 03:00 IST low-traffic) | For every active ticket, generate a new PIN for each side. Update `pin` and `rotated_at`. Fire SMS to customer with the new PIN. |
-| **Soft-delete** | `ticket_close` event from TAS | Set `expires_at = now()` on both rows for this ticket. Excluded from active lookups thereafter. |
+| **Soft-delete (exit)** | Ticket transitions to a **terminal state** in its ES — see per-family table below | Set `expires_at = now()` on both rows for this ticket. Excluded from active lookups thereafter. |
 | **Hard-delete** | Background retention job | Delete rows where `expires_at < now() - retention_window` (retention TBD, suggest 90 days for audit). |
+
+#### Per-ticket-family wiring (entry / update / exit signals)
+
+The Call CTA is visible after technician assignment for **all three** TAS execution services. Subscribe to these CEF events on the event bus — Table 2's lifecycle manager (call it `pin-registry-service` or `ivr-pin-listener`) is a fan-in consumer.
+
+| Family | ES (source of truth) | **Entry** — write 2 rows | **Update** — rewrite mobile + rotate PIN | **Exit** — soft-delete |
+|---|---|---|---|---|
+| **Install** | `es-installation-service-prd-v2.3.yaml` | `ES_INSTALL_TECHNICIAN_ASSIGNED` (state → `TECHNICIAN_ASSIGNED`; sets `executor_id`, `is_self_assigned`). Bridged to legacy RMQ wire_key `INSTALLATION_SLOT_ASSIGN` via `BookingInstallationEventBridge.onTechnicianAssigned` after commit — payload carries technician name + phone fetched from `csp-gateway-service GET /api/internal/csp-users/{id}`. | Same `ES_INSTALL_TECHNICIAN_ASSIGNED` event re-fires with a new `executor_id` when the CSP picks a different technician (state already `TECHNICIAN_ASSIGNED` → idempotent re-emit per `trigger_mutation_matrix.technician_assigned`). Listener compares stored `csp_user_id` vs payload — if different, treat as update. | Any transition to terminal state: `INSTALLATION_REPORTED_FAILED`, `CONNECTION_ACTIVE`, `CANCELLED_BY_CUSTOMER`, `CANCELLED_BY_UPSTREAM`, `INSTALLATION_CANCELLED_ONSITE`, `INSTALLATION_EXPIRED`. Subscribe to the corresponding `ES_INSTALL_*` events. |
+| **Restore** | `es-restore-prd-v1.4.yaml` | `ES_RESTORE_TECHNICIAN_ASSIGNED` (state `ASSIGNED_TECHNICIAN`, fired by CSP action `ASSIGN_TECHNICIAN`, sets `assigned_technician_id`). | `TASK_AUTO_REASSIGNED` upstream signal causes the original candidate to be `CANCELLED` and a new candidate to be inserted for the new executor — when the new CSP runs `ASSIGN_TECHNICIAN`, a fresh `ES_RESTORE_TECHNICIAN_ASSIGNED` fires for the new ticket-side identifier (treat as update on the same `ticket_id`). | Terminal states: `COMPLETED`, `CANCELLED`. Driven by upstream `COMPLAINT_TASK_CLOSED` (SR OS `CLOSED`), `COMPLAINT_RESOLUTION_SIGNAL` (`UNRESOLVABLE`), `PLATFORM_TAKEOVER_INITIATED`, `COMPLAINT_RECLASSIFIED_TO_PLATFORM`. |
+| **Pickup (NetBox Recovery)** | `es-netbox-recovery-service-prd-v1.9.yaml` | Default executor is the **owning CSP** (auto-assigned at candidate creation from ACS signal — state `PENDING_PICKUP`, reason `RECOVERY_TASK_ASSIGNED`). When the CSP **delegates** to a team member (v1.9 M7 TASK_ASSIGNMENT), `ES_NBREC_TASK_ASSIGNED` fires with the team-member identity. Listener should write Table 2 rows on **both** signals — same entry semantics. | `ES_NBREC_TASK_ASSIGNED` re-fires when the CSP reassigns to a different team member, or unassigns (back to CSP-self). Treat as update — rewrite `csp_user_id` and (on customer-side row) `other_party_mobile`. | Terminal states: `COMPLETED`, `CANCELLED`, `FAILED`. |
+
+**Implementation notes for the listener:**
+
+- All three ESs use **transactional outbox → bus** delivery, so the listener gets at-least-once semantics. Make Table 2 writes **idempotent** (key on `ticket_id` + `side` — upsert, not insert).
+- When the executor is the **CSP themselves** (`is_self_assigned = true` in Install ES; `executor.isSelf = true` in CSP App), the Call CTA is **hidden** in app (see CSP App: `canCallExecutor = executorAssigned && exec?.isSelf != true && !isClosureState`). The listener should still write the rows — backend-side `user_identification` still needs them for the customer-side path. But the CSP-side row's `other_party_mobile` should resolve to the customer (it always does in this design).
+- For Install, the listener should also receive `BookingInstallationEventBridge`'s legacy `INSTALLATION_SLOT_ASSIGN` wire if subscribing to the bus is not yet possible — the payload is equivalent.
+
+#### CTA visibility — app-side gating (for context)
+
+This is **app behaviour**, not Table 2 logic — included so engineers verify the lifecycle window aligns. The CTA must be visible iff the row exists and is active in Table 2.
+
+| App | File | Gate expression |
+|---|---|---|
+| CSP App | `feature/home/ui/drilldowns/install/InstallDrilldownContent.kt:386` | `executorAssigned && exec?.isSelf != true && !isClosureState` |
+| CSP App | `feature/home/ui/drilldowns/restore/RestoreDrilldownContent.kt:287` | `executorAssigned && exec?.isSelf != true && !isClosureRestore` |
+| CSP App | `feature/home/ui/drilldowns/netbox_recovery/NbrecDrilldownContent.kt:222` | `executorAssigned && …` (same pattern) |
+| Technician App | `core/model/TaskDetail.kt:61` | Backend-driven: `maskedCallAvailable: Boolean` on the drilldown DTO. Backend should derive this from Table-2 presence (active row exists for this ticket × side). |
+
+**Backend deriving `maskedCallAvailable` from Table 2** is the cleanest contract — it removes per-app state-string checks and centralises the gate in one place. Recommended.
 
 #### PIN generation algorithm
 
@@ -716,6 +748,9 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **Table 2 dual access pattern (by PIN, by ticket_id+side)** | Same physical table serves PIN-prompt flow and single-counterparty bridge. No need for a third table. |
 | **`user_identification` is the single API call on Table 1 miss** | One round-trip resolves identity + counterparty (if 1 ticket). Encapsulates the user/customer/ticket joins. |
 | **Calling eligibility scoped to Install / Restore / Pickup tickets** | No calling on closed or pre-booking tickets. Aligns the routing surface with operational reality. |
+| **Table 2 entry on technician-assignment event, not on ticket-open** | The Call CTA in the CSP App and Technician App becomes visible **only after technician assignment** (CSP App: `executorAssigned && !isSelf && !isClosure`; Technician App: backend-driven `maskedCallAvailable`). PINs should exist exactly when the CTA can be tapped — no earlier (wasted rows + SMS), no later (failed first tap). Three ES events drive entry: `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` (plus the auto-self-assignment at NBREC candidate creation). |
+| **Table 2 exit on ES terminal-state transition, not on a generic ticket_close event** | Each of the three ESs has its own terminal states. Subscribing to the family-specific terminal events keeps Table 2 in lockstep with the ES state machines and avoids relying on a derived "ticket closed" facade. |
+| **`pin-registry-service` as the listener owning Table 2 lifecycle** | Single fan-in consumer subscribed to all three ESs (Install / Restore / Pickup). Upsert on `(ticket_id, side)` makes the listener idempotent under at-least-once outbox delivery. Centralises the gate that backend uses to derive `maskedCallAvailable`. |
 | **Missed-call notifications via CleverTap campaigns** | Reuses Wiom's existing campaign infrastructure. |
 | **Hindi as default IVR language** | Voice-first Bharat user. English IVR is a hard blocker. |
 
@@ -786,6 +821,11 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 - [ ] **Redis cache** (or equivalent) provisioned for `CallSid → user_type` short-TTL stash.
 - [ ] **Load test:** PIN lookups + `user_identification` under expected peak (target QPS TBD).
 - [ ] **End-to-end test** for each of the 13 use cases passes in staging.
+- [ ] **Table 2 listener** (`pin-registry-service`) subscribed to all three ESs: `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` (plus NBREC `RECOVERY_TASK_ASSIGNED` candidate-creation hook).
+- [ ] **Table 2 listener** subscribed to terminal events for each family (Install: `INSTALLATION_REPORTED_FAILED` / `CONNECTION_ACTIVE` / `CANCELLED_BY_CUSTOMER` / `CANCELLED_BY_UPSTREAM` / `INSTALLATION_CANCELLED_ONSITE` / `INSTALLATION_EXPIRED`; Restore: `COMPLETED` / `CANCELLED`; NBREC: `COMPLETED` / `CANCELLED` / `FAILED`).
+- [ ] **Idempotency check:** repeated technician-assignment events for the same `(ticket_id, side)` produce upserts, not duplicate rows.
+- [ ] **Reassignment test:** reassigning a technician on an Install / Restore / NBREC ticket rewrites `other_party_mobile` + rotates PIN + re-delivers SMS to customer.
+- [ ] **Backend `maskedCallAvailable`** derived from active Table 2 row existence (not from per-app state-string parsing).
 
 ---
 
