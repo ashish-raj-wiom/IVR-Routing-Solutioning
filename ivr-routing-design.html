@@ -430,7 +430,7 @@
   <li><b>Recognised user, 0 active tickets</b> (e.g., closed-ticket customer dialling back) → no PIN exists for them in Table 2, so we skip the prompt entirely → dead-end IVR. The user type chooses which helpline message plays.</li>
 </ul>
 <p><b>Where the PIN comes from:</b> the customer receives theirs via SMS / WhatsApp at ticket creation (along with the masked number to dial); the CSP sees theirs on the ticket card in the CSP App. For colleague forwarding (UC 13), the CSP forwards the same SMS — it carries everything the colleague needs.</p>
-<p><b>Guardrails:</b> 3-retry cap per call; PIN rotates daily; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
+<p><b>Guardrails:</b> 3-retry cap per call; PIN is immutable for the ticket's lifetime (no rotation — both parties already hold the PIN, rotating would force re-distribution); PIN value is held in a 90-day cooldown after ticket close to prevent stale-PIN cross-pollination on reuse; for recognised CSP callers, Table 2 lookups are scoped to that CSP's active tickets.</p>
 
 <h3>PIN discovery — how each caller gets their PIN</h3>
 <table>
@@ -501,21 +501,22 @@ flowchart TD
     PB -. dials .-> F
 
     F -->|Hit| H([Bridge to other party]):::happy
-    F -->|Miss| UI[user_identification API]
-    UI --> UC{user_identification<br/>result?}
-    UC -->|Recognised user,<br/>exactly 1 active ticket| T2A[(Table 2 lookup<br/>by ticket_id + side)]:::store
-    T2A --> H
-    UC -->|Recognised user,<br/>2 or more active tickets| L
+    F -->|Miss| T2F[(Table 2 lookup by FROM<br/>JOIN customers / csp_users /<br/>sim_inventory)]:::store
+    T2F --> RC{Row count?}
+    RC -->|1| H
+    RC -->|2 or more| L
+    RC -->|0| UI[user_identification API]
+    UI --> UC{user_type?}
+    UC -->|Customer| DEC([IVR: Open the app or<br/>call 88803 22222]):::deadend
+    UC -->|CSP| DET([IVR: Open the app or<br/>call 78368 11111]):::deadend
     UC -->|Unknown FROM<br/>may still hold a PIN| L
-    UC -->|Recognised user,<br/>0 active tickets| DE
     L[Gather 5-digit PIN]:::fallback
     L --> M{Valid PIN?<br/>up to 3 tries}
     M -->|Yes| T2B[(Table 2 lookup<br/>by PIN)]:::store
     T2B --> H
-    M -->|No| DE
-    DE{User type<br/>from user_identification}
-    DE -->|Customer| OC([IVR: Open the app or<br/>call 88803 22222]):::deadend
-    DE -->|CSP / unknown| OT([IVR: Open the app or<br/>call 78368 11111]):::deadend
+    M -->|No| DEX{User type<br/>cached from earlier}
+    DEX -->|Customer| DEC
+    DEX -->|CSP / unknown| DET
 
     H --> Z{Picked up?<br/>via Exotel disposition}
     Z -->|Yes| ZP([Call connected ✓]):::happy
@@ -552,7 +553,7 @@ flowchart TD
 
 <div class="note"><b>IVR language: Hindi.</b> All IVR prompts (PIN entry, dead-end messages, any future menus) and all outbound notification copy default to Hindi, in line with Wiom's voice-first Bharat user. Regional-language expansion based on CSP geography will follow. <b>Exact wording — for every IVR prompt, SMS template, missed-call alert, and notification — will be decided by the solutions team.</b></div>
 
-<div class="note"><b>Comms layer dependencies (must land before launch).</b> All outbound SMS — PIN delivery, PIN rotation, missed-call alerts — must be sent via <b>DLT-registered templates with the "Wiom" sender ID</b>, so recipients see "Wiom" as the sender rather than a generic 11444XXXX phone number. WhatsApp comms require the corresponding WhatsApp BSP setup with approved templates.</div>
+<div class="note"><b>Comms layer dependencies (must land before launch).</b> All outbound SMS — PIN delivery at ticket open, missed-call alerts, dead-end SMS — must be sent via <b>DLT-registered templates with the "Wiom" sender ID</b>, so recipients see "Wiom" as the sender rather than a generic 11444XXXX phone number. WhatsApp comms require the corresponding WhatsApp BSP setup with approved templates.</div>
 
 <h2>Building trust for the masked number</h2>
 <p>Routing the call is only half the job — the recipient still has to <em>pick up</em>. Two whitelisting layers are in place so the masked number shows as a recognised Wiom caller rather than an unknown or "suspected spam" number. Together they directly attack the DNP (Did-Not-Pick) issue:</p>
@@ -751,7 +752,7 @@ sequenceDiagram
     <tr>
       <td><b>Table 2</b> — PIN registry (both sides)</td>
       <td><code>PIN → other_party_mobile</code><br/>(also indexed by <code>ticket_id + side</code>)</td>
-      <td><span class="tag new">new</span> Two rows per active ticket — one for the customer (routes to the technician), one for the CSP (routes to the customer). Generated on ticket open, rotated daily.<br/><br/>Two access patterns: <b>by PIN</b> (the PIN-prompt path) and <b>by ticket + side</b> (the <code>user_identification</code> single-counterparty bridge — fetches <code>other_party_mobile</code> without going through a PIN).</td>
+      <td><span class="tag new">new</span> Two rows per active ticket — one for the customer (routes to the technician), one for the CSP (routes to the customer). Generated on technician-assignment; PIN is <b>immutable for the ticket's lifetime</b> (reassignment rewrites the mobile, never the PIN); soft-deleted on ticket close with a 90-day cooldown before the PIN value can be re-issued.<br/><br/>Three access patterns: <b>by FROM</b> (primary hot-path lookup on Table 1 miss — JOIN with customers / csp_users / sim_inventory), <b>by PIN</b> (the PIN-prompt path), and <b>by ticket + side</b> (listener writes only).</td>
       <td>Per active ticket; GC on ticket closure</td>
     </tr>
   </tbody>

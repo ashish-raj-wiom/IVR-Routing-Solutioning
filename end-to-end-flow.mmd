@@ -1,0 +1,45 @@
+%%{init: {'flowchart': {'curve': 'basis', 'nodeSpacing': 30, 'rankSpacing': 35}, 'themeVariables': {'fontSize': '13px'}}}%%
+flowchart TD
+
+    subgraph PA["Path A — In-app CTA (either party)"]
+        direction LR
+        A([Tap Call CTA]):::start --> B[/Gather FROM<br/>CSP: SIMs + registered<br/>Customer: registered only/]
+        B --> C[/Resolve TO/]
+        C --> D[(Table 1 write<br/>FROM list → TO)]:::store
+        D --> E[/Masked number/]
+    end
+
+    PB([Path B — Direct dial<br/>dialer · call log · saved contact]):::start
+
+    F{Table 1 lookup}
+    E -. dials .-> F
+    PB -. dials .-> F
+
+    F -->|Hit| H([Bridge to other party]):::happy
+    F -->|Miss| T2F[(Table 2 lookup by FROM<br/>JOIN customers / csp_users /<br/>sim_inventory)]:::store
+    T2F --> RC{Row count?}
+    RC -->|1| H
+    RC -->|2 or more| L
+    RC -->|0| UI[user_identification API]
+    UI --> UC{user_type?}
+    UC -->|Customer| DEC([IVR: Open the app or<br/>call 88803 22222]):::deadend
+    UC -->|CSP| DET([IVR: Open the app or<br/>call 78368 11111]):::deadend
+    UC -->|Unknown FROM<br/>may still hold a PIN| L
+    L[Gather 5-digit PIN]:::fallback
+    L --> M{Valid PIN?<br/>up to 3 tries}
+    M -->|Yes| T2B[(Table 2 lookup<br/>by PIN)]:::store
+    T2B --> H
+    M -->|No| DEX{User type<br/>cached from earlier}
+    DEX -->|Customer| DEC
+    DEX -->|CSP / unknown| DET
+
+    H --> Z{Picked up?<br/>via Exotel disposition}
+    Z -->|Yes| ZP([Call connected ✓]):::happy
+    Z -->|No| ZE[(CleverTap event<br/>missed_call_*)]:::store
+    ZE --> ZA([Missed-call alert<br/>SMS / PN to missed party]):::fallback
+
+    classDef start    fill:#37474f,stroke:#263238,color:#fff
+    classDef happy    fill:#4caf50,stroke:#2e7d32,color:#fff
+    classDef fallback fill:#ff9800,stroke:#ef6c00,color:#fff
+    classDef deadend  fill:#e53935,stroke:#b71c1c,color:#fff
+    classDef store    fill:#2196f3,stroke:#1565c0,color:#fff

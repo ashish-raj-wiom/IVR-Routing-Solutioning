@@ -34,19 +34,37 @@ The system is, at its core, an **authentication + routing system** for masked ph
 
 ### Four key terms (used throughout)
 
-- **Recognised** — caller's number is in Table 1 OR in Table 2 via a valid PIN.
+- **Recognised** — caller's number is in Table 1 OR matches a row in Table 2 (directly by FROM or via a valid PIN).
 - **Authorised** — connection is legitimate (PIN or FROM belongs to an active ticket for the party being reached).
 - **Seamless** — no app / no IVR / instant bridge (the Table 1 hit + single-counterparty paths).
 - **Graceful fallback** — caller knows why the call didn't connect and has a clear next step (helpline number on voice + SMS).
+
+### Service ownership
+
+A **single new service** owns this entire system. Call it `ivr-routing-service` for now (final name TBD). It owns:
+
+| Responsibility | Surface |
+|---|---|
+| **Table 1** — active call mapping | Internal DB |
+| **Table 2** — PIN registry | Internal DB |
+| **`sim_inventory`** — CSP SIM → csp_user_id map | Internal DB. Built **fresh** with proper audit logs. (The existing `es-ivr-calling-service` is being discarded as part of this redesign.) |
+| **`user_identification` API** | `POST /internal/user-identification` — called only on Table 2 miss (count = 0) |
+| **Exotel-facing endpoints** | `GET /ivr/resolve-caller`, `GET /ivr/resolve-pin`, `GET /audio/deadend`, `POST /log/disposition`, `POST /log/*` |
+| **ES event listener** | Subscribes to `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` + terminal events. Drives Table 2 entry / mobile-update / exit. |
+| **SMS dispatch** | Calls Gupshup (Wiom's SMS provider) for PIN delivery, missed-call alerts, dead-end SMS. |
+| **CleverTap firing** | Pushes `missed_call_csp_to_customer` / `missed_call_customer_to_csp` events from the disposition webhook. |
+| **`maskedCallAvailable` derivation** | Writes a boolean column on each ES candidate row on Table 2 row creation / soft-delete. ES drilldown serializers surface it on the DTO to CSP App + Technician App. |
+
+Single service in v1 keeps deployment, ownership, and infra simple. Split is possible later if scale warrants it.
 
 ### Identity store at a glance
 
 | Element | Purpose | New / existing |
 |---|---|---|
-| **Table 1** | Active call mapping (FROM → TO), short TTL, written on `initiateCall`. | Existing today, kept unchanged. |
-| **Table 2** | Per-ticket PIN registry. Two rows per ticket (one per side). Stores `PIN → other_party_mobile`. Has two access patterns — by `pin`, by `(ticket_id, side)`. | **New.** |
-| **`user_identification` API** | Called on Table 1 miss. Returns user type + active-ticket count + (if count = 1) the counterparty mobile. Drives the entire post-Table-1 routing. | **New.** |
-| **`sim_inventory`** | Existing CSP-SIM capture set. Used inside `user_identification` to match a CSP user's FROM, and for PIN-scoping. | Existing. |
+| **Table 1** | Active call mapping (FROM → TO), short TTL, written when an in-app Call CTA is tapped. **Built fresh** as part of this service (the existing `es-ivr-calling-service` Redis cache is discarded). | **New.** |
+| **Table 2** | Per-ticket PIN registry. Two rows per ticket (one per side). Three access patterns — **by FROM at Table 1 miss** (new primary lookup), by `pin` (PIN-prompt flow), by `(ticket_id, side)` (rare — listener writes). | **New.** |
+| **`sim_inventory`** | CSP SIM → csp_user_id map. Used in Table 2 by-FROM lookup (to find CSP-side rows when the caller dials from any of their SIMs). | **New.** Built fresh with audit logs (every add / remove tracked). |
+| **`user_identification` API** | Called **only when Table 2 returns 0 rows**. Returns user_type ∈ {customer, csp, unknown} + user_id. Result cached against `CallSid` in Redis for reuse at dead-end. | **New.** |
 | **Disposition webhook** | Exotel POSTs after every call with outcome (answered / no_answer / busy / failed). Drives missed-call alerts. | New listener; Exotel side already supported. |
 
 ---
@@ -60,23 +78,27 @@ Every successful call flows through exactly one path:
 **Outcome:** Seamless bridge to the counterparty in `TO`.
 **Covers:** UC 01, UC 02.
 
-### Path 2 — Direct bridge (single counterparty identified)
-**Trigger:** Table 1 miss → `user_identification(FROM)` recognises the caller AND finds exactly 1 active ticket → fetches counterparty from Table 2 by `(ticket_id, side)`.
+### Path 2 — Direct bridge (single counterparty identified by FROM)
+**Trigger:** Table 1 miss → **Table 2 lookup by FROM** returns exactly 1 active row → bridge to `other_party_mobile` on that row.
 **Outcome:** Seamless bridge, no PIN.
 **Covers:** UC 03, UC 05, UC 07, UC 09.
+**Note:** No `user_identification` call is made on this path. The Table 2 by-FROM query joins `customers.registered_mobile`, `csp_users.registered_mobile`, and `sim_inventory.mobile` in a single SQL — see Table 2 lookup contracts.
 
 ### Path 3 — PIN for multi-ticket disambiguation
-**Trigger:** Table 1 miss → caller recognised but has 2+ active tickets → IVR asks for PIN → Table 2 lookup by PIN.
+**Trigger:** Table 1 miss → **Table 2 lookup by FROM** returns 2+ active rows → IVR asks for PIN → Table 2 lookup by PIN.
 **Outcome:** Bridge to the counterparty identified by the PIN.
 **Covers:** UC 04, UC 06, UC 08, UC 10.
 
 ### Path 4 — PIN for unknown caller
-**Trigger:** Table 1 miss → `user_identification(FROM)` doesn't recognise the FROM → IVR asks for PIN (caller may hold a forwarded PIN, e.g., UC 13 colleague case) → Table 2 lookup by PIN.
+**Trigger:** Table 1 miss → **Table 2 lookup by FROM returns 0 rows** → `user_identification(FROM)` returns `user_type = unknown` → IVR asks for PIN (caller may hold a forwarded PIN, e.g., UC 13 colleague case) → Table 2 lookup by PIN.
 **Outcome:** Bridge if PIN valid; dead-end after 3 wrong tries.
 **Covers:** UC 11, UC 12, UC 13.
 
 ### Dead-end (terminal state, not a path)
-**Trigger:** Either (a) recognised user with 0 active tickets — skip PIN entirely; or (b) PIN exhausted (3 wrong tries on Path 3 or Path 4).
+**Two ways in:**
+- **(a) Recognised user with 0 active tickets** — Table 2 by-FROM returns 0 rows, `user_identification` recognises FROM as customer or CSP → skip PIN entirely via backend directive in `/ivr/resolve-caller` response → Playback dead-end.
+- **(b) PIN exhausted** — 3 wrong tries on Path 3 or Path 4 → Playback dead-end. user_type already cached against `CallSid` from the upstream `user_identification` call.
+
 **Outcome:** Graceful-fallback IVR + dead-end SMS:
 - `user_type == 'customer'` → call centre **88803 22222**.
 - `user_type ∈ {csp, unknown}` → trust line **78368 11111**.
@@ -129,29 +151,76 @@ Every successful call flows through exactly one path:
 | `expires_at` | timestamp (nullable) | Set on ticket closure (soft-delete). After this, the row is excluded from active lookups but the `pin` value stays reserved until `cooldown_until`. |
 | `cooldown_until` | timestamp (nullable) | `expires_at + P_PIN_COOLDOWN_WINDOW` (default 90 days). The PIN value cannot be re-issued to another ticket until `now() > cooldown_until`. Protects against stale-PIN cross-pollination (technician remembers an old PIN, dials in, reaches a stranger's ticket). |
 
-#### Two access patterns (same table, two indexes)
+#### Three access patterns (same table, three indexes)
 
 | Pattern | Used by | Lookup keys | Index |
 |---|---|---|---|
-| **By PIN** | PIN-prompt flow (Path 3, Path 4) | `pin` | Primary unique index on `pin` (over active rows). |
-| **By `(ticket_id, side)`** | `user_identification` single-counterparty bridge (Path 2) | `ticket_id`, `side` | Secondary composite index on `(ticket_id, side)`. |
+| **By FROM** | Primary call-routing lookup at Table 1 miss (Paths 2, 3, 4 decision point) | `customer_mobile` OR `csp_user_id` (resolved from FROM via JOINs) | See lookup contract below — multiple covering indexes |
+| **By PIN** | PIN-prompt flow (Paths 3, 4) | `pin` | Primary unique index on `pin` (active rows) |
+| **By `(ticket_id, side)`** | Listener writes (entry, update, soft-delete) | `ticket_id`, `side` | Composite index on `(ticket_id, side)` |
 
 #### Lookup contracts
+
+**Primary lookup at Table 1 miss — by FROM:** Single combined query that joins identity resolution with Table 2. Handles both customer side (FROM = `customers.registered_mobile`) and CSP side (FROM = `csp_users.registered_mobile` OR FROM in `sim_inventory.mobile` for that csp_user).
+
+```sql
+-- Returns 0 / 1 / many active rows, plus the matched side for telemetry
+SELECT t2.*, 'customer' AS matched_side
+FROM table_2 t2
+JOIN customers c ON t2.customer_mobile = c.registered_mobile
+WHERE c.registered_mobile = :from
+  AND t2.side = 'customer'
+  AND t2.expires_at IS NULL
+UNION ALL
+SELECT t2.*, 'csp' AS matched_side
+FROM table_2 t2
+WHERE t2.csp_user_id IN (
+    SELECT csp_user_id FROM csp_users  WHERE registered_mobile = :from
+    UNION
+    SELECT csp_user_id FROM sim_inventory WHERE mobile = :from
+)
+  AND t2.side = 'csp'
+  AND t2.expires_at IS NULL;
+```
+
+```text
+lookup_by_from(from):
+  rows = <SQL above>
+  branch on rows.count:
+    1    → return rows[0].other_party_mobile  (Path 2)
+    >= 2 → return 'PROMPT_PIN'                (Path 3)
+    0    → return 'CALL_USER_IDENTIFICATION'  (Path 4 or dead-end)
+```
+
+**Required indexes for fast resolution:**
+- `customers (registered_mobile)` — unique
+- `csp_users (registered_mobile)` — unique
+- `sim_inventory (mobile)` — non-unique (a single SIM number is registered to one csp_user but a defunct row may exist in audit history)
+- `table_2 (customer_mobile)` partial WHERE side='customer' AND expires_at IS NULL
+- `table_2 (csp_user_id)` partial WHERE side='csp' AND expires_at IS NULL
+
+**By PIN** (PIN-prompt flow, after Gather):
 
 ```text
 lookup_by_pin(pin, caller_from):
   rows = SELECT * FROM table_2 WHERE pin = ? AND expires_at IS NULL
-  if caller_from is in sim_inventory:                # PIN scoping
-    rows = rows WHERE side = 'csp' AND csp_id = caller's csp_id
+  if caller_from is in sim_inventory OR matches a csp_users.registered_mobile:
+    # CSP scoping — restrict to PIN rows belonging to a ticket of this caller's CSP org
+    rows = rows WHERE side = 'csp' AND csp_id = (caller's resolved csp_id)
   if rows.count == 1: return rows[0].other_party_mobile
-  else: return null
+  else: return null  -- treated as invalid PIN by /ivr/resolve-pin
 ```
 
+**By `(ticket_id, side)`** (listener writes only — entry, mobile-update, soft-delete):
+
 ```text
-lookup_by_ticket_and_side(ticket_id, side):
-  row = SELECT * FROM table_2
-        WHERE ticket_id = ? AND side = ? AND expires_at IS NULL
-  return row.other_party_mobile (or null)
+write_or_update(ticket_id, side, payload):
+  UPSERT INTO table_2 (...)
+  ON CONFLICT (ticket_id, side) DO UPDATE
+    SET other_party_mobile = EXCLUDED.other_party_mobile,
+        csp_user_id        = EXCLUDED.csp_user_id,
+        csp_id             = EXCLUDED.csp_id
+    -- PIN never updated. created_at never updated.
 ```
 
 #### Lifecycle
@@ -164,8 +233,8 @@ The Call CTA in the CSP App and Technician App is gated by **technician assignme
 |---|---|---|
 | **Generation (entry)** | Technician-assignment event from one of the three TAS ESs (Install / Restore / Pickup) — see per-family table below | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). Fire customer-side SMS **once**. Surface CSP-side PIN on the ticket card. |
 | **Update (reassignment) — mobile only** | Same technician-assignment event re-fired with a new `executor_id` (or ES candidate replaced via reassign signal — see per-family table) | Update both rows for this ticket: **rewrite `other_party_mobile` on the customer-side row** with the new technician's mobile; **rewrite `csp_user_id` (and `csp_id` if cross-org)** on the CSP-side row. **PIN is NOT rotated.** Both parties keep the PINs they already hold; the bridge target changes underneath. Fire PN to the new technician on the ticket card so they see the existing PIN. No new SMS to customer. |
-| **Lookup (by PIN)** | IVR PIN flow | See contract above. |
-| **Lookup (by ticket+side)** | `user_identification` single-counterparty path | See contract above. |
+| **Lookup (by FROM)** | Primary call-routing entry — fires on every Table 1 miss | See contract above. |
+| **Lookup (by PIN)** | IVR PIN flow (Paths 3, 4) | See contract above. |
 | **Soft-delete (exit)** | Ticket transitions to a **terminal state** in its ES — see per-family table below | Set `expires_at = now()`, `cooldown_until = now() + P_PIN_COOLDOWN_WINDOW` on both rows. Excluded from active lookups thereafter; PIN value stays reserved (not reissuable) until `cooldown_until`. |
 | **Cooldown** | Row state where `expires_at < now() <= cooldown_until` | PIN value is **reserved** — generation algorithm must skip it. Row is NOT lookup-able (a caller entering this PIN gets "invalid PIN" → dead-end). Protects against the stale-PIN cross-pollination case (technician remembers old PIN, dials in, would otherwise be bridged to a stranger). |
 | **Hard-delete** | Background retention job | Delete rows where `cooldown_until < now() - audit_retention_window` (audit retention TBD, suggest 1 year for compliance). After hard-delete the PIN value is freely available to the generation pool again. |
@@ -244,9 +313,57 @@ CREATE INDEX idx_table2_cooldown_until
   ON table_2 (cooldown_until);
 ```
 
+### `sim_inventory` table (new — built fresh)
+
+The existing `es-ivr-calling-service` is being discarded as part of this redesign. `sim_inventory` is rebuilt from scratch inside `ivr-routing-service` with proper audit logs.
+
+#### Schema
+
+| Field | Type | Notes |
+|---|---|---|
+| `sim_id` | UUID | Primary key. |
+| `mobile` | E164 | The SIM number. Non-unique on this column (a number can be replaced; old row stays in audit history with a non-null `removed_at`). |
+| `csp_user_id` | UUID | The CSP user this SIM belongs to. |
+| `csp_id` | UUID | Denormalised for fast lookup at PIN-scoping time. |
+| `added_at` | timestamp | When the SIM was added to inventory. |
+| `added_by_user_id` | UUID | Who added it (admin user or CSP user via self-service). |
+| `removed_at` | timestamp (nullable) | When the SIM was removed from inventory. NULL = still active. |
+| `removed_by_user_id` | UUID (nullable) | Who removed it. |
+| `verification_status` | enum | `pending` / `verified` / `failed` — set after OTP verification (TBD: confirm verification flow with Ops). |
+
+#### Indexes
+
+```sql
+CREATE INDEX idx_siminv_mobile_active
+  ON sim_inventory (mobile) WHERE removed_at IS NULL;
+
+CREATE INDEX idx_siminv_csp_user
+  ON sim_inventory (csp_user_id) WHERE removed_at IS NULL;
+```
+
+#### Lifecycle
+
+- **Add:** CSP user adds a SIM via self-service flow (or admin tool — TBD). Row inserted with `verification_status = pending`. Optional OTP verification step (TBD by Ops) flips to `verified`.
+- **Remove:** Soft-delete via `removed_at`. Row stays for audit. **Removing a SIM does NOT change active Table 2 rows** — because Table 2 by-FROM uses JOIN-at-call-time on `sim_inventory WHERE removed_at IS NULL`, the next call from a removed SIM naturally falls through to PIN gather.
+- **Audit log:** Every add / remove writes to a `sim_inventory_audit` table (or equivalent event-log stream). Captures: actor, action, mobile, csp_user_id, timestamp, source (self-service / admin / OTP-flow).
+
+#### Lookup contract (used inside the Table 2 by-FROM JOIN)
+
+```sql
+-- Used as a subquery in the Table 2 by-FROM lookup
+SELECT csp_user_id FROM sim_inventory
+WHERE mobile = :from AND removed_at IS NULL
+```
+
+#### Open questions for Ops
+
+- Verification flow: OTP at add time? Or trust the CSP user to declare?
+- Self-service vs admin-only adds?
+- Cap on number of active SIMs per CSP user?
+
 ### Removed: Table 3 (Cx ↔ Technician resolver)
 
-Earlier iterations had a Table 3 — `customer_mobile → technician_mobile` — for customer-side routing without PIN. **Dropped** when the customer-side PIN was added and `user_identification` was extended to return the counterparty mobile by looking up Table 2 directly. One fewer table to maintain.
+Earlier iterations had a Table 3 — `customer_mobile → technician_mobile` — for customer-side routing without PIN. **Dropped** when the customer-side PIN was added and Table 2 by-FROM lookup was extended to return the counterparty mobile directly. One fewer table to maintain.
 
 ---
 
@@ -254,20 +371,27 @@ Earlier iterations had a Table 3 — `customer_mobile → technician_mobile` —
 
 ### Purpose
 
-Called on Table 1 miss. Resolves who the caller is and what they want, in one round-trip.
+Called **only when Table 2 by-FROM lookup returns 0 rows**. Answers a narrow question: *is this FROM a Wiom customer, a Wiom CSP, or completely unknown?* The result drives two decisions:
+
+1. **Skip PIN or not.** If `user_type ∈ {customer, csp}` and Table 2 by-FROM was 0, the caller has no active ticket — there is no live PIN they could possibly enter. Skip Gather, route directly to dead-end with the right helpline message.
+2. **Which dead-end message to play.** `customer` → call centre 88803 22222; `csp` or `unknown` → trust line 78368 11111.
+
+**Not on the hot path.** Most calls (Table 1 hit, or Table 2 by-FROM returns 1 or many) never invoke this API. Only the 0-row case touches it.
 
 ### Endpoint
 
 `POST /internal/user-identification`
-- Internal-only (between IVR backend and customer-service / TAS).
-- Latency budget: **p95 < 200 ms** within Exotel's 5 s Primary URL window.
+- **Internal-only**, exposed by the same `ivr-routing-service` that owns Table 1 + Table 2.
+- **Auth:** internal mTLS between Exotel-facing layer and identity layer of the same service (intra-process call in practice; exposed as a logical API for clarity + future split).
+- **Latency budget:** p95 < 100 ms — it runs inside Exotel's already-shrunk window (after the by-FROM lookup has consumed some of the 5 s budget).
+- **Idempotency:** safe — pure read.
 
 ### Request
 
 ```json
 {
   "from": "+91XXXXXXXXXX",
-  "call_id": "exotel-call-sid"  // for telemetry correlation
+  "call_id": "exotel-call-sid"  // for telemetry correlation + Redis cache key
 }
 ```
 
@@ -276,65 +400,51 @@ Called on Table 1 miss. Resolves who the caller is and what they want, in one ro
 ```json
 {
   "user_type": "customer" | "csp" | "unknown",
-  "active_ticket_count": 0 | 1 | 2 | ...,
-  "other_party_mobile": "+91XXXXXXXXXX",  // present iff active_ticket_count == 1
-  "ticket_id": "uuid",                    // present iff active_ticket_count == 1
-  "csp_id": "uuid"                        // present iff user_type == "csp"
+  "user_id": "uuid" | null   // customer_id or csp_user_id; null when user_type == "unknown"
 }
 ```
+
+**No active-ticket-count.** That answer is already known (= 0) because this API is only called after Table 2 by-FROM returned 0 rows. No need to recompute.
 
 ### Internal logic
 
 ```text
 user_identification(from):
-  # Step 1: identify the user
-  if from matches a customer record:
-    user_type = "customer"
-    user_ref = customer_mobile = from
-  elif from is in sim_inventory OR matches a CSP user's registered mobile:
-    user_type = "csp"
-    user_ref = csp_user_id
+  if from matches customers.registered_mobile:
+    return { user_type: "customer", user_id: customer.id }
+  elif from matches csp_users.registered_mobile:
+    return { user_type: "csp", user_id: csp_user.id }
+  elif from matches sim_inventory.mobile:
+    csp_user_id = sim_inventory.lookup(from).csp_user_id
+    return { user_type: "csp", user_id: csp_user_id }
   else:
-    user_type = "unknown"
-    return { user_type: "unknown", active_ticket_count: 0 }
-
-  # Step 2: count active tickets for this user
-  if user_type == "customer":
-    tickets = active tickets where ticket.customer_mobile == from
-  else:  # csp
-    tickets = active tickets where ticket.assigned_csp_user_id == user_ref
-
-  count = len(tickets)
-
-  if count == 1:
-    # Step 3: fetch counterparty mobile from Table 2 by (ticket_id, side)
-    ticket = tickets[0]
-    side = "customer" if user_type == "customer" else "csp"
-    counterparty = table_2.lookup_by_ticket_and_side(ticket.id, side)
-    return {
-      user_type, active_ticket_count: 1,
-      other_party_mobile: counterparty,
-      ticket_id: ticket.id,
-      csp_id: ticket.csp_id  // if applicable
-    }
-
-  return { user_type, active_ticket_count: count }
+    return { user_type: "unknown", user_id: null }
 ```
+
+**Multi-match enforcement (HTML assumption).** A FROM that matches both a customer AND a CSP record is forbidden by data-model invariant (HTML assumptions). The API should `LOG.error` + return `user_type = "customer"` (customer takes precedence as the more user-visible case). Operational dashboard surfaces these for cleanup.
+
+### Caching
+
+Result is stashed in Redis keyed on `call_id`:
+- **Key:** `ivr:user_type:{call_id}`
+- **TTL:** 10 minutes (covers any reasonable call duration + PIN flow + disposition webhook)
+- **Why:** if the caller hits PIN gather (Path 4: unknown + has-forwarded-PIN) and then fails 3 times, dead-end needs `user_type` again. Re-resolution wastes a DB call.
 
 ### Routing decisions driven by the response
 
-| `user_type` | `active_ticket_count` | Action |
+Given Table 2 by-FROM already returned 0 rows:
+
+| `user_type` | Action | Path |
 |---|---|---|
-| `customer` or `csp` | `1` | Bridge directly to `other_party_mobile` (Path 2). |
-| `customer` or `csp` | `>= 2` | IVR prompts for PIN → Table 2 lookup by PIN (Path 3). |
-| `unknown` | `0` | IVR prompts for PIN (caller may hold a forwarded PIN, UC 13) → Table 2 lookup by PIN (Path 4). |
-| `customer` or `csp` | `0` | Skip PIN → dead-end IVR (no PIN exists in Table 2 for this user). |
+| `customer` | **Skip PIN.** `/ivr/resolve-caller` response sets `action: "playback"` with the call-centre dead-end audio URL. | Direct → Dead-end (customer) |
+| `csp` | **Skip PIN.** `/ivr/resolve-caller` response sets `action: "playback"` with the trust-line dead-end audio URL. | Direct → Dead-end (csp) |
+| `unknown` | **Prompt for PIN.** `/ivr/resolve-caller` response sets `action: "gather"` — caller may hold a forwarded PIN (UC 13). On 3 failed attempts, dead-end → trust line. | Path 4 |
 
 ---
 
 ## Backend endpoint contracts
 
-All endpoints exposed by the IVR routing service. Auth: internal mTLS or API key in header.
+All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth for every Exotel-originated request: signed-payload via shared secret** (Exotel-supported). Backend rejects any request whose `X-Exotel-Signature` header does not match HMAC-SHA256(shared_secret, request_body). Shared secret rotated quarterly.
 
 ### `/ivr/resolve-caller` (called by Exotel Connect #1)
 
@@ -342,42 +452,67 @@ All endpoints exposed by the IVR routing service. Auth: internal mTLS or API key
 
 **Logic:**
 1. Log `dial_received_backend`.
-2. Table 1 lookup by `From`. If hit → return destination JSON.
-3. Else call `user_identification(From, CallSid)`.
-4. Branch on response (per routing table above):
-   - `count == 1` → return destination JSON (bridge to `other_party_mobile`).
-   - `count >= 2` or `user_type == unknown` → return empty destination → falls through to Gather.
-   - `user_type ∈ {customer, csp}` AND `count == 0` → return a Playback redirect if Exotel account supports it, else return empty destination AND cache "skip-pin = true" against `CallSid` so subsequent applets know to skip Gather. (Implementation note: simplest v1 is to let it fall through to Gather, PIN will fail, dead-end fires.)
+2. **Table 1 lookup** by `From`. If hit → return `action: "connect"` with destination.
+3. **Else Table 2 by-FROM lookup** (the JOIN-at-call-time SQL). Branch on row count:
+   - **1 row** → return `action: "connect"` with destination = `rows[0].other_party_mobile`. Cache `user_type` (from the matched_side column) against `CallSid`. (Path 2)
+   - **>= 2 rows** → return `action: "gather"`. Cache `user_type` against `CallSid` for dead-end use. (Path 3)
+   - **0 rows** → call `user_identification(From, CallSid)`. Cache the result. Then:
+     - `user_type == "customer"` → return `action: "playback"` with `audio_url: /audio/deadend?call_id={CallSid}` (customer dead-end → call centre)
+     - `user_type == "csp"` → return `action: "playback"` with `audio_url: /audio/deadend?call_id={CallSid}` (csp dead-end → trust line)
+     - `user_type == "unknown"` → return `action: "gather"` (Path 4 — caller may hold a forwarded PIN)
 
-**Cache** the `user_type` against `CallSid` (Redis, 10-min TTL) — needed later by `/audio/deadend` and `/log/disposition`.
-
-**Response (bridging):**
+**Response schema:**
 ```json
 {
+  "action": "connect" | "gather" | "playback",
+  // when action == "connect"
   "destination": { "numbers": ["+919812345678"] },
   "outgoing_phone_number": "<masked_number>",
   "record": true,
-  "max_ringing_duration": 30
+  "max_ringing_duration": 30,
+  // when action == "playback"
+  "audio_url": "https://ivr-routing-service.../audio/deadend?call_id=...",
+  // optional metadata for telemetry correlation
+  "resolution_reason": "table1_hit" | "table2_single" | "table2_multi" | "recognised_no_ticket" | "unknown_caller"
 }
 ```
 
-**Response (no bridge):** HTTP 200 with `{ "destination": { "numbers": [] } }` OR empty `destination` — triggers Exotel's no-answer branch.
+**Exotel applet interpretation:**
+- `action: "connect"` → Exotel's Connect-applet dials the destination, masking with `outgoing_phone_number`.
+- `action: "gather"` → Connect returns "no destination" → Exotel flow advances to the next applet (Gather → PIN prompt).
+- `action: "playback"` → Exotel honours a redirect to the Playback applet via the dynamic-URL response. **Confirm with Exotel:** that Connect applets support a `playback` directive response. If not, fallback is **(b)** from §Open TBDs — add a branching Passthru applet between Connect-1 and Gather to read the resolution decision.
 
-**Timeout / error:** Exotel falls back to the Fallback URL configured on the applet.
+**Timeout / error:** Exotel falls back to the Fallback URL configured on the applet. Backend SLO: p95 < 200 ms.
+
+**Idempotency:** Safe — read-only. Same input always produces same output for the lifetime of Table 1 / Table 2 state.
 
 ### `/ivr/resolve-pin` (called by Exotel Connect #2)
 
 `GET /ivr/resolve-pin?From=<E164>&CallSid=<exotel_sid>&digits=<5_digits>`
 
 **Logic:**
-1. Log `pin_attempted` (with attempt number).
-2. Table 2 lookup by PIN, with scoping if applicable:
-   - If `From` is in `sim_inventory` → scope to `side = 'csp' AND csp_id = matched_csp_id`.
-   - Else → unrestricted (handles unknown FROM + multi-ticket customer cases).
-3. If single match → return destination JSON. Log `pin_attempt_valid`.
-4. If no match → return empty destination. Log `pin_attempt_invalid`. Exotel will re-prompt (up to 3 tries) OR fall through to dead-end after exhaustion.
+1. Log `pin_attempted` (with attempt number, digits length only — not the digits themselves).
+2. Table 2 lookup by PIN, with scoping:
+   - If `From` matches `csp_users.registered_mobile` OR is in `sim_inventory` → scope to `side = 'csp' AND csp_id = matched_csp_id` (matched at `/resolve-caller` time, available in Redis).
+   - Else → unrestricted (handles unknown FROM + customer multi-ticket cases).
+3. If single match → return `action: "connect"` with destination. Log `pin_attempt_valid`.
+4. If no match → return `action: "gather_retry"` if attempt < 3, else `action: "playback"` with deadend audio URL. Log `pin_attempt_invalid` (with reason: `no_match` or `cooldown_row` or `pin_format`).
 
-**Response shape:** same as `/resolve-caller`.
+**Response shape:**
+```json
+{
+  "action": "connect" | "gather_retry" | "playback",
+  // when "connect"
+  "destination": { "numbers": ["..."] },
+  "outgoing_phone_number": "<masked_number>",
+  "record": true,
+  // when "playback" (after 3 fails)
+  "audio_url": "https://.../audio/deadend?call_id=...",
+  "resolution_reason": "pin_match" | "pin_invalid" | "pin_exhausted"
+}
+```
+
+**Idempotency:** the PIN attempt counter is keyed against `CallSid` in Redis (TTL 10 min). Duplicate webhook fires for the same `(CallSid, digits, attempt)` return the same response.
 
 ### `/audio/deadend` (called by Exotel Playback if dynamic audio URL is supported)
 
@@ -758,7 +893,11 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | Decision | Rationale |
 |---|---|
 | **Single masked number** (not MN1/MN2) | Removes wrong-direction-dial failure. Today CSPs see MN1 in call log and try to dial back — drops because MN1 is one-way. |
-| **`user_identification` at Table-1 miss (replaces is_customer-at-dead-end)** | Earlier design called `is_customer` only at dead-end. New design calls richer `user_identification` earlier — recognises caller AND counts active tickets. **One active ticket → bridge directly, no PIN.** Big friction reduction for customer callbacks and CSP technicians with a single live job. PIN drops to an exception path. |
+| **Table 2 by-FROM is the primary lookup at Table 1 miss** (not user_identification) | Table 2 itself encodes everything we need: caller identity (matches `customer_mobile` / `csp_user_id` via JOIN with sim_inventory + registered_mobile) AND counterparty (`other_party_mobile` on the row). No separate identity API on the hot path. Single SQL with JOINs returns 0/1/many rows, branching the entire flow. (Earlier draft had `user_identification` called on every Table-1 miss — that was over-engineered.) |
+| **`user_identification` API fires ONLY when Table 2 by-FROM returns 0 rows** | A 0-row result means either (a) recognised user with no active ticket, or (b) unknown FROM. Distinguishing the two requires identity resolution. user_identification answers that narrow question — and skips PIN entirely for the (a) case (saving ~25 s of doomed PIN entry). Not called on bridging or PIN-prompt paths — they already know the user from Table 2 rows. |
+| **Single `ivr-routing-service` owns the entire system** | Tables 1+2, sim_inventory, user_identification, Exotel surface, ES listener, SMS dispatch, CleverTap firing, maskedCallAvailable derivation. Avoids cross-service latency on the hot path; one team, one DB, one deployment. Split later if scale demands it. |
+| **Discard `es-ivr-calling-service`, build sim_inventory fresh** | Existing service was a thin wrapper around the IVR microservice with no audit logging. Starting fresh inside `ivr-routing-service` gives us proper add/remove audit, consistent ownership, and removes the integration ambiguity entirely. |
+| **Skip-Gather via backend directive** in `/ivr/resolve-caller` response | When user_identification says "recognised, 0 tickets", the resolve-caller response is `action: "playback"` — Exotel honours it and routes directly to the dead-end Playback applet. Cleaner than configuring a separate branching Passthru applet. **Depends on Exotel Connect-applet supporting `action: playback` in dynamic-URL responses — confirm with Exotel before locking.** |
 | **Unknown FROM routes to PIN gather (not direct to dead-end)** | Critical for UC 13 (colleague forwarding) — colleague isn't recognised but holds a forwarded PIN. Giving up immediately on unknown FROM would block this case. |
 | **Two PINs per ticket** (customer-side + CSP-side) | Symmetric authorisation; either party can authenticate when off-CTA. PIN encodes ticket + direction. |
 | **Customer-side PIN via SMS; CSP-side via app ticket card only** | Customers are not app-engaged; SMS reaches them. CSPs see ticket details in app — no SMS noise. |
@@ -769,10 +908,10 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **PIN scoping for CSPs (sim_inventory match → restricted lookup)** | Prevents a CSP from guessing or reaching a customer who isn't theirs. Also a partial backstop on the stale-PIN risk on the CSP side — even if cooldown were bypassed, the cross-CSP lookup would still fail. |
 | **3-retry cap per call** | Matches universal expectation (ATM, banking). |
 | **Dead-end ALSO sends SMS, not just voice** | Voice is ephemeral; SMS lets the caller act later. |
-| **Truecaller whitelisting reuses one of MN1/MN2** | No fresh whitelisting work; verified status carries forward. |
+| **One bidirectional DID, not a pool** | Single masked number replaces MN1/MN2. Truecaller / VLT verification applied to this one number. No pool-picking algorithm. Simpler routing, simpler trust-layer ops. |
+| **Truecaller whitelisting reuses one of MN1/MN2** | No fresh whitelisting work; verified status carries forward. The other number (the one not chosen) is eventually decommissioned. |
 | **VLT whitelisting added** | Telco-level trust mark complements Truecaller; together they directly address DNP. |
-| **Table 2 dual access pattern (by PIN, by ticket_id+side)** | Same physical table serves PIN-prompt flow and single-counterparty bridge. No need for a third table. |
-| **`user_identification` is the single API call on Table 1 miss** | One round-trip resolves identity + counterparty (if 1 ticket). Encapsulates the user/customer/ticket joins. |
+| **Table 2 triple access pattern (by FROM, by PIN, by ticket+side)** | Same physical table serves three lookup patterns. By FROM is the hot path (every call). By PIN is the gather flow. By (ticket+side) is listener writes only. No need for a third table. |
 | **Calling eligibility scoped to Install / Restore / Pickup tickets** | No calling on closed or pre-booking tickets. Aligns the routing surface with operational reality. |
 | **Table 2 entry on technician-assignment event, not on ticket-open** | The Call CTA in the CSP App and Technician App becomes visible **only after technician assignment** (CSP App: `executorAssigned && !isSelf && !isClosure`; Technician App: backend-driven `maskedCallAvailable`). PINs should exist exactly when the CTA can be tapped — no earlier (wasted rows + SMS), no later (failed first tap). Three ES events drive entry: `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` (plus the auto-self-assignment at NBREC candidate creation). |
 | **Table 2 exit on ES terminal-state transition, not on a generic ticket_close event** | Each of the three ESs has its own terminal states. Subscribing to the family-specific terminal events keeps Table 2 in lockstep with the ES state machines and avoids relying on a derived "ticket closed" facade. |
@@ -791,10 +930,10 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | Customer-side PIN lookup is unscoped (no equivalent to CSP `sim_inventory` scoping). | Accepted. 3-retry cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step. |
 | Immutable PIN means a leaked PIN stays leaked for the ticket's lifetime. | Accepted. The blast radius is one ticket × one direction. PIN possession = authorisation by design (UC 13 colleague forwarding requires this). For tickets with very long lifetimes, the ES state machine will close them on the terminal events listed in the per-family wiring — at which point cooldown takes over. |
 | PIN pool is finite (100K for 5-digit) — cooldown reservation can pressure the pool at scale. | At today's Wiom volume (~10k active × 2 PINs + ~500 closing/day × 90-day cooldown = ~65k of 100k pool), fine. At ~3× growth, escalate to **6-digit PINs (1M pool)** — see Deferred work. Generation should alert at retry-count threshold so we get warning. |
-| Dead-end can't distinguish "customer with closed ticket" from "stranger" without `user_type`. | Resolved — `user_identification` returns `user_type` even when count=0, used for dead-end branching. |
+| Dead-end can't distinguish "customer with closed ticket" from "stranger" without `user_type`. | Resolved — `user_identification` is called on the Table 2 0-row branch, returns `user_type`, drives dead-end branching. Result cached against `CallSid` for the PIN-failure path too. |
 | Multi-ticket customer dialing from registered number with no live Table 1 entry: routing would be ambiguous. | PIN disambiguates; no auto-route to most recent. |
-| `user_identification` API call cost on every Table-1-miss call. | Negligible if implemented well (< 200 ms p95). Cached against `CallSid` for downstream applets. |
-| For "0 active tickets, recognised user" — Exotel flow may not natively support skipping the Gather applet. v1 implementation may route through Gather (which will fail) → dead-end. | Acceptable v1 trade-off. Slight UX wart (20s of pointless PIN entry) before dead-end. Optimise later if data shows it matters. |
+| Table 2 by-FROM JOIN cost on every Table-1-miss call. | Acceptable. JOIN against three indexed tables (customers, csp_users, sim_inventory). Target p95 < 50 ms on the JOIN; well within Exotel's 5 s window. Cache `user_type` against `CallSid` so downstream applets reuse it. |
+| Skip-Gather depends on Exotel supporting `action: playback` in Connect-applet response. | If unsupported, fallback is a Passthru applet between Connect-1 and Gather that reads a backend-set flag and branches. Adds one applet hop. Confirm with Exotel before locking. |
 
 ---
 
@@ -828,9 +967,12 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | DLT template registration for all SMS variants | Comms / Ops |
 | WhatsApp BSP template approvals | Comms |
 | Retention window for closed-ticket PIN rows (hard-delete) | Tech / Compliance — recommend 90 days |
+| Confirm Exotel Connect-applet supports `action: playback` in dynamic-URL response (skip-Gather mechanism) | Tech + Exotel |
 | Confirm Exotel Playback applet supports dynamic audio URL | Tech + Exotel |
-| Confirm `user_identification` API SLOs and infra | Tech |
+| `sim_inventory` verification flow — OTP at add time vs trust-declare? Self-service or admin-only? Cap on SIMs per CSP? | Ops + Tech |
 | Decide v1 dead-end IVR audio strategy: dynamic URL vs branched Playbacks vs universal message | Solution team + Tech |
+| Exotel shared-secret rotation cadence (default quarterly) | Tech + Security |
+| **HTML update**: redraw end-to-end flowchart for Table-2-first logic; remove daily-rotation language | PM (Ashis) |
 
 ---
 
@@ -841,7 +983,14 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 - [ ] **DLT templates** approved for every outbound SMS variant.
 - [ ] **WhatsApp BSP** setup confirmed for SMS + WA variants.
 - [ ] **IVR voice files** recorded in Hindi (PIN entry prompt, both dead-end messages, any missed-call return tone).
-- [ ] **`user_identification` API** performance: p95 < 200 ms; load-tested at expected peak.
+- [ ] **Single `ivr-routing-service`** deployed with Tables 1+2, sim_inventory, user_identification, Exotel endpoints, ES listener, SMS dispatch, CleverTap firing all owned in one place.
+- [ ] **`es-ivr-calling-service` decommission plan** — old service stopped + old Redis cache discarded + cutover dated.
+- [ ] **Table 2 by-FROM JOIN** load-tested: p95 < 50 ms with indexes on `customers.registered_mobile`, `csp_users.registered_mobile`, `sim_inventory.mobile` (partial WHERE removed_at IS NULL), `table_2 (customer_mobile)` partial, `table_2 (csp_user_id)` partial.
+- [ ] **`user_identification` API** performance: p95 < 100 ms on the 0-row branch; load-tested at expected peak.
+- [ ] **`sim_inventory` audit log** populated for every add / remove operation in staging.
+- [ ] **`sim_inventory` verification flow** decided + implemented (OTP / trust-declare / admin-only).
+- [ ] **Exotel signed-payload auth** verified end-to-end for all 5 backend endpoints; shared secret stored in vault; rotation runbook documented.
+- [ ] **Skip-Gather mechanism** verified — confirm Exotel honours `action: "playback"` in `/ivr/resolve-caller` response. If unsupported, branching-Passthru fallback wired and tested.
 - [ ] **Table 2 PIN generation** collision check enforced in code (unique index on `pin` for active rows).
 - [ ] **Table 2 secondary index** on `(ticket_id, side)` created and warmed.
 - [ ] **CleverTap events** `missed_call_csp_to_customer` and `missed_call_customer_to_csp` registered, with campaigns wired.
