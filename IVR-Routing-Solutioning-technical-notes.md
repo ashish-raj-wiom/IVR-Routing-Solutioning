@@ -91,13 +91,13 @@ Every successful call flows through exactly one path:
 
 ### Path 4 — PIN for unknown caller
 **Trigger:** Table 1 miss → **Table 2 lookup by FROM returns 0 rows** → `user_identification(FROM)` returns `user_type = unknown` → IVR asks for PIN (caller may hold a forwarded PIN, e.g., UC 13 colleague case) → Table 2 lookup by PIN.
-**Outcome:** Bridge if PIN valid; dead-end after 3 wrong tries.
+**Outcome:** Bridge if PIN valid; dead-end after 2 failed attempts.
 **Covers:** UC 11, UC 12, UC 13.
 
 ### Dead-end (terminal state, not a path)
 **Two ways in:**
 - **(a) Recognised user with 0 active tickets** — Table 2 by-FROM returns 0 rows, `user_identification` recognises FROM as customer or CSP → skip PIN entirely via backend directive in `/ivr/resolve-caller` response → Playback dead-end.
-- **(b) PIN exhausted** — 3 wrong tries on Path 3 or Path 4 → Playback dead-end. user_type already cached against `CallSid` from the upstream `user_identification` call.
+- **(b) PIN exhausted** — 2 failed attempts on Path 3 or Path 4 → Playback dead-end. user_type already cached against `CallSid` from the upstream `user_identification` call.
 
 **Outcome:** Graceful-fallback IVR + dead-end SMS:
 - `user_type == 'customer'` → call centre **88803 22222**.
@@ -428,7 +428,7 @@ user_identification(from):
 Result is stashed in Redis keyed on `call_id`:
 - **Key:** `ivr:user_type:{call_id}`
 - **TTL:** 10 minutes (covers any reasonable call duration + PIN flow + disposition webhook)
-- **Why:** if the caller hits PIN gather (Path 4: unknown + has-forwarded-PIN) and then fails 3 times, dead-end needs `user_type` again. Re-resolution wastes a DB call.
+- **Why:** if the caller hits PIN gather (Path 4: unknown + has-forwarded-PIN) and exhausts both attempts, dead-end needs `user_type` again. Re-resolution wastes a DB call (and risks a different answer if data has shifted).
 
 ### Routing decisions driven by the response
 
@@ -496,23 +496,31 @@ All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth for eve
    - If `From` matches `csp_users.registered_mobile` OR is in `sim_inventory` → scope to `side = 'csp' AND csp_id = matched_csp_id` (matched at `/resolve-caller` time, available in Redis).
    - Else → unrestricted (handles unknown FROM + customer multi-ticket cases).
 3. If single match → return `action: "connect"` with destination. Log `pin_attempt_valid`.
-4. If no match → return `action: "gather_retry"` if attempt < 3, else `action: "playback"` with deadend audio URL. Log `pin_attempt_invalid` (with reason: `no_match` or `cooldown_row` or `pin_format`).
+4. If no match → return `action: "no_destination"`. Exotel's Connect applet then enters "Did not Dial" path. App Bazaar flow handles attempt-limit (1 original + 1 retry = 2 attempts max) via flow structure — second Gather→Connect→fail routes to final dead-end. Log `pin_attempt_invalid` (with reason: `no_match` or `cooldown_row` or `pin_format`).
 
-**Response shape:**
+**Response shape (success — PIN matched):**
 ```json
 {
-  "action": "connect" | "gather_retry" | "playback",
-  // when "connect"
-  "destination": { "numbers": ["..."] },
+  "destination": { "numbers": ["+919812345678"] },
   "outgoing_phone_number": "<masked_number>",
-  "record": true,
-  // when "playback" (after 3 fails)
-  "audio_url": "https://.../audio/deadend?call_id=...",
-  "resolution_reason": "pin_match" | "pin_invalid" | "pin_exhausted"
+  "record": true
 }
 ```
 
-**Idempotency:** the PIN attempt counter is keyed against `CallSid` in Redis (TTL 10 min). Duplicate webhook fires for the same `(CallSid, digits, attempt)` return the same response.
+**Response shape (failure — PIN invalid or scoping rejected):**
+```json
+{
+  "destination": { "numbers": [] }
+}
+```
+Empty numbers list triggers Exotel's Connect "Did not Dial" outcome — App Bazaar flow routes to the next Gather (attempt 2) or, on the second Connect's "Did not Dial", to the final Passthru Sync → Switch Case → dead-end greeting.
+
+**Idempotency:** Stateless. Same `(From, CallSid, digits)` always produces the same response. No attempt counter needed in backend — the App Bazaar flow structure enforces the 2-attempt cap (only two Gather→Connect pairs exist).
+
+**PIN scoping (per G6):**
+- **Unknown FROM** (no identity match at API 1) → no scoping; lookup is `WHERE pin = digits AND expires_at IS NULL`. Single match → bridge. Multi-match (extremely unlikely with active+cooldown uniqueness) → no bridge.
+- **Known CSP user** (FROM matched `csp_users.registered_mobile` OR `sim_inventory` at API 1; `csp_id` cached against `CallSid`) → scope to this CSP's tickets: `WHERE pin = digits AND side = 'csp' AND csp_id = :cached_csp_id AND expires_at IS NULL`. Prevents cross-CSP PIN guessing.
+- **Known customer** (rare on Path 3 — customer enters PIN after Table 2 by-FROM returned multiple rows for THEIR mobile) → scope to this customer's tickets: `WHERE pin = digits AND side = 'customer' AND customer_mobile = :from AND expires_at IS NULL`.
 
 ### `/audio/deadend` (called by Exotel Playback if dynamic audio URL is supported)
 
@@ -548,13 +556,14 @@ All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth for eve
 }
 ```
 
-**Logic:**
-1. Log `disposition_webhook_received`.
-2. If `DialCallStatus == "completed"` → log `bridge_answered`. Done.
-3. Else → log `bridge_not_answered` AND determine direction:
-   - If the FROM was a CSP user → fire `missed_call_csp_to_customer` CleverTap event (recipient = customer who didn't answer).
-   - If the FROM was a customer → fire `missed_call_customer_to_csp` CleverTap event (recipient = CSP).
-4. CleverTap campaign triggers the SMS / WhatsApp / push to the missed party.
+**Logic (analytics-grade logging only — missed-call alerts fire from Passthru-Async-on-DNP, not from here):**
+1. Log `disposition_webhook_received` to `call_audit_logs`.
+2. Capture full disposition payload (duration, recording URL, bridge target, end status) for analytics reporting.
+
+**Why this endpoint does NOT fire missed-call alerts:**
+- DNP events are already captured by the Passthru-Async-on-DNP applet inside the App Bazaar flow (fires within seconds, not after end-of-call).
+- Disposition webhook may arrive several seconds after Passthru — duplicate firing would either spam recipients or require deduplication keyed on `CallSid`.
+- Single source of truth: missed-call alerts fire **only** from Passthru-Async-on-DNP.
 
 ### Logging endpoints (Passthru targets) — minimal v1 set
 
@@ -563,81 +572,150 @@ All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth for eve
 | `/log/dial_received` | GET | Exotel registered the call on the masked number. |
 | `/log/pin_prompted` | GET | Gather applet fired. |
 | `/log/pin_entered` | GET | Digits collected (length + attempt #, not the digits themselves). |
-| `/log/pin_lockout` | GET | 3 wrong PIN attempts. |
+| `/log/pin_lockout` | GET | PIN attempts exhausted (1 original + 1 retry both failed). |
 | `/log/deadend_played` | GET | Playback completed. |
 
 All these are fire-and-forget; backend returns 200 quickly and writes to the event stream asynchronously.
 
 ---
 
-## Exotel applet wiring
+## Exotel applet wiring (App Bazaar canonical flow)
 
-Built on Exotel's [Connect Applet with Dynamic URL](https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-) pattern.
+Built on three Exotel applet primitives:
+1. **Connect** with Dynamic URL — dials based on backend response. Three native outcomes: **Connected** / **DNP** (Did Not Pick) / **Did not Dial** (empty destination).
+2. **Passthru** — fires an HTTP call mid-flow. **Async** = fire-and-forget (logging, DB writes, CleverTap fires). **Sync** = blocking call that returns 200/404 driving the next applet via Switch Case.
+3. **Gather** — captures DTMF digits. Two outcomes per [Exotel's Gather applet docs](https://support.exotel.com/support/solutions/articles/3000084635-working-with-gather-applet): "Caller entered one or more digits" → next applet (Passthru → Connect for PIN check); "Caller didn't enter anything" → next applet (Greeting → Hangup).
+
+### Canonical flow (matches PNG: `exotel-app-bazaar-flow.png`)
 
 ```
 [Caller dials masked number]
         │
         ▼
-┌──────────────────────────────────────────┐
-│ Connect #1 — Dynamic URL                 │
-│   GET /ivr/resolve-caller                │
-│                                          │
-│ Backend logic:                           │
-│   • Table 1 lookup                       │
-│   • If miss → user_identification(FROM)  │
-│   • Decide:                              │
-│       - count == 1 → return destination  │
-│       - count >= 2 → empty (→ Gather)    │
-│       - unknown → empty (→ Gather)       │
-│       - count == 0 → empty (→ Gather,    │
-│         which will fail → dead-end)      │
-└──────────────────────────────────────────┘
-        │ (if destination returned: bridge)
-        │ (else: no-answer branch)
-        ▼
-┌──────────────────────────────────────────┐
-│ Gather / IVR                             │
-│   Prompt audio (Hindi)                   │
-│   5 digits | 3 retries | 5s per attempt  │
-└──────────────────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────────────────┐
-│ Connect #2 — Dynamic URL                 │
-│   GET /ivr/resolve-pin?digits={digits}   │
-│                                          │
-│ Backend logic:                           │
-│   • Table 2 lookup by PIN                │
-│   • Apply CSP scoping if applicable      │
-│   • Return destination if match,         │
-│     empty if no match                    │
-└──────────────────────────────────────────┘
-        │ (if destination: bridge)
-        │ (else / 3 fails: no-answer branch)
-        ▼
-┌──────────────────────────────────────────┐
-│ Playback — Dynamic audio URL             │
-│   GET /audio/deadend?call_id={call_id}   │
-│                                          │
-│ Backend serves:                          │
-│   • customer audio if user_type=customer │
-│   • non-customer audio otherwise         │
-└──────────────────────────────────────────┘
-        │
-        ▼
-   End call
-
-──── Account-level webhook (outside the flow) ────
-
-Disposition webhook → POST /log/disposition
-  Fires for every call regardless of path.
-  Backend ingests outcome and fires CleverTap
-  missed-call event if not answered.
+┌──────────────────────────────────────────────────┐
+│ Connect — API 1                                  │
+│   GET /ivr/resolve-caller                        │
+│                                                  │
+│ Backend (single combined lookup):                │
+│   • Table 1 by FROM                              │
+│   • Table 2 by-FROM (JOIN customers / csp_users  │
+│     / sim_inventory)                             │
+│   • If either returns 1 → destination            │
+│   • Else → empty destination (Did not Dial)      │
+└──────────────────────────────────────────────────┘
+   │ Connected            │ DNP                    │ Did not Dial
+   ▼                      ▼                        ▼
+[Passthru Async]      [Passthru Async]      [Passthru Sync — API 2]
+   /log/connected        /log/dnp +              POST /internal/user-identification
+   → save to DB         missed-call alert            (200 → Switch Case,
+                        → save to DB                  404 → fall to Gather)
+                                                ▼
+                                       ┌─ Customer ─→ Greeting (call 88803 22222) → Hangup
+                                       ├─ CSP       ─→ Greeting (call 78368 11111) → Hangup
+                                       └─ Unknown   ─→ Gather (PIN attempt 1)
+                                                       │
+                                                       ▼ entered → [Connect — API 3]
+                                                       │           GET /ivr/resolve-pin
+                                                       │           • Table 2 by PIN
+                                                       │           • Scoped if known CSP
+                                                       │
+                                                       │ Connected → Passthru Async → DB
+                                                       │ DNP       → Passthru Async + missed-call → DB
+                                                       │ Did not Dial → Gather (PIN attempt 2)
+                                                       │                 │
+                                                       │                 ▼ entered → Connect — API 3 again
+                                                       │                              │
+                                                       │                              │ Connected → Passthru Async → DB
+                                                       │                              │ DNP       → Passthru Async + missed-call → DB
+                                                       │                              │ Did not Dial → Passthru Sync (API 2 again)
+                                                       │                              │                ▼
+                                                       │                              │            Switch Case
+                                                       │                              │              ├─ Customer → Greeting (Open app or call 88803 22222) → Hangup
+                                                       │                              │              ├─ CSP      → Greeting (Open app or call 78368 11111) → Hangup
+                                                       │                              │              └─ Unknown  → Greeting (call 78368 11111) → Hangup
+                                                       │                 (no entry → Hangup)
+                                                       (no entry → Greeting + Hangup)
 ```
 
-**Primary URL timeout:** 5s. Backend target: < 200 ms p95.
-**Fallback URL:** configured per applet — returns a graceful "service unavailable" voice prompt.
-**Retry:** `fetch_after_attempt: true` so Exotel re-queries on failed dial attempts.
+### The three backend APIs (only three needed)
+
+| API | Method | Endpoint | Called by | Returns |
+|---|---|---|---|---|
+| **API 1** | GET | `/ivr/resolve-caller` | Initial Connect applet | Destination if Table 1 hits OR Table 2 by-FROM returns exactly 1 row; empty otherwise. Stashes `user_type` + `csp_id` against `CallSid` in Redis for downstream applets. |
+| **API 2** | POST | `/internal/user-identification` | Passthru Sync on "Did not Dial" + on PIN-exhausted dead-end | `{user_type, user_id}`. 200 on customer / csp / unknown match (Switch Case routes on `user_type`); 404 only on a hard backend error (then App Bazaar falls through to Gather as a graceful fallback). |
+| **API 3** | GET | `/ivr/resolve-pin` | Each PIN-validation Connect applet | Destination if PIN matches an active Table 2 row (and CSP scoping passes when applicable); empty otherwise. |
+
+### Connect applet config (all 3 Connect instances)
+
+| Field | Value |
+|---|---|
+| Mode | Dynamic URL |
+| Primary URL | Backend endpoint (API 1 or API 3) |
+| Fallback URL | Static "service unavailable" greeting |
+| Caller ID | The single bidirectional masked DID |
+| Timeout | 5s (Exotel) — backend target p95 < 200 ms |
+| `fetch_after_attempt` | true — Exotel re-queries on failed dial attempts |
+
+### Gather applet config (per the screenshots you shared)
+
+| Field | Value |
+|---|---|
+| Control method | **Configure using flow builder here** (NOT dynamic URL — flow is static) |
+| Gather prompt | Static Greeting audio (Hindi): *"Please enter your 5-digit PIN"* |
+| Finish Key | `#` |
+| Max Number of Digits | **5** (matches PIN length) |
+| Input timeout | 5 seconds |
+| Repeat the menu | **2 times** if no input given |
+| Repeat prompt | **Different prompt**: *"We did not receive any valid response. Please reshare the PIN"* |
+| When caller entered ≥1 digit | → **Passthru** (forwards digits to API 3 via Connect) |
+| When caller didn't enter anything | → **Greeting** (silently aborted: hangup-on-empty) |
+
+**Important nuance on Gather:** Gather does NOT validate the PIN. It only collects digits. **PIN validation happens at the next Connect (API 3)** which checks Table 2. If invalid, Connect's "Did not Dial" branch fires, routing to the next Gather (attempt 2) or to the final dead-end Switch Case.
+
+### Greeting applet config
+
+Static audio files (one per dead-end variant — Hindi):
+
+| Greeting | Audio content | When played |
+|---|---|---|
+| `customer-no-active-ticket.mp3` | "You do not have any active ticket. To reach our customer care, please call 88803 22222." | After first Passthru Sync, Switch Case = Customer |
+| `csp-no-active-ticket.mp3` | "You do not have any active ticket. To reach Wiom partner support, please call 78368 11111." | After first Passthru Sync, Switch Case = CSP |
+| `pin-no-entry.mp3` | "We did not receive any input. Goodbye." | When Gather → "no entry" path |
+| `customer-pin-exhausted.mp3` | "Please open the Wiom app or call 88803 22222." | After PIN attempts exhausted, Switch Case = Customer |
+| `csp-pin-exhausted.mp3` | "Please open the Wiom partner app or call 78368 11111." | After PIN attempts exhausted, Switch Case = CSP |
+| `unknown-pin-exhausted.mp3` | "Please call 78368 11111 for assistance." | After PIN attempts exhausted, Switch Case = Unknown |
+
+All audio files hosted on a CDN URL. The **exact wording is owned by the Solutions team** (see Open TBDs).
+
+### Passthru Async config (logging endpoints)
+
+Async = backend response is ignored; flow proceeds immediately. Used for:
+
+| Passthru point | URL | What gets logged |
+|---|---|---|
+| Connected (API 1) | `POST /log/bridge_connected` | Successful bridge, CallSid, FROM, TO, ticket_id (if known) |
+| DNP (API 1) | `POST /log/bridge_dnp_initial` | Bridge attempted, recipient didn't pick. **Also fires CleverTap `missed_call_*` event** with direction inferred from cached `user_type` |
+| Connected (API 3, attempt 1) | `POST /log/bridge_connected_pin` | Successful bridge after PIN entry |
+| DNP (API 3, attempt 1) | `POST /log/bridge_dnp_pin` | Same as above; CleverTap fires |
+| Connected (API 3, attempt 2) | `POST /log/bridge_connected_pin_retry` | Successful bridge after retry |
+| DNP (API 3, attempt 2) | `POST /log/bridge_dnp_pin_retry` | Same; CleverTap fires |
+
+Each endpoint writes one row to `call_audit_logs` (the new audit table) AND fires the missed-call CleverTap event on DNP. **DB save and CleverTap fire are atomic** (transactional outbox pattern recommended).
+
+### Passthru Sync config (decision endpoints)
+
+Sync = backend response determines next applet via Switch Case. Used twice in the flow:
+
+| Passthru Sync point | URL | Switch Case branches |
+|---|---|---|
+| After initial Connect "Did not Dial" | `POST /internal/user-identification` | Customer / CSP / Unknown (Unknown routes to Gather) |
+| After both PIN attempts fail | `POST /internal/user-identification` | Customer / CSP / Unknown (all three route to Greeting → Hangup) |
+
+**Implementation note:** The same `/internal/user-identification` endpoint serves both calls. Result is cached against `CallSid` in Redis on first call; second call is a Redis read (sub-ms).
+
+### Account-level disposition webhook
+
+Exotel fires its standard disposition webhook **at end-of-call**, regardless of how the flow ended. This is captured at `POST /log/disposition` for analytics-grade logging only — **the missed-call alert is NOT fired from here** (it already fired from the Passthru-Async-on-DNP, which is faster and more reliable).
 
 ---
 
@@ -675,7 +753,7 @@ When `lookup_by_pin` is called and `caller_from` is in `sim_inventory`:
 - The lookup is restricted to rows where `side = 'csp' AND csp_id = matched_csp_id`.
 - A PIN that belongs to another CSP's customer is treated as invalid — prevents cross-CSP guessing.
 
-Customer-side lookups are unscoped (3-retry cap + per-ticket PIN issuance is sufficient protection at the customer end).
+Customer-side lookups are unscoped (2-attempt cap + per-ticket PIN issuance is sufficient protection at the customer end).
 
 ---
 
@@ -705,10 +783,10 @@ Every decision point, API call, and state transition emits a typed event. All ev
 | `pin_prompted` | Gather applet triggered |
 | `pin_entered` | Digits received (attempt_number, length) |
 | `pin_attempt_valid` / `pin_attempt_invalid` | PIN check result |
-| `pin_lockout` | 3 wrong attempts exhausted |
+| `pin_lockout` | PIN attempts exhausted (1 original + 1 retry both failed) |
 | `pin_abandoned` | Caller hung up during prompt without entering anything |
 | `table_2_lookup_by_pin` | Path 3 / Path 4 access pattern |
-| `table_2_lookup_by_ticket` | Path 2 access pattern (via `user_identification`) |
+| `table_2_lookup_by_from` | Path 2 / Path 3 access pattern (primary hot-path lookup) |
 | `pin_scoping_rejected` | PIN matched but CSP scope check failed |
 
 ### Bridge & disposition
@@ -870,7 +948,7 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 
 **UC 11 — Customer dials from an unregistered SIM (relative's phone, secondary SIM)** — Path 4
 - *Test:* Customer dials masked number from a SIM that's not their registered mobile.
-- *Expected:* `user_identification` returns `user_type = unknown` → PIN prompt → if customer remembers PIN from their SMS, bridges; else dead-end after 3 wrong tries (trust-line message, since user_type was unknown).
+- *Expected:* `user_identification` returns `user_type = unknown` → PIN prompt → if customer remembers PIN from their SMS, bridges; else dead-end after 2 failed attempts (trust-line message, since user_type was unknown).
 
 **UC 12 — CSP user dials from an unregistered SIM** — Path 4
 - *Test:* CSP user dials masked number from a SIM not in `sim_inventory`.
@@ -901,12 +979,12 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **Unknown FROM routes to PIN gather (not direct to dead-end)** | Critical for UC 13 (colleague forwarding) — colleague isn't recognised but holds a forwarded PIN. Giving up immediately on unknown FROM would block this case. |
 | **Two PINs per ticket** (customer-side + CSP-side) | Symmetric authorisation; either party can authenticate when off-CTA. PIN encodes ticket + direction. |
 | **Customer-side PIN via SMS; CSP-side via app ticket card only** | Customers are not app-engaged; SMS reaches them. CSPs see ticket details in app — no SMS noise. |
-| **5-digit PIN, random with uniqueness retry** | Matches OTP expectation. 100K combos × 3-retry cap = 0.003% brute-force probability per call. |
-| **PIN is immutable for the row's lifetime — no rotation, ever** | PIN is shared with both parties at ticket-open (customer via SMS, CSP via ticket card). Rotating invalidates what they hold and forces re-distribution. Rotation buys little — the PIN is already short, scoped, and 3-retry-capped. Prefer simplicity. |
+| **5-digit PIN, random with uniqueness retry** | Matches OTP expectation. 100K combos × 2-attempt cap = 0.002% brute-force probability per call. |
+| **PIN is immutable for the row's lifetime — no rotation, ever** | PIN is shared with both parties at ticket-open (customer via SMS, CSP via ticket card). Rotating invalidates what they hold and forces re-distribution. Rotation buys little — the PIN is already short, scoped, and 2-attempt-capped. Prefer simplicity. |
 | **Reassignment rewrites mobile only, leaves PIN untouched** | Both parties keep the PINs they already have. Only the bridge target (`other_party_mobile`) changes underneath. Avoids the "which PIN is current" failure mode. |
 | **PIN cooldown after ticket close (90 days)** | Once a ticket closes, its PIN value is reserved (excluded from generation) for 90 days. Protects against stale-PIN cross-pollination: a technician remembering an old PIN cannot be misrouted to a stranger's ticket that has been reissued the same PIN. 90-day window matches today's pool-vs-volume math. |
 | **PIN scoping for CSPs (sim_inventory match → restricted lookup)** | Prevents a CSP from guessing or reaching a customer who isn't theirs. Also a partial backstop on the stale-PIN risk on the CSP side — even if cooldown were bypassed, the cross-CSP lookup would still fail. |
-| **3-retry cap per call** | Matches universal expectation (ATM, banking). |
+| **2-attempt cap per call (1 original + 1 retry)** | App Bazaar flow constraint — adding more retries doubles the applet count per attempt. Two attempts is enough for typos / mis-keys without dragging the flow out. Brute-force odds at 2 attempts × 100K PIN space = 0.002% per call. |
 | **Dead-end ALSO sends SMS, not just voice** | Voice is ephemeral; SMS lets the caller act later. |
 | **One bidirectional DID, not a pool** | Single masked number replaces MN1/MN2. Truecaller / VLT verification applied to this one number. No pool-picking algorithm. Simpler routing, simpler trust-layer ops. |
 | **Truecaller whitelisting reuses one of MN1/MN2** | No fresh whitelisting work; verified status carries forward. The other number (the one not chosen) is eventually decommissioned. |
@@ -927,7 +1005,7 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 |---|---|
 | Removing `is_customer` from main routing means customer callback from dialer now requires a PIN in multi-ticket case (it didn't before). | Accepted. Customer has the PIN via SMS from ticket-open. The friction is one IVR step. |
 | PIN possession = authorisation, regardless of who holds it (UC 13 colleague forwarding). | Accepted. Usability ↔ security trade-off — the colleague case is a real CSP workflow. |
-| Customer-side PIN lookup is unscoped (no equivalent to CSP `sim_inventory` scoping). | Accepted. 3-retry cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step. |
+| Customer-side PIN lookup is unscoped (no equivalent to CSP `sim_inventory` scoping). | Accepted. 2-attempt cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step. |
 | Immutable PIN means a leaked PIN stays leaked for the ticket's lifetime. | Accepted. The blast radius is one ticket × one direction. PIN possession = authorisation by design (UC 13 colleague forwarding requires this). For tickets with very long lifetimes, the ES state machine will close them on the terminal events listed in the per-family wiring — at which point cooldown takes over. |
 | PIN pool is finite (100K for 5-digit) — cooldown reservation can pressure the pool at scale. | At today's Wiom volume (~10k active × 2 PINs + ~500 closing/day × 90-day cooldown = ~65k of 100k pool), fine. At ~3× growth, escalate to **6-digit PINs (1M pool)** — see Deferred work. Generation should alert at retry-count threshold so we get warning. |
 | Dead-end can't distinguish "customer with closed ticket" from "stranger" without `user_type`. | Resolved — `user_identification` is called on the Table 2 0-row branch, returns `user_type`, drives dead-end branching. Result cached against `CallSid` for the PIN-failure path too. |
@@ -942,10 +1020,10 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | Item | Why deferred |
 |---|---|
 | PIN reminder SMS on prompt abandonment | Can't determine which PIN to resend mid-call when a CSP has multiple tickets, or when caller is unrecognised. |
-| **6-digit PIN escalation (1M pool)** | Triggered when generation algorithm's average retry count exceeds threshold (e.g., > 3 attempts) or when active+cooldown reservation approaches 70% of pool. At ~3× current Wiom volume, expect to need this. Migration: add new column, generate 6-digit for new rows, leave existing 5-digit rows alone (they expire naturally). |
+| **6-digit PIN escalation (1M pool)** | Triggered when generation algorithm's average retry count exceeds threshold (e.g., > 5 collisions per generation) or when active+cooldown reservation approaches 70% of pool. At ~3× current Wiom volume, expect to need this. Migration: add new column, generate 6-digit for new rows, leave existing 5-digit rows alone (they expire naturally). |
 | PIN expiry notification at ticket close | Not blocking. Add later if dead-end IVR traffic shows confused customers. |
 | Auto-recognition of repeat unknown-SIM callers ("Table 4" idea) | Deferred — would add an audit step before PIN that costs UX. Revisit with response-pattern data. |
-| Per-FROM rate limiting (beyond per-call 3-retry cap) | Not needed for v1; brute-force economics are bad enough without it. |
+| Per-FROM rate limiting (beyond per-call 2-attempt cap) | Not needed for v1; brute-force economics are bad enough without it. |
 | Regional-language IVR expansion (post-Hindi) | Hindi first. Add per CSP geography in a follow-up. |
 | WhatsApp BSP-fallback for SMS-undeliverable customers | Operational concern, handled by comms platform. |
 | IVR option to actively transfer caller to support ("press 1 to connect") | Today's dead-end gives a number to call but doesn't auto-connect. Could add later. |
