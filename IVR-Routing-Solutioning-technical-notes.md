@@ -118,16 +118,16 @@ Every successful call flows through exactly one path:
 | Field | Type | Notes |
 |---|---|---|
 | `pin_id` | UUID | Primary key. |
-| `pin` | string(5) | 5-digit numeric. Globally unique among active rows (generation enforces). |
+| `pin` | string(5) | 5-digit numeric. **Immutable** for the lifetime of the row. Globally unique among **active + cooldown** rows (generation enforces). |
 | `ticket_id` | UUID | The ticket this PIN belongs to. |
 | `side` | enum (`customer`, `csp`) | Which party this PIN was issued to. |
-| `other_party_mobile` | E164 | The number to bridge to when this PIN is entered. |
-| `csp_id` | UUID (nullable) | The CSP organisation id; populated on CSP-side rows only. Used for PIN scoping. |
-| `csp_user_id` | UUID (nullable) | The specific CSP user (technician) the ticket is assigned to. |
+| `other_party_mobile` | E164 | The number to bridge to when this PIN is entered. **Mutable** — rewritten on technician reassignment (CSP-side row) without disturbing the PIN. |
+| `csp_id` | UUID (nullable) | The CSP organisation id; populated on CSP-side rows only. Used for PIN scoping. Mutable on reassignment if the new technician sits under a different CSP org (rare). |
+| `csp_user_id` | UUID (nullable) | The specific CSP user (technician) the ticket is assigned to. Mutable on reassignment. |
 | `customer_mobile` | E164 (nullable) | The customer's registered mobile; populated on customer-side rows for audit / lookup convenience. |
-| `created_at` | timestamp | When the row was created. |
-| `rotated_at` | timestamp | When the row's `pin` last rotated. |
-| `expires_at` | timestamp (nullable) | Set on ticket closure (soft-delete). |
+| `created_at` | timestamp | When the row was created (ticket-open). |
+| `expires_at` | timestamp (nullable) | Set on ticket closure (soft-delete). After this, the row is excluded from active lookups but the `pin` value stays reserved until `cooldown_until`. |
+| `cooldown_until` | timestamp (nullable) | `expires_at + P_PIN_COOLDOWN_WINDOW` (default 90 days). The PIN value cannot be re-issued to another ticket until `now() > cooldown_until`. Protects against stale-PIN cross-pollination (technician remembers an old PIN, dials in, reaches a stranger's ticket). |
 
 #### Two access patterns (same table, two indexes)
 
@@ -158,15 +158,19 @@ lookup_by_ticket_and_side(ticket_id, side):
 
 The Call CTA in the CSP App and Technician App is gated by **technician assignment**. Table 2 entry must fire on the same signal that turns the CTA visible, so the PIN is in place the first time the user can tap Call. The exact ES event differs per ticket family — see the next subsection for the per-family wiring.
 
+**Core principle — the PIN is immutable for the ticket's lifetime.** Once issued at ticket-open, the same `(pin, ticket_id, side)` row lives unchanged until ticket close. Reassignments change `other_party_mobile` (and `csp_user_id`) — they do **not** rotate the PIN, because both parties already hold their copy and re-issuing would invalidate everything they have. No daily rotation either; rotation buys little and creates SMS noise.
+
 | Phase | Trigger | Action |
 |---|---|---|
-| **Generation (entry)** | Technician-assignment event from one of the three TAS ESs (Install / Restore / Pickup) — see per-family table below | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). Fire customer-side SMS. Surface CSP-side PIN on the ticket card. |
-| **Update (reassignment)** | Same technician-assignment event re-fired with a new `executor_id` (or ES candidate replaced via reassign signal — see per-family table) | Update both rows for this ticket: rewrite `other_party_mobile` on the customer-side row with the new technician's mobile; rewrite `csp_user_id` on the CSP-side row. Rotate PINs and re-distribute (SMS customer; PN to new technician on the ticket card). |
+| **Generation (entry)** | Technician-assignment event from one of the three TAS ESs (Install / Restore / Pickup) — see per-family table below | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). Fire customer-side SMS **once**. Surface CSP-side PIN on the ticket card. |
+| **Update (reassignment) — mobile only** | Same technician-assignment event re-fired with a new `executor_id` (or ES candidate replaced via reassign signal — see per-family table) | Update both rows for this ticket: **rewrite `other_party_mobile` on the customer-side row** with the new technician's mobile; **rewrite `csp_user_id` (and `csp_id` if cross-org)** on the CSP-side row. **PIN is NOT rotated.** Both parties keep the PINs they already hold; the bridge target changes underneath. Fire PN to the new technician on the ticket card so they see the existing PIN. No new SMS to customer. |
 | **Lookup (by PIN)** | IVR PIN flow | See contract above. |
 | **Lookup (by ticket+side)** | `user_identification` single-counterparty path | See contract above. |
-| **Rotation** | Daily cron at a fixed time (TBD — recommend 03:00 IST low-traffic) | For every active ticket, generate a new PIN for each side. Update `pin` and `rotated_at`. Fire SMS to customer with the new PIN. |
-| **Soft-delete (exit)** | Ticket transitions to a **terminal state** in its ES — see per-family table below | Set `expires_at = now()` on both rows for this ticket. Excluded from active lookups thereafter. |
-| **Hard-delete** | Background retention job | Delete rows where `expires_at < now() - retention_window` (retention TBD, suggest 90 days for audit). |
+| **Soft-delete (exit)** | Ticket transitions to a **terminal state** in its ES — see per-family table below | Set `expires_at = now()`, `cooldown_until = now() + P_PIN_COOLDOWN_WINDOW` on both rows. Excluded from active lookups thereafter; PIN value stays reserved (not reissuable) until `cooldown_until`. |
+| **Cooldown** | Row state where `expires_at < now() <= cooldown_until` | PIN value is **reserved** — generation algorithm must skip it. Row is NOT lookup-able (a caller entering this PIN gets "invalid PIN" → dead-end). Protects against the stale-PIN cross-pollination case (technician remembers old PIN, dials in, would otherwise be bridged to a stranger). |
+| **Hard-delete** | Background retention job | Delete rows where `cooldown_until < now() - audit_retention_window` (audit retention TBD, suggest 1 year for compliance). After hard-delete the PIN value is freely available to the generation pool again. |
+
+**Cooldown window (`P_PIN_COOLDOWN_WINDOW`) — default 90 days.** Sized against today's Wiom volume (~10k active tickets × 2 PINs = ~20k active; ~500 closing/day × 90 = ~45k cooldown; total ~65k of 100k pool — comfortable). If Wiom volume grows 3×+, escalate to 6-digit PINs (1M pool) — see Deferred work.
 
 #### Per-ticket-family wiring (entry / update / exit signals)
 
@@ -174,9 +178,9 @@ The Call CTA is visible after technician assignment for **all three** TAS execut
 
 | Family | ES (source of truth) | **Entry** — write 2 rows | **Update** — rewrite mobile + rotate PIN | **Exit** — soft-delete |
 |---|---|---|---|---|
-| **Install** | `es-installation-service-prd-v2.3.yaml` | `ES_INSTALL_TECHNICIAN_ASSIGNED` (state → `TECHNICIAN_ASSIGNED`; sets `executor_id`, `is_self_assigned`). Bridged to legacy RMQ wire_key `INSTALLATION_SLOT_ASSIGN` via `BookingInstallationEventBridge.onTechnicianAssigned` after commit — payload carries technician name + phone fetched from `csp-gateway-service GET /api/internal/csp-users/{id}`. | Same `ES_INSTALL_TECHNICIAN_ASSIGNED` event re-fires with a new `executor_id` when the CSP picks a different technician (state already `TECHNICIAN_ASSIGNED` → idempotent re-emit per `trigger_mutation_matrix.technician_assigned`). Listener compares stored `csp_user_id` vs payload — if different, treat as update. | Any transition to terminal state: `INSTALLATION_REPORTED_FAILED`, `CONNECTION_ACTIVE`, `CANCELLED_BY_CUSTOMER`, `CANCELLED_BY_UPSTREAM`, `INSTALLATION_CANCELLED_ONSITE`, `INSTALLATION_EXPIRED`. Subscribe to the corresponding `ES_INSTALL_*` events. |
-| **Restore** | `es-restore-prd-v1.4.yaml` | `ES_RESTORE_TECHNICIAN_ASSIGNED` (state `ASSIGNED_TECHNICIAN`, fired by CSP action `ASSIGN_TECHNICIAN`, sets `assigned_technician_id`). | `TASK_AUTO_REASSIGNED` upstream signal causes the original candidate to be `CANCELLED` and a new candidate to be inserted for the new executor — when the new CSP runs `ASSIGN_TECHNICIAN`, a fresh `ES_RESTORE_TECHNICIAN_ASSIGNED` fires for the new ticket-side identifier (treat as update on the same `ticket_id`). | Terminal states: `COMPLETED`, `CANCELLED`. Driven by upstream `COMPLAINT_TASK_CLOSED` (SR OS `CLOSED`), `COMPLAINT_RESOLUTION_SIGNAL` (`UNRESOLVABLE`), `PLATFORM_TAKEOVER_INITIATED`, `COMPLAINT_RECLASSIFIED_TO_PLATFORM`. |
-| **Pickup (NetBox Recovery)** | `es-netbox-recovery-service-prd-v1.9.yaml` | Default executor is the **owning CSP** (auto-assigned at candidate creation from ACS signal — state `PENDING_PICKUP`, reason `RECOVERY_TASK_ASSIGNED`). When the CSP **delegates** to a team member (v1.9 M7 TASK_ASSIGNMENT), `ES_NBREC_TASK_ASSIGNED` fires with the team-member identity. Listener should write Table 2 rows on **both** signals — same entry semantics. | `ES_NBREC_TASK_ASSIGNED` re-fires when the CSP reassigns to a different team member, or unassigns (back to CSP-self). Treat as update — rewrite `csp_user_id` and (on customer-side row) `other_party_mobile`. | Terminal states: `COMPLETED`, `CANCELLED`, `FAILED`. |
+| **Install** | `es-installation-service-prd-v2.3.yaml` | `ES_INSTALL_TECHNICIAN_ASSIGNED` (state → `TECHNICIAN_ASSIGNED`; sets `executor_id`, `is_self_assigned`). Bridged to legacy RMQ wire_key `INSTALLATION_SLOT_ASSIGN` via `BookingInstallationEventBridge.onTechnicianAssigned` after commit — payload carries technician name + phone fetched from `csp-gateway-service GET /api/internal/csp-users/{id}`. | Same `ES_INSTALL_TECHNICIAN_ASSIGNED` event re-fires with a new `executor_id` when the CSP picks a different technician (state already `TECHNICIAN_ASSIGNED` → idempotent re-emit per `trigger_mutation_matrix.technician_assigned`). Listener compares stored `csp_user_id` vs payload; if different, **rewrite `other_party_mobile` + `csp_user_id` on both rows. PIN is NOT touched.** PN to new technician so they see the existing PIN on their ticket card; no new SMS to customer. | Any transition to terminal state: `INSTALLATION_REPORTED_FAILED`, `CONNECTION_ACTIVE`, `CANCELLED_BY_CUSTOMER`, `CANCELLED_BY_UPSTREAM`, `INSTALLATION_CANCELLED_ONSITE`, `INSTALLATION_EXPIRED`. Soft-delete + set `cooldown_until`. Subscribe to the corresponding `ES_INSTALL_*` events. |
+| **Restore** | `es-restore-prd-v1.4.yaml` | `ES_RESTORE_TECHNICIAN_ASSIGNED` (state `ASSIGNED_TECHNICIAN`, fired by CSP action `ASSIGN_TECHNICIAN`, sets `assigned_technician_id`). | `TASK_AUTO_REASSIGNED` upstream signal causes the original candidate to be `CANCELLED` and a new candidate to be inserted for the new executor — when the new CSP runs `ASSIGN_TECHNICIAN`, a fresh `ES_RESTORE_TECHNICIAN_ASSIGNED` fires. Listener treats this as **mobile-only update on the same `ticket_id`** — PIN survives the CSP swap. (Note: cross-CSP reassign is the one edge case where `csp_id` also changes.) | Terminal states: `COMPLETED`, `CANCELLED`. Driven by upstream `COMPLAINT_TASK_CLOSED` (SR OS `CLOSED`), `COMPLAINT_RESOLUTION_SIGNAL` (`UNRESOLVABLE`), `PLATFORM_TAKEOVER_INITIATED`, `COMPLAINT_RECLASSIFIED_TO_PLATFORM`. Soft-delete + set `cooldown_until`. |
+| **Pickup (NetBox Recovery)** | `es-netbox-recovery-service-prd-v1.9.yaml` | Default executor is the **owning CSP** (auto-assigned at candidate creation from ACS signal — state `PENDING_PICKUP`, reason `RECOVERY_TASK_ASSIGNED`). When the CSP **delegates** to a team member (v1.9 M7 TASK_ASSIGNMENT), `ES_NBREC_TASK_ASSIGNED` fires with the team-member identity. Listener writes Table 2 rows on **both** signals — same entry semantics. | `ES_NBREC_TASK_ASSIGNED` re-fires when the CSP reassigns to a different team member, or unassigns (back to CSP-self). **Mobile-only update — rewrite `csp_user_id` and `other_party_mobile`. PIN unchanged.** | Terminal states: `COMPLETED`, `CANCELLED`, `FAILED`. Soft-delete + set `cooldown_until`. |
 
 **Implementation notes for the listener:**
 
@@ -203,24 +207,41 @@ This is **app behaviour**, not Table 2 logic — included so engineers verify th
 generate_pin():
   for attempt in 1..N:
     candidate = random 5-digit string ("00000".."99999")
-    if NOT EXISTS (SELECT 1 FROM table_2 WHERE pin = candidate AND expires_at IS NULL):
+    # PIN is unavailable if any row holds it AND is either active OR still in cooldown
+    if NOT EXISTS (
+      SELECT 1 FROM table_2
+      WHERE pin = candidate
+        AND (expires_at IS NULL OR cooldown_until > now())
+    ):
       return candidate
-  raise PinExhaustionError  # 100k space; statistically impossible at our volume
+  raise PinExhaustionError  # 100k space; alert + escalate to 6-digit (see deferred)
 ```
 
 **Note:** Some accounts may want the **last 5 digits of the ticket ID** as a memorable PIN. That's an alternative — but it sacrifices uniqueness guarantees (two tickets ending in same 5 digits → collision). For v1, recommend random with retry.
 
+**Cooldown protects against stale-PIN reuse.** Without it, ticket A closes with PIN `12345`, ticket B opens later, the algorithm could reissue `12345`, and the technician from ticket A — who still remembers `12345` — would dial in and be bridged to ticket B's customer. The cooldown holds `12345` out of the pool until the technician's mental cache is stale (90 days is the v1 calibration).
+
 #### Index recommendations
 
 ```sql
+-- Active lookup (Path 3, Path 4)
 CREATE UNIQUE INDEX idx_table2_pin_active
   ON table_2 (pin) WHERE expires_at IS NULL;
 
+-- Single-counterparty bridge (Path 2)
 CREATE INDEX idx_table2_ticket_side
   ON table_2 (ticket_id, side) WHERE expires_at IS NULL;
 
-CREATE INDEX idx_table2_expires_at
-  ON table_2 (expires_at);  -- for GC
+-- Generation algorithm: scan both active AND cooldown rows holding a given PIN
+CREATE INDEX idx_table2_pin_reserved
+  ON table_2 (pin) WHERE expires_at IS NULL OR cooldown_until > now();
+-- (Postgres NOTE: predicate on now() is not immutable, so this should be a
+--  plain index on (pin) and the WHERE clause moves into the generation query.
+--  Listed here for intent; tech to finalise dialect-specific form.)
+
+-- GC + cooldown release
+CREATE INDEX idx_table2_cooldown_until
+  ON table_2 (cooldown_until);
 ```
 
 ### Removed: Table 3 (Cx ↔ Technician resolver)
@@ -488,27 +509,30 @@ Disposition webhook → POST /log/disposition
 ## PIN lifecycle
 
 ### Generation
-- Two PINs minted on `ticket_open` (one per side).
+- Two PINs minted on the technician-assignment event (one per side). See per-family wiring for the exact ES event.
 - 5-digit numeric, generated by the random-with-retry algorithm above.
-- Globally unique among active rows (enforced by unique index on `pin WHERE expires_at IS NULL`).
+- Globally unique among **active + cooldown rows** (enforced by the generation query, not by a simple unique index — see Index recommendations).
+- **PIN is immutable for the row's lifetime.** No rotation, ever.
 
-### Distribution
+### Distribution (fires once, at row creation)
 
 | Recipient | Channel | Trigger |
 |---|---|---|
-| **Customer (registered mobile)** | SMS + WhatsApp at ticket creation. Same message carries the masked number to dial. | `ticket_open` |
-| **CSP user (assigned technician)** | Shown on the **ticket card** in the CSP App. **PIN must be visually prominent so screenshots include it.** | `ticket_open` (app polls / fetches via existing ticket API) |
+| **Customer (registered mobile)** | SMS + WhatsApp at technician-assignment. Same message carries the masked number to dial. | Listener consumes the family-specific assignment event |
+| **CSP user (assigned technician)** | Shown on the **ticket card** in the CSP App. **PIN must be visually prominent so screenshots include it.** | App fetches via existing ticket API |
 | **Colleague (no app, UC 13)** | The CSP user forwards their SMS / WhatsApp message, OR shares a screenshot of the ticket card. | Manual (out of system scope) |
 
-### Rotation
-- **Schedule:** daily, fixed time (recommended 03:00 IST).
-- **Action:** for every active ticket, generate a new PIN for each side. Update `pin` and `rotated_at`. Old PIN is replaced — no overlap window.
-- **Customer side:** new SMS / WhatsApp fired with the rotated PIN.
-- **CSP side:** ticket card auto-updates on next view.
+### Reassignment (mobile-only update)
+When the assigned technician changes:
+- **PIN is NOT rotated.** Both parties keep their copies.
+- Customer-side row: rewrite `other_party_mobile` to the new technician's phone. **No new SMS** — customer's existing PIN still works; the bridge target silently re-routes.
+- CSP-side row: rewrite `csp_user_id` (and `csp_id` if cross-org). Old technician's ticket card disappears (ticket no longer in their queue). New technician sees the existing PIN on their ticket card.
+- Trigger: same `ES_*_TECHNICIAN_ASSIGNED` event re-fired with a new executor — see per-family wiring.
 
-### Expiry / GC
-- `ticket_close` → set `expires_at = now()` on both rows for the ticket. Excluded from all active lookups thereafter.
-- Background hard-delete job removes rows where `expires_at < now() - retention_window` (TBD, suggest 90 days).
+### Expiry, cooldown, GC
+- **Soft-delete** on ticket-close (terminal state in the ES): set `expires_at = now()`, `cooldown_until = now() + 90 days`. Row no longer lookup-able.
+- **Cooldown** (`expires_at < now() <= cooldown_until`): row is invisible to callers (entering the PIN → "invalid" → dead-end) AND its PIN value is held out of the generation pool. Prevents stale-PIN cross-pollination — a technician remembering an old job's PIN cannot be misrouted to a stranger's ticket that has been reissued the same PIN.
+- **Hard-delete:** background job removes rows where `cooldown_until < now() - audit_retention_window` (audit retention ~ 1 year for compliance).
 
 ### Scoping (CSP-side guardrail)
 
@@ -739,8 +763,10 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **Two PINs per ticket** (customer-side + CSP-side) | Symmetric authorisation; either party can authenticate when off-CTA. PIN encodes ticket + direction. |
 | **Customer-side PIN via SMS; CSP-side via app ticket card only** | Customers are not app-engaged; SMS reaches them. CSPs see ticket details in app — no SMS noise. |
 | **5-digit PIN, random with uniqueness retry** | Matches OTP expectation. 100K combos × 3-retry cap = 0.003% brute-force probability per call. |
-| **Daily PIN rotation** | Limits exposure on multi-day jobs; a leaked PIN expires within 24 hours. |
-| **PIN scoping for CSPs (sim_inventory match → restricted lookup)** | Prevents a CSP from guessing or reaching a customer who isn't theirs. |
+| **PIN is immutable for the row's lifetime — no rotation, ever** | PIN is shared with both parties at ticket-open (customer via SMS, CSP via ticket card). Rotating invalidates what they hold and forces re-distribution. Rotation buys little — the PIN is already short, scoped, and 3-retry-capped. Prefer simplicity. |
+| **Reassignment rewrites mobile only, leaves PIN untouched** | Both parties keep the PINs they already have. Only the bridge target (`other_party_mobile`) changes underneath. Avoids the "which PIN is current" failure mode. |
+| **PIN cooldown after ticket close (90 days)** | Once a ticket closes, its PIN value is reserved (excluded from generation) for 90 days. Protects against stale-PIN cross-pollination: a technician remembering an old PIN cannot be misrouted to a stranger's ticket that has been reissued the same PIN. 90-day window matches today's pool-vs-volume math. |
+| **PIN scoping for CSPs (sim_inventory match → restricted lookup)** | Prevents a CSP from guessing or reaching a customer who isn't theirs. Also a partial backstop on the stale-PIN risk on the CSP side — even if cooldown were bypassed, the cross-CSP lookup would still fail. |
 | **3-retry cap per call** | Matches universal expectation (ATM, banking). |
 | **Dead-end ALSO sends SMS, not just voice** | Voice is ephemeral; SMS lets the caller act later. |
 | **Truecaller whitelisting reuses one of MN1/MN2** | No fresh whitelisting work; verified status carries forward. |
@@ -763,7 +789,8 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | Removing `is_customer` from main routing means customer callback from dialer now requires a PIN in multi-ticket case (it didn't before). | Accepted. Customer has the PIN via SMS from ticket-open. The friction is one IVR step. |
 | PIN possession = authorisation, regardless of who holds it (UC 13 colleague forwarding). | Accepted. Usability ↔ security trade-off — the colleague case is a real CSP workflow. |
 | Customer-side PIN lookup is unscoped (no equivalent to CSP `sim_inventory` scoping). | Accepted. 3-retry cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step. |
-| Daily PIN rotation adds SMS volume. | Accepted. SMS is cheap relative to a dropped call (NPS hit, retry truck-roll). |
+| Immutable PIN means a leaked PIN stays leaked for the ticket's lifetime. | Accepted. The blast radius is one ticket × one direction. PIN possession = authorisation by design (UC 13 colleague forwarding requires this). For tickets with very long lifetimes, the ES state machine will close them on the terminal events listed in the per-family wiring — at which point cooldown takes over. |
+| PIN pool is finite (100K for 5-digit) — cooldown reservation can pressure the pool at scale. | At today's Wiom volume (~10k active × 2 PINs + ~500 closing/day × 90-day cooldown = ~65k of 100k pool), fine. At ~3× growth, escalate to **6-digit PINs (1M pool)** — see Deferred work. Generation should alert at retry-count threshold so we get warning. |
 | Dead-end can't distinguish "customer with closed ticket" from "stranger" without `user_type`. | Resolved — `user_identification` returns `user_type` even when count=0, used for dead-end branching. |
 | Multi-ticket customer dialing from registered number with no live Table 1 entry: routing would be ambiguous. | PIN disambiguates; no auto-route to most recent. |
 | `user_identification` API call cost on every Table-1-miss call. | Negligible if implemented well (< 200 ms p95). Cached against `CallSid` for downstream applets. |
@@ -776,6 +803,7 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | Item | Why deferred |
 |---|---|
 | PIN reminder SMS on prompt abandonment | Can't determine which PIN to resend mid-call when a CSP has multiple tickets, or when caller is unrecognised. |
+| **6-digit PIN escalation (1M pool)** | Triggered when generation algorithm's average retry count exceeds threshold (e.g., > 3 attempts) or when active+cooldown reservation approaches 70% of pool. At ~3× current Wiom volume, expect to need this. Migration: add new column, generate 6-digit for new rows, leave existing 5-digit rows alone (they expire naturally). |
 | PIN expiry notification at ticket close | Not blocking. Add later if dead-end IVR traffic shows confused customers. |
 | Auto-recognition of repeat unknown-SIM callers ("Table 4" idea) | Deferred — would add an audit step before PIN that costs UX. Revisit with response-pattern data. |
 | Per-FROM rate limiting (beyond per-call 3-retry cap) | Not needed for v1; brute-force economics are bad enough without it. |
@@ -793,7 +821,9 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | PIN format (random 5-digit vs last 5 of ticket ID) | Solution team — recommend random for uniqueness guarantees |
 | Exact wording of every IVR prompt and SMS / WA template (Hindi-first) | Solution team |
 | Final list of regional languages (post-Hindi) | Solution team |
-| Daily PIN rotation time of day | Tech — recommend 03:00 IST (low traffic) |
+| PIN cooldown window length (default 90 days) | Tech + Solution team — validate against actual technician-recall behaviour after a couple of months in prod |
+| Audit retention window after cooldown ends (suggest 1 year) | Compliance |
+| PIN-pool monitoring + alert threshold (retry count, % reservation) | Tech |
 | Missed-call CleverTap payload schema — finalise fields | Tech + Solution team |
 | DLT template registration for all SMS variants | Comms / Ops |
 | WhatsApp BSP template approvals | Comms |
@@ -823,8 +853,10 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 - [ ] **End-to-end test** for each of the 13 use cases passes in staging.
 - [ ] **Table 2 listener** (`pin-registry-service`) subscribed to all three ESs: `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` (plus NBREC `RECOVERY_TASK_ASSIGNED` candidate-creation hook).
 - [ ] **Table 2 listener** subscribed to terminal events for each family (Install: `INSTALLATION_REPORTED_FAILED` / `CONNECTION_ACTIVE` / `CANCELLED_BY_CUSTOMER` / `CANCELLED_BY_UPSTREAM` / `INSTALLATION_CANCELLED_ONSITE` / `INSTALLATION_EXPIRED`; Restore: `COMPLETED` / `CANCELLED`; NBREC: `COMPLETED` / `CANCELLED` / `FAILED`).
-- [ ] **Idempotency check:** repeated technician-assignment events for the same `(ticket_id, side)` produce upserts, not duplicate rows.
-- [ ] **Reassignment test:** reassigning a technician on an Install / Restore / NBREC ticket rewrites `other_party_mobile` + rotates PIN + re-delivers SMS to customer.
+- [ ] **Idempotency check:** repeated technician-assignment events for the same `(ticket_id, side)` produce upserts, not duplicate rows; PIN value never changes.
+- [ ] **Reassignment test:** reassigning a technician on an Install / Restore / NBREC ticket rewrites `other_party_mobile` + `csp_user_id` only. **PIN is unchanged.** No new SMS to customer. PN fires to the new technician.
+- [ ] **PIN cooldown test:** close a ticket, verify its PIN is excluded from the generation pool. Verify the same PIN cannot be re-issued for 90 days. Verify entering the expired PIN routes to dead-end (not a wrong-ticket bridge).
+- [ ] **PIN-pool monitoring:** generation retry count + active+cooldown reservation % surfaced on a dashboard; alert when retries > threshold (signal to escalate to 6-digit).
 - [ ] **Backend `maskedCallAvailable`** derived from active Table 2 row existence (not from per-app state-string parsing).
 
 ---
