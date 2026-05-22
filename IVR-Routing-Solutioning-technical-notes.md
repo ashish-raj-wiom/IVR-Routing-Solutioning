@@ -48,7 +48,7 @@ A **single new service** owns this entire system. Call it `ivr-routing-service` 
 | **Table 1** — active call mapping | Internal DB |
 | **Table 2** — PIN registry | Internal DB |
 | **`sim_inventory`** — CSP SIM → csp_user_id map | Internal DB. Built **fresh** with proper audit logs. (The existing `es-ivr-calling-service` is being discarded as part of this redesign.) |
-| **`user_identification` API** | `POST /internal/user-identification` — called only on Table 2 miss (count = 0) |
+| **`user_identification` API** | `GET /ivr/identify-caller` — called by a Passthru Sync applet only after Connect-applet returns empty destination. Returns `{"select": "customer" | "csp" | "unknown"}` with `Content-Type: text/plain` for Switch Case branching. |
 | **Exotel-facing endpoints** | `GET /ivr/resolve-caller`, `GET /ivr/resolve-pin`, `GET /audio/deadend`, `POST /log/disposition`, `POST /log/*` |
 | **ES event listener** | Subscribes to `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` + terminal events. Drives Table 2 entry / mobile-update / exit. |
 | **SMS dispatch** | Calls Gupshup (Wiom's SMS provider) for PIN delivery, missed-call alerts, dead-end SMS. |
@@ -65,7 +65,67 @@ Single service in v1 keeps deployment, ownership, and infra simple. Split is pos
 | **Table 2** | Per-ticket PIN registry. Two rows per ticket (one per side). Three access patterns — **by FROM at Table 1 miss** (new primary lookup), by `pin` (PIN-prompt flow), by `(ticket_id, side)` (rare — listener writes). | **New.** |
 | **`sim_inventory`** | CSP SIM → csp_user_id map. Used in Table 2 by-FROM lookup (to find CSP-side rows when the caller dials from any of their SIMs). | **New.** Built fresh with audit logs (every add / remove tracked). |
 | **`user_identification` API** | Called **only when Table 2 returns 0 rows**. Returns user_type ∈ {customer, csp, unknown} + user_id. Result cached against `CallSid` in Redis for reuse at dead-end. | **New.** |
-| **Disposition webhook** | Exotel POSTs after every call with outcome (answered / no_answer / busy / failed). Drives missed-call alerts. | New listener; Exotel side already supported. |
+| **Disposition webhook** | Exotel POSTs after every call with outcome (answered / no_answer / busy / failed). Captured for analytics; **does not** fire missed-call alerts (those fire from Passthru-Async-on-DNP). | New listener; Exotel side already supported. |
+
+---
+
+## Engineering deliverables — what tech needs to build
+
+This section is a build-ready summary. Engineers can implement from this; the deeper sections fill in nuance.
+
+### Single new service: `ivr-routing-service`
+
+One service owns all of this. Deployment, DB, ownership in one place.
+
+### Three Exotel-facing APIs (all HTTP GET — Exotel does not support POST on applet webhooks)
+
+| API | Endpoint | Caller (Exotel applet) | Response format | What it does |
+|---|---|---|---|---|
+| **API 1** | `GET /ivr/resolve-caller` | First **Connect** applet (Dynamic URL) | JSON `{destination, outgoing_phone_number, record, ...}` per [Connect docs](https://support.exotel.com/support/solutions/articles/3000096873). Empty `numbers` array on no-bridge. | Table 1 lookup → if miss, Table 2 by-FROM JOIN with customers / csp_users / sim_inventory. Returns destination if exactly 1 row matches; empty destination otherwise (flow then routes to Passthru Sync). On 0-row case, also pre-calls API 2 logic to cache user_type for the next applet. |
+| **API 2** | `GET /ivr/identify-caller` | **Passthru Sync** applet | `Content-Type: text/plain` body: `{"select": "customer" \| "csp" \| "unknown"}` per [Switch Case docs](https://support.exotel.com/support/solutions/articles/3000052018). HTTP 200 always. | Pure identity resolution. Matches FROM against `customers.registered_mobile`, `csp_users.registered_mobile`, `sim_inventory.mobile` (WHERE removed_at IS NULL). Caches result in Redis keyed on `CallSid` for the second invocation after PIN exhaustion. |
+| **API 3** | `GET /ivr/resolve-pin` | PIN-validating **Connect** applet (×2 — attempt 1 and attempt 2) | Same JSON shape as API 1. Empty `numbers` if PIN invalid. | **MUST `strip('"')` from `digits`** (Exotel wraps it). Table 2 lookup by PIN, with scoping per cached `user_type`. Returns destination on single match; empty otherwise. Stateless — no attempt counter (flow structure caps at 2). |
+
+### Five backend tables to build
+
+| Table | Purpose | New / fresh |
+|---|---|---|
+| **`table_1`** | Active call mapping (FROM → TO). Short TTL (call duration + buffer, max 5 min). Written by in-app Call CTA flow; read by API 1. | New (replaces existing Redis cache in old `es-ivr-calling-service`). |
+| **`table_2`** | Per-ticket PIN registry. Two rows per ticket (customer side + csp side). Immutable PIN per ticket; mobile-only on reassign; 90-day cooldown after ticket close. Three access patterns (by FROM, by PIN, by ticket+side). | New. |
+| **`sim_inventory`** | CSP SIM → csp_user_id map. Used in Table 2 by-FROM JOIN. Has audit log (`sim_inventory_audit`) tracking every add / remove. | New (built fresh; old `es-ivr-calling-service` discarded). |
+| **`call_audit_logs`** | Every Passthru hit writes here. ~30 typed event categories (see §Logging catalog). | New. |
+| **`pin_audit_logs`** | Every PIN attempt logged (attempt #, outcome, reason — NOT the digits). | New. |
+
+### One ES event listener
+
+Subscribes to **three execution-service event streams** (one fan-in consumer):
+- `ES_INSTALL_TECHNICIAN_ASSIGNED` (from `es-installation-service`)
+- `ES_RESTORE_TECHNICIAN_ASSIGNED` (from `es-restore`)
+- `ES_NBREC_TASK_ASSIGNED` (from `es-netbox-recovery`)
+
+Plus the corresponding **terminal-state events** for each family (Install: 6 terminal states; Restore: 2; NBREC: 3 — see §Per-ticket-family wiring).
+
+**Listener actions:**
+- On `*_TECHNICIAN_ASSIGNED` (entry / reassignment): upsert 2 rows in Table 2 keyed on `(ticket_id, side)`. PIN is generated once on first insert; subsequent re-fires rewrite `other_party_mobile` + `csp_user_id` only.
+- On terminal state: soft-delete (`expires_at = now()`, `cooldown_until = now() + 90 days`).
+- Also writes `masked_call_available: true|false` boolean on each ES candidate row so drilldown serializers can surface it on `TaskDetail.maskedCallAvailable` for the apps.
+
+### Outbound integrations
+
+- **Gupshup** — SMS for PIN delivery at ticket-open; missed-call alerts via CleverTap campaign.
+- **CleverTap** — fired from Passthru-Async-on-DNP with `missed_call_csp_to_customer` / `missed_call_customer_to_csp` events.
+
+### Definition of "fully functional"
+
+For tech to call the API "ready":
+
+1. All 5 tables created with the indexes specified in §Tables.
+2. All 3 APIs return the EXACT response formats specified above (no `action:` field, no JSON for Switch Case in `application/json`).
+3. ES listener consuming from all 3 streams in staging, with upsert idempotency confirmed (re-firing same event = same row state).
+4. `sim_inventory` add/remove flow working with audit log writes.
+5. PIN generation excluding cooldown rows (verified by closing a ticket, checking PIN is not re-issued for 90 days).
+6. Reassignment test: technician reassigned → `other_party_mobile` rewritten, PIN unchanged, no new SMS to customer.
+7. End-to-end test: live Exotel staging account → all 13 use cases pass.
+8. `maskedCallAvailable` boolean surfaced correctly on CSP App + Technician App drilldown DTOs.
 
 ---
 
@@ -367,160 +427,339 @@ Earlier iterations had a Table 3 — `customer_mobile → technician_mobile` —
 
 ---
 
-## user_identification API
+## API 2 — `GET /ivr/identify-caller` (called by Passthru Sync applet)
 
 ### Purpose
 
-Called **only when Table 2 by-FROM lookup returns 0 rows**. Answers a narrow question: *is this FROM a Wiom customer, a Wiom CSP, or completely unknown?* The result drives two decisions:
+Called by a **Passthru Sync** applet whenever the upstream Connect applet returned an empty destination (`"We didn't dial anyone"`). The next applet (Switch Case) reads this API's response body to branch into Customer / CSP / Unknown dead-end flows OR into PIN Gather (Unknown path).
 
-1. **Skip PIN or not.** If `user_type ∈ {customer, csp}` and Table 2 by-FROM was 0, the caller has no active ticket — there is no live PIN they could possibly enter. Skip Gather, route directly to dead-end with the right helpline message.
-2. **Which dead-end message to play.** `customer` → call centre 88803 22222; `csp` or `unknown` → trust line 78368 11111.
+**Fires twice in the flow:**
+1. After the initial Connect (API 1) returned empty destination — drives the first Switch Case.
+2. After both PIN-validating Connect attempts (API 3) failed — drives the final Switch Case at the dead-end.
 
-**Not on the hot path.** Most calls (Table 1 hit, or Table 2 by-FROM returns 1 or many) never invoke this API. Only the 0-row case touches it.
+### Why this isn't called on every Table-1-miss
+
+Most Table-1-miss calls already determine user_type during the Table 2 by-FROM JOIN (the `matched_side` column from API 1). API 2 fires only when API 1 could NOT determine user_type — i.e., the 0-row case — or when the Redis cache has expired between PIN attempts.
 
 ### Endpoint
 
-`POST /internal/user-identification`
-- **Internal-only**, exposed by the same `ivr-routing-service` that owns Table 1 + Table 2.
-- **Auth:** internal mTLS between Exotel-facing layer and identity layer of the same service (intra-process call in practice; exposed as a logical API for clarity + future split).
-- **Latency budget:** p95 < 100 ms — it runs inside Exotel's already-shrunk window (after the by-FROM lookup has consumed some of the 5 s budget).
-- **Idempotency:** safe — pure read.
+`GET /ivr/identify-caller` — **GET, not POST.** Exotel's Passthru applet [docs](https://support.exotel.com/support/solutions/articles/48283) state: *"It makes a GET request to the URL with the call details as URL-encoded HTTP query parameters."* POST is not supported.
 
-### Request
+**Internal-only?** No — this endpoint is exposed publicly to receive Exotel's Passthru call. Signed-payload auth (HMAC) applies if Exotel supports it (verify with Exotel — open TBD).
 
-```json
-{
-  "from": "+91XXXXXXXXXX",
-  "call_id": "exotel-call-sid"  // for telemetry correlation + Redis cache key
-}
+**Exotel-sent query parameters** (verbatim from Passthru docs):
+
+| Parameter | Notes |
+|---|---|
+| `CallSid` | Use as Redis cache key for `ivr:user_type:{CallSid}`. |
+| `From` | The caller's number. **Primary input for identity resolution.** |
+| `To`, `CallFrom`, `CallTo` | Standard. |
+| `Direction`, `CallStatus`, `DialCallStatus` | Standard. |
+| `digits` | **Present only on the second invocation** (after PIN-failure). Not used for identification. |
+| (plus standard call metadata: `Created`, `StartTime`, `EndTime`, etc.) | |
+
+### Response — for Switch Case branching
+
+Switch Case applet's [docs](https://support.exotel.com/support/solutions/articles/3000052018) specify the exact mechanism:
+
+- **Status code:** `200`
+- **Content-Type:** `text/plain` (verbatim from Switch Case docs)
+- **Body:** `{"select": "<branch_name>"}`
+
+Switch Case in App Bazaar must be configured with **three case names matching exactly** (lowercase, exact string match):
+- `customer`
+- `csp`
+- `unknown`
+
+**Response body shape:**
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
+
+{"select": "customer"}
 ```
 
-### Response
+(or `{"select": "csp"}` or `{"select": "unknown"}`)
 
-```json
-{
-  "user_type": "customer" | "csp" | "unknown",
-  "user_id": "uuid" | null   // customer_id or csp_user_id; null when user_type == "unknown"
-}
+### Backend logic
+
+```python
+def identify_caller(CallSid, From):
+    # Redis fast path — second invocation after PIN exhaustion
+    cached = redis.get(f"ivr:user_type:{CallSid}")
+    if cached:
+        return switch_response(cached)
+
+    # DB resolution
+    if customers.exists(registered_mobile=From):
+        ut = "customer"
+        user_id = customers.get(From).id
+    elif csp_users.exists(registered_mobile=From):
+        ut = "csp"
+        user_id = csp_users.get(From).id
+    elif sim_inventory.exists(mobile=From, removed_at=None):
+        ut = "csp"
+        user_id = sim_inventory.get(From).csp_user_id
+    else:
+        ut = "unknown"
+        user_id = None
+
+    # Cache for the second invocation
+    redis.set(f"ivr:user_type:{CallSid}", ut, ex=600)
+    if user_id:
+        redis.set(f"ivr:user_id:{CallSid}", user_id, ex=600)
+
+    return switch_response(ut)
+
+def switch_response(user_type):
+    return Response(
+        status=200,
+        headers={"Content-Type": "text/plain"},
+        body=json.dumps({"select": user_type})
+    )
 ```
 
-**No active-ticket-count.** That answer is already known (= 0) because this API is only called after Table 2 by-FROM returned 0 rows. No need to recompute.
+### Error handling
 
-### Internal logic
+On unrecoverable backend error (DB down, etc.), return:
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain
 
-```text
-user_identification(from):
-  if from matches customers.registered_mobile:
-    return { user_type: "customer", user_id: customer.id }
-  elif from matches csp_users.registered_mobile:
-    return { user_type: "csp", user_id: csp_user.id }
-  elif from matches sim_inventory.mobile:
-    csp_user_id = sim_inventory.lookup(from).csp_user_id
-    return { user_type: "csp", user_id: csp_user_id }
-  else:
-    return { user_type: "unknown", user_id: null }
+{"select": "unknown"}
 ```
 
-**Multi-match enforcement (HTML assumption).** A FROM that matches both a customer AND a CSP record is forbidden by data-model invariant (HTML assumptions). The API should `LOG.error` + return `user_type = "customer"` (customer takes precedence as the more user-visible case). Operational dashboard surfaces these for cleanup.
+**Why 200 + unknown, not 5xx:** Exotel's Passthru fallback behaviour on 5xx is not documented; the safe path is to always return 200 and route the caller to the most generic dead-end (trust line) rather than risk a flow abort.
+
+### Multi-match enforcement
+
+A FROM that matches both a customer AND a CSP record is forbidden by data-model invariant (HTML assumptions). The API should `LOG.error` + return `{"select": "customer"}` (customer takes precedence as the more user-visible case). Operational dashboard surfaces these for cleanup.
 
 ### Caching
 
-Result is stashed in Redis keyed on `call_id`:
-- **Key:** `ivr:user_type:{call_id}`
-- **TTL:** 10 minutes (covers any reasonable call duration + PIN flow + disposition webhook)
-- **Why:** if the caller hits PIN gather (Path 4: unknown + has-forwarded-PIN) and exhausts both attempts, dead-end needs `user_type` again. Re-resolution wastes a DB call (and risks a different answer if data has shifted).
+Result stashed in Redis keyed on `CallSid`:
+- **Key:** `ivr:user_type:{CallSid}`
+- **TTL:** 10 minutes
+- **Why:** the second invocation (after PIN exhaustion) reads from cache, sub-millisecond.
 
-### Routing decisions driven by the response
+### Timeout & fallback
 
-Given Table 2 by-FROM already returned 0 rows:
+- **Backend SLO:** p95 < 300 ms (Passthru timeout not documented by Exotel; treat as 5s conservatively).
+- **Fallback URL:** Not documented for Passthru. Verify with Exotel before launch.
 
-| `user_type` | Action | Path |
+---
+
+## Exotel data-flow rules (verified against Exotel docs)
+
+Before reading the API contracts below, every engineer should internalise these rules. They come directly from Exotel's applet docs (linked) and are non-negotiable — they constrain what our backend can and can't do.
+
+### Rule 1 — Connect, Passthru, and Gather applets all use HTTP **GET**
+
+Per [Connect docs](https://support.exotel.com/support/solutions/articles/3000096873) and [Passthru docs](https://support.exotel.com/support/solutions/articles/48283), Exotel sends call details as **URL-encoded query parameters on a GET request**. POST is not supported on the Exotel-facing surface. All three of our APIs accept GET.
+
+### Rule 2 — `digits` from Gather is **wrapped in literal double-quotes**
+
+Per [Gather docs](https://support.exotel.com/support/solutions/articles/3000084635): *"This parameter comes with a double quote (") before and after the number. You'll have to trim() this parameter for double quotes (") to get the actual digits."*
+
+**Every backend handler that consumes `digits` MUST `strip('"')` first.** Affected: API 3, the second invocation of API 2.
+
+### Rule 3 — Connect responses cannot redirect the flow
+
+The Connect applet's response shapes the dial (`destination`, `outgoing_phone_number`, `record`, etc.). It **cannot** include an `action: "playback"` / `action: "gather"` directive that re-routes the flow to a different applet. The next applet is chosen by App Bazaar transition wiring on the three Connect outcomes.
+
+Branching between "bridge" / "PIN gather" / "dead-end" is achieved via:
+1. **Empty destination response** → triggers the `"We didn't dial anyone"` transition → flow advances to a Passthru Sync → Switch Case.
+2. **Switch Case** reads the Passthru Sync's `{"select": "..."}` body and branches by exact string match.
+
+### Rule 4 — Connect's three documented outcomes (App Bazaar transition labels)
+
+| Exotel doc label | Our shorthand | Trigger |
 |---|---|---|
-| `customer` | **Skip PIN.** `/ivr/resolve-caller` response sets `action: "playback"` with the call-centre dead-end audio URL. | Direct → Dead-end (customer) |
-| `csp` | **Skip PIN.** `/ivr/resolve-caller` response sets `action: "playback"` with the trust-line dead-end audio URL. | Direct → Dead-end (csp) |
-| `unknown` | **Prompt for PIN.** `/ivr/resolve-caller` response sets `action: "gather"` — caller may hold a forwarded PIN (UC 13). On 3 failed attempts, dead-end → trust line. | Path 4 |
+| `"After the call conversation ends"` | **Connected** | Dialed AND conversation occurred |
+| `"If nobody answers"` | **DNP** (Did Not Pick) | Dialed but no conversation (ring-no-answer / busy / declined) |
+| `"We didn't dial anyone"` | **Did not Dial** | Backend returned empty destination OR timed out OR non-200 OR invalid response |
+
+**App Bazaar transition wiring** uses these three Exotel labels — engineers configuring App Bazaar should know both the labels and our shorthand.
+
+### Rule 5 — Switch Case branches on `{"select": "<value>"}` body, not status code
+
+Per [Switch Case docs](https://support.exotel.com/support/solutions/articles/3000052018): the upstream Passthru Sync returns a body of `Content-Type: text/plain` containing `{"select": "<branch_name>"}`. Switch Case reads the `select` field and exact-string-matches it against configured case names.
+
+**Status codes are NOT the branching signal.** API 2 must return **200 always** with the discriminator in the body.
+
+Our Switch Case applet config in App Bazaar requires three exact branch names (lowercase): **`customer`**, **`csp`**, **`unknown`**.
+
+### Rule 6 — `fetch_after_attempt: false` on all Connect responses
+
+[Connect docs](https://support.exotel.com/support/solutions/articles/3000096873) describe `fetch_after_attempt` as a response field. When `true`, Exotel re-fetches the same Dynamic URL on each unsuccessful dial attempt (DNP / busy / failed). We do NOT want this — DNP is a legitimate end-state captured by the Passthru-Async-on-DNP hop in our flow. **Set explicitly to `false`** on every Connect response (API 1 and API 3).
+
+### Rule 7 — `outgoing_phone_number` in response overrides App Bazaar Caller ID
+
+The Connect applet response field `outgoing_phone_number` overrides the configured Caller ID per call. Our backend always sets this to the `To` value Exotel sent us (the same masked DID the caller dialled). Both mechanisms exist (App Bazaar default + response override); we use the response override exclusively.
+
+### Rule 8 — Greeting audio file specs
+
+Per [Greeting docs](https://support.exotel.com/support/solutions/articles/3000100184):
+- Formats: `.wav` or `.mp3`
+- Max size: `< 2 MB`
+- Bit resolution: `8-bit`
+- Sampling rate: `8000 Hz`
+- Channel: Mono
+
+Note: Connect's `start_call_playback.audio_url` field has DIFFERENT specs (16-bit, 128 kbps, mono WAV). Our flow uses Greeting applets for dead-end audio (not `start_call_playback`), so the 8-bit-mono-8kHz spec applies. **Audio file owner: Solutions team.**
+
+### Rule 9 — Standard call parameters present on every Exotel webhook
+
+Every Exotel webhook to our APIs carries these query parameters (verbatim casing):
+`CallSid`, `From`, `To`, `CallFrom`, `CallTo`, `Direction`, `Created`, `StartTime`, `EndTime`, `CurrentTime`, `CallType`, `flow_id`, `DialCallDuration`, `DialWhomNumber`
+
+Conditional fields: `DialCallStatus`, `digits`, `CustomField`, `RecordingUrl`, `CallStatus`.
+
+### Rule 10 — No authentication header from Exotel out of the box
+
+Per the five Exotel applet docs, **no auth header is documented** beyond `Exotel-Version: 1.0`. Any HMAC / signed-payload / shared-secret scheme is on the engineering team to design and confirm with Exotel support. **Open TBD.** Until then, treat the Exotel-facing endpoints as IP-allowlist-protected (Exotel publishes their egress IP range).
 
 ---
 
 ## Backend endpoint contracts
 
-All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth for every Exotel-originated request: signed-payload via shared secret** (Exotel-supported). Backend rejects any request whose `X-Exotel-Signature` header does not match HMAC-SHA256(shared_secret, request_body). Shared secret rotated quarterly.
+All Exotel-facing endpoints are exposed by `ivr-routing-service`. **Auth:** see Rule 10 above — IP allowlist for v1; HMAC signed-payload pending Exotel confirmation.
 
-### `/ivr/resolve-caller` (called by Exotel Connect #1)
+### API 1 — `GET /ivr/resolve-caller` (called by initial Connect applet)
 
-`GET /ivr/resolve-caller?From=<E164>&CallSid=<exotel_sid>&To=<masked_number>`
+Called by the **first Connect applet** in the App Bazaar flow on Dynamic URL mode. Per Exotel's [Connect Dynamic URL docs](https://support.exotel.com/support/solutions/articles/3000096873), the applet sends a GET with standard call parameters and expects a JSON response shaping the dial.
 
-**Logic:**
-1. Log `dial_received_backend`.
-2. **Table 1 lookup** by `From`. If hit → return `action: "connect"` with destination.
-3. **Else Table 2 by-FROM lookup** (the JOIN-at-call-time SQL). Branch on row count:
-   - **1 row** → return `action: "connect"` with destination = `rows[0].other_party_mobile`. Cache `user_type` (from the matched_side column) against `CallSid`. (Path 2)
-   - **>= 2 rows** → return `action: "gather"`. Cache `user_type` against `CallSid` for dead-end use. (Path 3)
-   - **0 rows** → call `user_identification(From, CallSid)`. Cache the result. Then:
-     - `user_type == "customer"` → return `action: "playback"` with `audio_url: /audio/deadend?call_id={CallSid}` (customer dead-end → call centre)
-     - `user_type == "csp"` → return `action: "playback"` with `audio_url: /audio/deadend?call_id={CallSid}` (csp dead-end → trust line)
-     - `user_type == "unknown"` → return `action: "gather"` (Path 4 — caller may hold a forwarded PIN)
+**Exotel-sent query parameters** (verbatim from Exotel docs, casing-sensitive):
 
-**Response schema:**
+| Parameter | Meaning |
+|---|---|
+| `CallSid` | Unique call ID assigned by Exotel. Use as cache key + correlation ID for all logs. |
+| `From` | The caller's phone number, E.164 with `+`. **This is what we look up against Table 1 / Table 2 / sim_inventory.** |
+| `To` | The masked DID the caller dialled (one bidirectional number in our design). |
+| `CallFrom`, `CallTo` | Same as From / To for inbound calls. |
+| `Direction` | `incoming` for our flow. |
+| `flow_id`, `Created`, `StartTime`, `EndTime`, `CurrentTime`, `CallType`, `DialCallDuration`, `DialWhomNumber` | Standard call metadata. |
+
+**Exotel header:** `Exotel-Version: 1.0`. No auth header from Exotel out of the box — if HMAC signing is added, that's our scheme (open TBD — confirm Exotel HMAC support before launch).
+
+**Backend logic:**
+1. Log `dial_received` (CallSid, From, To).
+2. **Table 1 lookup** by `From`. If active row found → return bridge response with destination = Table 1's `to`. Done.
+3. **Table 2 by-FROM lookup** (the JOIN-at-call-time SQL). Branch on row count:
+   - **1 row** → cache `user_type` + `csp_id` (if csp) against `CallSid`. Return bridge response with destination = `rows[0].other_party_mobile`. (Path 2)
+   - **≥ 2 rows** → cache `user_type` + `csp_id` against `CallSid`. Return **empty destination**. (Path 3 — flow proceeds to Passthru Sync → Switch Case → Gather)
+   - **0 rows** → call `user_identification(From)`, cache the result, return **empty destination**. (Switch Case on the next applet decides the dead-end branch or Gather)
+
+**Response — bridge case** (Table 1 hit OR Table 2 by-FROM = 1):
 ```json
 {
-  "action": "connect" | "gather" | "playback",
-  // when action == "connect"
   "destination": { "numbers": ["+919812345678"] },
-  "outgoing_phone_number": "<masked_number>",
+  "outgoing_phone_number": "+91<masked_did>",
   "record": true,
+  "recording_channels": "dual",
   "max_ringing_duration": 30,
-  // when action == "playback"
-  "audio_url": "https://ivr-routing-service.../audio/deadend?call_id=...",
-  // optional metadata for telemetry correlation
-  "resolution_reason": "table1_hit" | "table2_single" | "table2_multi" | "recognised_no_ticket" | "unknown_caller"
+  "fetch_after_attempt": false
 }
 ```
 
-**Exotel applet interpretation:**
-- `action: "connect"` → Exotel's Connect-applet dials the destination, masking with `outgoing_phone_number`.
-- `action: "gather"` → Connect returns "no destination" → Exotel flow advances to the next applet (Gather → PIN prompt).
-- `action: "playback"` → Exotel honours a redirect to the Playback applet via the dynamic-URL response. **Confirm with Exotel:** that Connect applets support a `playback` directive response. If not, fallback is **(b)** from §Open TBDs — add a branching Passthru applet between Connect-1 and Gather to read the resolution decision.
+**Response — no bridge** (Table 2 by-FROM count ≥ 2 OR count = 0):
+```json
+{ "destination": { "numbers": [] } }
+```
+Empty `numbers` array triggers Exotel's `"We didn't dial anyone"` transition. The App Bazaar flow routes this to the **Passthru Sync (API 2)**, which returns the user_type for Switch Case to branch on.
 
-**Timeout / error:** Exotel falls back to the Fallback URL configured on the applet. Backend SLO: p95 < 200 ms.
+**Status code:** Always **200**. Non-200 makes Exotel fall to the Fallback URL (a static "service unavailable" greeting) — we want to keep the flow on the happy path even on backend errors, so return 200 with empty destination on internal failures.
 
-**Idempotency:** Safe — read-only. Same input always produces same output for the lifetime of Table 1 / Table 2 state.
+**Critical Exotel notes:**
+- **No `action:` directive exists.** Exotel's Connect applet response schema does NOT include an `action` field. There is no documented way for the response to redirect the flow to a Playback or Gather applet. The next applet is chosen by App Bazaar transition wiring on the three Connect outcomes (`After the call conversation ends` / `If nobody answers` / `We didn't dial anyone`). All branching between bridge / PIN gather / dead-end happens via the **Passthru Sync → Switch Case** pattern downstream.
+- **`fetch_after_attempt: false`** — set explicitly. If `true`, Exotel re-fetches the URL on each unsuccessful dial attempt, which would cause double-billing and confusing telemetry.
+- **`outgoing_phone_number`** overrides the App Bazaar-configured Caller ID per call. Both mechanisms work; the response field is used dynamically per call so we always know what masked DID was used.
 
-### `/ivr/resolve-pin` (called by Exotel Connect #2)
+**Timeout:** 5s (Exotel). Backend SLO: p95 < 200 ms.
+**Fallback URL:** Configure as a static greeting in App Bazaar — fired on backend timeout / non-200 / invalid response.
+**Idempotency:** Safe — pure read. Same input always produces same output for the lifetime of Table 1 / Table 2 state.
 
-`GET /ivr/resolve-pin?From=<E164>&CallSid=<exotel_sid>&digits=<5_digits>`
+### API 3 — `GET /ivr/resolve-pin` (called by PIN-validating Connect applet)
 
-**Logic:**
-1. Log `pin_attempted` (with attempt number, digits length only — not the digits themselves).
-2. Table 2 lookup by PIN, with scoping:
-   - If `From` matches `csp_users.registered_mobile` OR is in `sim_inventory` → scope to `side = 'csp' AND csp_id = matched_csp_id` (matched at `/resolve-caller` time, available in Redis).
-   - Else → unrestricted (handles unknown FROM + customer multi-ticket cases).
-3. If single match → return `action: "connect"` with destination. Log `pin_attempt_valid`.
-4. If no match → return `action: "no_destination"`. Exotel's Connect applet then enters "Did not Dial" path. App Bazaar flow handles attempt-limit (1 original + 1 retry = 2 attempts max) via flow structure — second Gather→Connect→fail routes to final dead-end. Log `pin_attempt_invalid` (with reason: `no_match` or `cooldown_row` or `pin_format`).
+Called by both PIN-validating Connect applets (attempt 1 and attempt 2) in the App Bazaar flow. Both use the same endpoint — the flow structure enforces the 2-attempt cap.
 
-**Response shape (success — PIN matched):**
+**Exotel-sent query parameters** — standard set (same as API 1) PLUS:
+
+| Parameter | Notes |
+|---|---|
+| `digits` | The 5 digits the caller entered on the upstream Gather applet. **⚠ CRITICAL: this value is wrapped in literal double-quotes by Exotel.** Per Gather docs: *"This parameter comes with a double quote (") before and after the number. You'll have to trim() this parameter for double quotes (") to get the actual digits."* Backend MUST strip `"` before validating. |
+
+**Backend logic:**
+
+```python
+def resolve_pin(CallSid, From, digits_raw, To):
+    # CRITICAL: Exotel wraps digits in literal quotes
+    pin = digits_raw.strip('"')
+
+    if not pin.isdigit() or len(pin) != 5:
+        log("pin_attempt_invalid", reason="pin_format")
+        return empty_destination()
+
+    # Read cached identity from API 1 (or API 2 if path went through Unknown branch)
+    user_type = redis.get(f"ivr:user_type:{CallSid}")
+    csp_id    = redis.get(f"ivr:csp_id:{CallSid}")
+
+    # Per G6 — scoping by user_type
+    if user_type == "csp" and csp_id:
+        rows = db.query("""
+            SELECT * FROM table_2
+            WHERE pin = :pin AND side = 'csp' AND csp_id = :csp_id
+              AND expires_at IS NULL
+        """, pin, csp_id)
+    elif user_type == "customer":
+        rows = db.query("""
+            SELECT * FROM table_2
+            WHERE pin = :pin AND side = 'customer' AND customer_mobile = :From
+              AND expires_at IS NULL
+        """, pin, From)
+    else:  # unknown
+        rows = db.query("""
+            SELECT * FROM table_2
+            WHERE pin = :pin AND expires_at IS NULL
+        """, pin)
+
+    if len(rows) == 1:
+        log("pin_attempt_valid", attempt=attempt_number_from_flow_position)
+        return bridge_response(rows[0].other_party_mobile, masked_did=To)
+
+    log("pin_attempt_invalid", reason="no_match" if not rows else "multi_match")
+    return empty_destination()
+```
+
+**Response — bridge case** (PIN matched, scoping passed):
 ```json
 {
   "destination": { "numbers": ["+919812345678"] },
-  "outgoing_phone_number": "<masked_number>",
-  "record": true
+  "outgoing_phone_number": "+91<masked_did>",
+  "record": true,
+  "recording_channels": "dual",
+  "max_ringing_duration": 30,
+  "fetch_after_attempt": false
 }
 ```
 
-**Response shape (failure — PIN invalid or scoping rejected):**
+**Response — no bridge** (PIN invalid, scoping rejected, or format wrong):
 ```json
-{
-  "destination": { "numbers": [] }
-}
+{ "destination": { "numbers": [] } }
 ```
-Empty numbers list triggers Exotel's Connect "Did not Dial" outcome — App Bazaar flow routes to the next Gather (attempt 2) or, on the second Connect's "Did not Dial", to the final Passthru Sync → Switch Case → dead-end greeting.
+Empty `numbers` list triggers Exotel's `"We didn't dial anyone"` transition. App Bazaar routes this to attempt 2's Gather or, on second failure, to the final Passthru Sync → Switch Case → dead-end Greeting.
 
-**Idempotency:** Stateless. Same `(From, CallSid, digits)` always produces the same response. No attempt counter needed in backend — the App Bazaar flow structure enforces the 2-attempt cap (only two Gather→Connect pairs exist).
+**`fetch_after_attempt`:** MUST be `false` (or omitted). With `true`, Exotel would re-fetch this URL on DNP, which we don't want — DNP is a legitimate end-state captured by the Passthru-Async-on-DNP hop.
 
-**PIN scoping (per G6):**
-- **Unknown FROM** (no identity match at API 1) → no scoping; lookup is `WHERE pin = digits AND expires_at IS NULL`. Single match → bridge. Multi-match (extremely unlikely with active+cooldown uniqueness) → no bridge.
-- **Known CSP user** (FROM matched `csp_users.registered_mobile` OR `sim_inventory` at API 1; `csp_id` cached against `CallSid`) → scope to this CSP's tickets: `WHERE pin = digits AND side = 'csp' AND csp_id = :cached_csp_id AND expires_at IS NULL`. Prevents cross-CSP PIN guessing.
-- **Known customer** (rare on Path 3 — customer enters PIN after Table 2 by-FROM returned multiple rows for THEIR mobile) → scope to this customer's tickets: `WHERE pin = digits AND side = 'customer' AND customer_mobile = :from AND expires_at IS NULL`.
+**Idempotency:** Stateless. Same `(From, CallSid, digits)` always produces the same response. No attempt counter in backend; flow structure caps at 2 attempts.
+
+**PIN scoping rules (per G6):**
+
+| Scenario | Scoping query |
+|---|---|
+| **Unknown FROM** (no identity match at API 1; UC 13 colleague case) | No scoping. `WHERE pin = :pin AND expires_at IS NULL`. Single match → bridge. |
+| **Known CSP user** (FROM matched at API 1; `csp_id` in Redis) | Scope to that CSP's tickets: `WHERE pin = :pin AND side = 'csp' AND csp_id = :csp_id AND expires_at IS NULL`. Prevents cross-CSP PIN guessing. |
+| **Known customer** (Path 3 — customer entered PIN after Table 2 returned ≥2 rows for their mobile) | Scope to that customer's tickets: `WHERE pin = :pin AND side = 'customer' AND customer_mobile = :From AND expires_at IS NULL`. |
 
 ### `/audio/deadend` (called by Exotel Playback if dynamic audio URL is supported)
 
@@ -606,7 +845,7 @@ Built on three Exotel applet primitives:
    │ Connected            │ DNP                    │ Did not Dial
    ▼                      ▼                        ▼
 [Passthru Async]      [Passthru Async]      [Passthru Sync — API 2]
-   /log/connected        /log/dnp +              POST /internal/user-identification
+   /log/connected        /log/dnp +              GET /ivr/identify-caller
    → save to DB         missed-call alert            (200 → Switch Case,
                         → save to DB                  404 → fall to Gather)
                                                 ▼
@@ -647,28 +886,38 @@ Built on three Exotel applet primitives:
 
 ### Connect applet config (all 3 Connect instances)
 
-| Field | Value |
+| App Bazaar field | Value |
 |---|---|
 | Mode | Dynamic URL |
 | Primary URL | Backend endpoint (API 1 or API 3) |
-| Fallback URL | Static "service unavailable" greeting |
-| Caller ID | The single bidirectional masked DID |
-| Timeout | 5s (Exotel) — backend target p95 < 200 ms |
-| `fetch_after_attempt` | true — Exotel re-queries on failed dial attempts |
+| Fallback URL | Static greeting MP3 ("service unavailable, please try again later") |
+| Caller ID | The single bidirectional masked DID (overridden per-call by `outgoing_phone_number` in response — Rule 7) |
+| Timeout | 5s — Exotel default. Backend target p95 < 200 ms. |
 
-### Gather applet config (per the screenshots you shared)
+**`fetch_after_attempt`** is a response-field, NOT an App Bazaar config field — backend sets it to `false` (Rule 6).
 
-| Field | Value |
-|---|---|
-| Control method | **Configure using flow builder here** (NOT dynamic URL — flow is static) |
-| Gather prompt | Static Greeting audio (Hindi): *"Please enter your 5-digit PIN"* |
-| Finish Key | `#` |
-| Max Number of Digits | **5** (matches PIN length) |
-| Input timeout | 5 seconds |
-| Repeat the menu | **2 times** if no input given |
-| Repeat prompt | **Different prompt**: *"We did not receive any valid response. Please reshare the PIN"* |
-| When caller entered ≥1 digit | → **Passthru** (forwards digits to API 3 via Connect) |
-| When caller didn't enter anything | → **Greeting** (silently aborted: hangup-on-empty) |
+**Three transition outcomes** to wire in App Bazaar (Rule 4):
+- `"After the call conversation ends"` → Passthru Async (logs `bridge_connected`)
+- `"If nobody answers"` → Passthru Async (logs `bridge_dnp` + fires CleverTap missed-call)
+- `"We didn't dial anyone"` → next applet per flow (Passthru Sync after initial Connect; Gather attempt 2 after first PIN Connect; Passthru Sync after second PIN Connect)
+
+### Gather applet config (per Exotel docs + the App Bazaar screenshots)
+
+| App Bazaar UI label | Exotel API param | Value |
+|---|---|---|
+| Configure params via | — | Flow builder (NOT dynamic URL) |
+| Gather prompt | `gather_prompt` | Static Hindi audio: *"Please enter your 5-digit PIN"* |
+| Finish Key | `finish_on_key` | `#` |
+| Maximum Number of Digits | `max_input_digits` | `5` |
+| Input timeout | `input_timeout` | `5` seconds (Exotel default) |
+| Repeat the menu | `repeat_menu` | `2` times (default is 0 — we override) |
+| Repeat prompt | `repeat_gather_prompt` | Hindi: *"We did not receive any valid response. Please reshare the PIN"* |
+| When caller entered ≥1 digit | (transition) | → **Passthru Async** (logs `pin_entered`) → **Connect** (API 3) |
+| When caller didn't enter anything | (transition) | → **Greeting** (`pin-no-entry.mp3`) → hangup |
+
+**Important nuance:** Gather does NOT validate the PIN. It only collects digits. **PIN validation happens at the next Connect (API 3)** which queries Table 2. If invalid, Connect returns empty destination → "We didn't dial anyone" → next Gather (attempt 2) or final dead-end Switch Case.
+
+**`digits` parameter is quote-wrapped** (Rule 2). API 3 backend MUST `strip('"')`.
 
 **Important nuance on Gather:** Gather does NOT validate the PIN. It only collects digits. **PIN validation happens at the next Connect (API 3)** which checks Table 2. If invalid, Connect's "Did not Dial" branch fires, routing to the next Gather (attempt 2) or to the final dead-end Switch Case.
 
@@ -708,8 +957,8 @@ Sync = backend response determines next applet via Switch Case. Used twice in th
 
 | Passthru Sync point | URL | Switch Case branches |
 |---|---|---|
-| After initial Connect "Did not Dial" | `POST /internal/user-identification` | Customer / CSP / Unknown (Unknown routes to Gather) |
-| After both PIN attempts fail | `POST /internal/user-identification` | Customer / CSP / Unknown (all three route to Greeting → Hangup) |
+| After initial Connect "Did not Dial" | `GET /ivr/identify-caller` | Customer / CSP / Unknown (Unknown routes to Gather) |
+| After both PIN attempts fail | `GET /ivr/identify-caller` | Customer / CSP / Unknown (all three route to Greeting → Hangup) |
 
 **Implementation note:** The same `/internal/user-identification` endpoint serves both calls. Result is cached against `CallSid` in Redis on first call; second call is a Redis read (sub-ms).
 
@@ -1045,12 +1294,16 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | DLT template registration for all SMS variants | Comms / Ops |
 | WhatsApp BSP template approvals | Comms |
 | Retention window for closed-ticket PIN rows (hard-delete) | Tech / Compliance — recommend 90 days |
-| Confirm Exotel Connect-applet supports `action: playback` in dynamic-URL response (skip-Gather mechanism) | Tech + Exotel |
-| Confirm Exotel Playback applet supports dynamic audio URL | Tech + Exotel |
+| **Exotel Auth mechanism** — does Exotel support HMAC signed-payload on outbound webhooks? Header name? Signing algorithm? Until confirmed, fall back to IP allowlist (Exotel publishes their egress IP range). | Tech + Exotel |
+| **Passthru applet timeout** — not documented by Exotel; assume 5s but confirm | Tech + Exotel |
+| **Passthru applet retry behaviour on 5xx** — not documented | Tech + Exotel |
+| **Passthru applet fallback URL** — not documented; configure a static greeting just in case | Tech + Exotel |
+| **Switch Case default/fallback branch** — what happens if no case matches the `select` value? Not documented. | Tech + Exotel |
+| **Disposition webhook contract** — body shape not in any of the 5 applet docs; confirm with Exotel before relying on field names like `BridgedTo` | Tech + Exotel |
 | `sim_inventory` verification flow — OTP at add time vs trust-declare? Self-service or admin-only? Cap on SIMs per CSP? | Ops + Tech |
-| Decide v1 dead-end IVR audio strategy: dynamic URL vs branched Playbacks vs universal message | Solution team + Tech |
-| Exotel shared-secret rotation cadence (default quarterly) | Tech + Security |
-| **HTML update**: redraw end-to-end flowchart for Table-2-first logic; remove daily-rotation language | PM (Ashis) |
+| Audio file owner — record / commission / store the 6 Greeting MP3s (Hindi, 8-bit / 8000 Hz / mono / < 2 MB per Exotel Greeting docs) | Solution team |
+| Exact wording of every Greeting + Gather prompt (Hindi-first) | Solution team |
+| **HTML update**: regenerate end-to-end flowchart (already done in repo); remove daily-rotation language (already done) | PM (Ashis) — done |
 
 ---
 
