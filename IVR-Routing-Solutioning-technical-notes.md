@@ -48,7 +48,7 @@ A **single new service** owns this entire system. Call it `ivr-routing-service` 
 | **Table 1** — active call mapping | Internal DB |
 | **Table 2** — PIN registry | Internal DB |
 | **`sim_inventory`** — CSP SIM → csp_user_id map | Internal DB. Built **fresh** with proper audit logs. (The existing `es-ivr-calling-service` is being discarded as part of this redesign.) |
-| **`user_identification` API** | `GET /ivr/identify-caller` — called by a Passthru Sync applet only after Connect-applet returns empty destination. Returns `{"select": "customer" | "csp" | "unknown"}` with `Content-Type: text/plain` for Switch Case branching. |
+| **`user_identification` API** | `GET /ivr/identify-caller` — called by a Passthru Sync applet only after Connect-applet returns empty destination. Returns one of 5 composite values via `{"select": "..."}` with `Content-Type: text/plain`: `customer_no_pin`, `csp_no_pin`, `customer_with_pin`, `csp_with_pin`, `unknown`. Switch Case routes on the value. |
 | **Exotel-facing endpoints** | `GET /ivr/resolve-caller`, `GET /ivr/resolve-pin`, `GET /audio/deadend`, `POST /log/disposition`, `POST /log/*` |
 | **ES event listener** | Subscribes to `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` + terminal events. Drives Table 2 entry / mobile-update / exit. |
 | **SMS dispatch** | Calls Gupshup (Wiom's SMS provider) for PIN delivery, missed-call alerts, dead-end SMS. |
@@ -82,7 +82,7 @@ One service owns all of this. Deployment, DB, ownership in one place.
 | API | Endpoint | Caller (Exotel applet) | Response format | What it does |
 |---|---|---|---|---|
 | **API 1** | `GET /ivr/resolve-caller` | First **Connect** applet (Dynamic URL) | JSON `{destination, outgoing_phone_number, record, ...}` per [Connect docs](https://support.exotel.com/support/solutions/articles/3000096873). Empty `numbers` array on no-bridge. | Table 1 lookup → if miss, Table 2 by-FROM JOIN with customers / csp_users / sim_inventory. Returns destination if exactly 1 row matches; empty destination otherwise (flow then routes to Passthru Sync). On 0-row case, also pre-calls API 2 logic to cache user_type for the next applet. |
-| **API 2** | `GET /ivr/identify-caller` | **Passthru Sync** applet | `Content-Type: text/plain` body: `{"select": "customer" \| "csp" \| "unknown"}` per [Switch Case docs](https://support.exotel.com/support/solutions/articles/3000052018). HTTP 200 always. | Pure identity resolution. Matches FROM against `customers.registered_mobile`, `csp_users.registered_mobile`, `sim_inventory.mobile` (WHERE removed_at IS NULL). Caches result in Redis keyed on `CallSid` for the second invocation after PIN exhaustion. |
+| **API 2** | `GET /ivr/identify-caller` | **Passthru Sync** applet | `Content-Type: text/plain` body: `{"select": "<value>"}` per [Switch Case docs](https://support.exotel.com/support/solutions/articles/3000052018), where `<value>` is one of `customer_no_pin`, `csp_no_pin`, `customer_with_pin`, `csp_with_pin`, `unknown`. HTTP 200 always. | Composite discriminator. Reads `user_type` + `table_2_row_count` from the Redis cache stashed by API 1; returns the combined value. Falls back to a fresh identity + count query if cache is missing. Same endpoint is called both at the initial empty-destination hop AND post-PIN-exhaustion — flow position decides which Switch Case interprets the value. |
 | **API 3** | `GET /ivr/resolve-pin` | PIN-validating **Connect** applet (×2 — attempt 1 and attempt 2) | Same JSON shape as API 1. Empty `numbers` if PIN invalid. | **MUST `strip('"')` from `digits`** (Exotel wraps it). Table 2 lookup by PIN, with scoping per cached `user_type`. Returns destination on single match; empty otherwise. Stateless — no attempt counter (flow structure caps at 2). |
 
 ### Five data structures the service owns
@@ -142,26 +142,26 @@ Every successful call flows through exactly one path:
 **Trigger:** Table 1 miss → **Table 2 lookup by FROM** returns exactly 1 active row → bridge to `other_party_mobile` on that row.
 **Outcome:** Seamless bridge, no PIN.
 **Covers:** UC 03, UC 05, UC 07, UC 09.
-**Note:** No `user_identification` call is made on this path. The Table 2 by-FROM query joins `customers.registered_mobile`, `csp_users.registered_mobile`, and `sim_inventory.mobile` in a single SQL — see Table 2 lookup contracts.
+**Note:** No `user_identification` call is made on this path. The Table 2 by-FROM query resolves identity against `customers`, `csp_users`, and `sim_inventory` in one shot.
 
 ### Path 3 — PIN for multi-ticket disambiguation
-**Trigger:** Table 1 miss → **Table 2 lookup by FROM** returns 2+ active rows → IVR asks for PIN → Table 2 lookup by PIN.
+**Trigger:** Table 1 miss → **Table 2 lookup by FROM** returns 2+ active rows → empty destination → Passthru Sync → API 2 returns `customer_with_pin` or `csp_with_pin` → IVR asks for PIN → Table 2 lookup by PIN.
 **Outcome:** Bridge to the counterparty identified by the PIN.
 **Covers:** UC 04, UC 06, UC 08, UC 10.
 
 ### Path 4 — PIN for unknown caller
-**Trigger:** Table 1 miss → **Table 2 lookup by FROM returns 0 rows** → `user_identification(FROM)` returns `user_type = unknown` → IVR asks for PIN (caller may hold a forwarded PIN, e.g., UC 13 colleague case) → Table 2 lookup by PIN.
+**Trigger:** Table 1 miss → **Table 2 lookup by FROM returns 0 rows** → empty destination → Passthru Sync → API 2 returns `unknown` (FROM not in identity tables) → IVR asks for PIN (caller may hold a forwarded PIN, e.g., UC 13 colleague case) → Table 2 lookup by PIN.
 **Outcome:** Bridge if PIN valid; dead-end after 2 failed attempts.
 **Covers:** UC 11, UC 12, UC 13.
 
 ### Dead-end (terminal state, not a path)
 **Two ways in:**
-- **(a) Recognised user with 0 active tickets** — Table 2 by-FROM returns 0 rows, `user_identification` recognises FROM as customer or CSP → skip PIN entirely via backend directive in `/ivr/resolve-caller` response → Playback dead-end.
-- **(b) PIN exhausted** — 2 failed attempts on Path 3 or Path 4 → Playback dead-end. user_type already cached against `CallSid` from the upstream `user_identification` call.
+- **(a) Recognised user with 0 active tickets** — Table 2 by-FROM returns 0 rows AND `user_identification` recognises FROM as customer or CSP → API 2 returns `customer_no_pin` or `csp_no_pin` → Switch Case routes directly to Greeting (skips PIN entirely).
+- **(b) PIN exhausted** — 2 failed attempts on Path 3 or Path 4 → Passthru Sync → API 2 returns the same 5-value discriminator → Switch Case routes to Greeting + Hangup. No PIN retry from this branch.
 
 **Outcome:** Graceful-fallback IVR + dead-end SMS:
-- `user_type == 'customer'` → call centre **88803 22222**.
-- `user_type ∈ {csp, unknown}` → trust line **78368 11111**.
+- `customer_no_pin` / `customer_with_pin` → call centre **88803 22222**.
+- `csp_no_pin` / `csp_with_pin` / `unknown` → trust line **78368 11111**.
 
 ---
 
@@ -318,15 +318,19 @@ Earlier iterations had a Table 3 — `customer_mobile → technician_mobile` —
 
 ### Purpose
 
-Called by a **Passthru Sync** applet whenever the upstream Connect applet returned an empty destination (`"We didn't dial anyone"`). The next applet (Switch Case) reads this API's response body to branch into Customer / CSP / Unknown dead-end flows OR into PIN Gather (Unknown path).
+Called by a **Passthru Sync** applet whenever the upstream Connect applet returned an empty destination (`"We didn't dial anyone"`). The next applet (Switch Case) reads this API's response body to route the caller. The response is a **composite discriminator** — combining (a) the user_type and (b) whether the caller has any active PIN/ticket — into a single `{"select": "..."}` value that drives a 5-branch Switch Case.
 
 **Fires twice in the flow:**
-1. After the initial Connect (API 1) returned empty destination — drives the first Switch Case.
+1. After the initial Connect (API 1) returned empty destination — drives the first Switch Case (dead-end vs PIN Gather).
 2. After both PIN-validating Connect attempts (API 3) failed — drives the final Switch Case at the dead-end.
 
-### Why this isn't called on every Table-1-miss
+### Why API 2 must encode the ticket count, not just user_type
 
-Most Table-1-miss calls already determine user_type during the Table 2 by-FROM JOIN (the `matched_side` column from API 1). API 2 fires only when API 1 could NOT determine user_type — i.e., the 0-row case — or when the Redis cache has expired between PIN attempts.
+API 1 returns empty destination ("Did not Dial") in two distinct cases:
+- **Table 2 by-FROM = 0 rows** → caller is recognised but has no active ticket, OR caller is an unknown FROM.
+- **Table 2 by-FROM ≥ 2 rows** → caller is recognised AND has multiple active tickets — PIN must disambiguate.
+
+If the Switch Case branched only on user_type (customer / csp / unknown), recognised multi-ticket callers would be routed to the "no active ticket" dead-end — wrong. API 2 therefore returns one of 5 composite values so Switch Case can route correctly. The ticket-count signal is stashed by API 1 against `CallSid` (alongside `user_type` and `csp_id`) and read by API 2 — no separate API call.
 
 ### Endpoint
 
@@ -353,26 +357,33 @@ Switch Case applet's [docs](https://support.exotel.com/support/solutions/article
 - **Content-Type:** `text/plain` (verbatim from Switch Case docs)
 - **Body:** `{"select": "<branch_name>"}`
 
-Switch Case in App Bazaar must be configured with **three case names matching exactly** (lowercase, exact string match):
-- `customer`
-- `csp`
-- `unknown`
+Switch Case in App Bazaar must be configured with **five case names matching exactly** (lowercase, exact string match):
+
+| `{"select": "..."}` | Trigger condition | Routes to |
+|---|---|---|
+| `customer_no_pin` | user_type = customer AND Table 2 by-FROM count = 0 | Greeting (call centre 88803 22222) → Hangup |
+| `csp_no_pin` | user_type = csp AND Table 2 by-FROM count = 0 | Greeting (trust line 78368 11111) → Hangup |
+| `customer_with_pin` | user_type = customer AND Table 2 by-FROM count ≥ 2 | Gather attempt 1 (PIN disambiguates which ticket) |
+| `csp_with_pin` | user_type = csp AND Table 2 by-FROM count ≥ 2 | Gather attempt 1 (PIN disambiguates which ticket) |
+| `unknown` | user_type = unknown (FROM not in identity tables) | Gather attempt 1 (caller may hold forwarded PIN — UC 13) |
 
 **Response body shape:**
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/plain
 
-{"select": "customer"}
+{"select": "customer_with_pin"}
 ```
 
-(or `{"select": "csp"}` or `{"select": "unknown"}`)
+(or any of the other 4 values)
+
+**Post-PIN-exhaustion invocation:** Returns the same 5 values, but App Bazaar routes all of them to dead-end Greeting + Hangup (no PIN retry from this branch). Both `customer_no_pin` and `customer_with_pin` map to the same customer-side dead-end greeting; same for the CSP pair.
 
 ### Backend behaviour
 
-- On first invocation: match `From` against `customers.registered_mobile`, `csp_users.registered_mobile`, and `sim_inventory.mobile` (active rows only). Set `user_type` to `customer`, `csp`, or `unknown` accordingly.
-- Cache the result against `CallSid` (~10 min TTL) so the second invocation (after PIN exhaustion) is a sub-ms read.
-- Return the Switch Case response (see Response section above).
+- API 1 stashes both `user_type` (resolved during Table 2 by-FROM identity resolution) and the **Table 2 by-FROM row count** against `CallSid` (~10 min TTL).
+- API 2 reads both values from cache and returns the composite discriminator. No fresh DB query needed in the hot path — sub-ms read.
+- If the cache is missing (e.g., cross-region failover), API 2 falls back to resolving `From` against `customers.registered_mobile`, `csp_users.registered_mobile`, `sim_inventory.mobile` AND issuing a fresh Table 2 by-FROM count query.
 
 ### Error handling
 
@@ -384,11 +395,11 @@ Content-Type: text/plain
 {"select": "unknown"}
 ```
 
-**Why 200 + unknown, not 5xx:** Exotel's Passthru fallback behaviour on 5xx is not documented; the safe path is to always return 200 and route the caller to the most generic dead-end (trust line) rather than risk a flow abort.
+**Why 200 + unknown, not 5xx:** Exotel's Passthru fallback behaviour on 5xx is not documented; the safe path is to always return 200 and route the caller to the most generic dead-end (trust line) rather than risk a flow abort. `unknown` is the safest fallback because it routes to PIN Gather first — if the caller holds a PIN, they still get through; if not, they reach the trust-line dead-end after retries.
 
 ### Multi-match enforcement
 
-A FROM that matches both a customer AND a CSP record is forbidden by data-model invariant (HTML assumptions). The API should `LOG.error` + return `{"select": "customer"}` (customer takes precedence as the more user-visible case). Operational dashboard surfaces these for cleanup.
+A FROM that matches both a customer AND a CSP record is forbidden by data-model invariant (HTML assumptions). The API should `LOG.error` + return the customer-side value (`customer_with_pin` or `customer_no_pin` per ticket count) — customer takes precedence as the more user-visible case. Operational dashboard surfaces these for cleanup.
 
 ### Caching
 
@@ -500,10 +511,10 @@ Called by the **first Connect applet** in the App Bazaar flow on Dynamic URL mod
 **Backend logic:**
 1. Log `dial_received` (CallSid, From, To).
 2. **Table 1 lookup** by `From`. If active row found → return bridge response with destination = Table 1's `to`. Done.
-3. **Table 2 by-FROM lookup** (the JOIN-at-call-time SQL). Branch on row count:
-   - **1 row** → cache `user_type` + `csp_id` (if csp) against `CallSid`. Return bridge response with destination = `rows[0].other_party_mobile`. (Path 2)
-   - **≥ 2 rows** → cache `user_type` + `csp_id` against `CallSid`. Return **empty destination**. (Path 3 — flow proceeds to Passthru Sync → Switch Case → Gather)
-   - **0 rows** → call `user_identification(From)`, cache the result, return **empty destination**. (Switch Case on the next applet decides the dead-end branch or Gather)
+3. **Table 2 by-FROM lookup.** Resolve `From` against `customers`, `csp_users`, and `sim_inventory`; count active Table 2 rows on either side. **Stash `user_type` + `csp_id` (if csp) + `table_2_row_count` against `CallSid`** — API 2 reads all three on the Passthru Sync hop. Branch on row count:
+   - **1 row** → return bridge response with destination = `rows[0].other_party_mobile`. (Path 2)
+   - **≥ 2 rows** → return **empty destination**. (Path 3 — flow proceeds to Passthru Sync → Switch Case `customer_with_pin` or `csp_with_pin` → Gather)
+   - **0 rows** → call `user_identification(From)`, cache the result, return **empty destination**. (Switch Case routes to `customer_no_pin` / `csp_no_pin` → Greeting, or `unknown` → Gather)
 
 **Response — bridge case** (Table 1 hit OR Table 2 by-FROM = 1):
 ```json
@@ -521,7 +532,7 @@ Called by the **first Connect applet** in the App Bazaar flow on Dynamic URL mod
 ```json
 { "destination": { "numbers": [] } }
 ```
-Empty `numbers` array triggers Exotel's `"We didn't dial anyone"` transition. The App Bazaar flow routes this to the **Passthru Sync (API 2)**, which returns the user_type for Switch Case to branch on.
+Empty `numbers` array triggers Exotel's `"We didn't dial anyone"` transition. The App Bazaar flow routes this to the **Passthru Sync (API 2)**, which returns the 5-value composite discriminator (`customer_no_pin` / `csp_no_pin` / `customer_with_pin` / `csp_with_pin` / `unknown`) for Switch Case to branch on.
 
 **Status code:** Always **200**. Non-200 makes Exotel fall to the Fallback URL (a static "service unavailable" greeting) — we want to keep the flow on the happy path even on backend errors, so return 200 with empty destination on internal failures.
 
@@ -657,43 +668,51 @@ Built on three Exotel applet primitives:
 │                                                  │
 │ Backend (single combined lookup):                │
 │   • Table 1 by FROM                              │
-│   • Table 2 by-FROM (JOIN customers / csp_users  │
-│     / sim_inventory)                             │
+│   • Table 2 by-FROM (against customers /         │
+│     csp_users / sim_inventory)                   │
 │   • If either returns 1 → destination            │
 │   • Else → empty destination (Did not Dial)      │
+│   • Stashes user_type + Table-2-row-count        │
+│     against CallSid                              │
 └──────────────────────────────────────────────────┘
    │ Connected            │ DNP                    │ Did not Dial
    ▼                      ▼                        ▼
 [Passthru Async]      [Passthru Async]      [Passthru Sync — API 2]
    /log/connected        /log/dnp +              GET /ivr/identify-caller
-   → save to DB         missed-call alert            (200 → Switch Case,
-                        → save to DB                  404 → fall to Gather)
+   → save to DB         missed-call alert            returns one of 5 values:
+                        → save to DB                 customer_no_pin / csp_no_pin /
+                                                     customer_with_pin / csp_with_pin /
+                                                     unknown
                                                 ▼
-                                       ┌─ Customer ─→ Greeting (call 88803 22222) → Hangup
-                                       ├─ CSP       ─→ Greeting (call 78368 11111) → Hangup
-                                       └─ Unknown   ─→ Gather (PIN attempt 1)
-                                                       │
-                                                       ▼ entered → [Connect — API 3]
-                                                       │           GET /ivr/resolve-pin
-                                                       │           • Table 2 by PIN
-                                                       │           • Scoped if known CSP
-                                                       │
-                                                       │ Connected → Passthru Async → DB
-                                                       │ DNP       → Passthru Async + missed-call → DB
-                                                       │ Did not Dial → Gather (PIN attempt 2)
-                                                       │                 │
-                                                       │                 ▼ entered → Connect — API 3 again
-                                                       │                              │
-                                                       │                              │ Connected → Passthru Async → DB
-                                                       │                              │ DNP       → Passthru Async + missed-call → DB
-                                                       │                              │ Did not Dial → Passthru Sync (API 2 again)
-                                                       │                              │                ▼
-                                                       │                              │            Switch Case
-                                                       │                              │              ├─ Customer → Greeting (Open app or call 88803 22222) → Hangup
-                                                       │                              │              ├─ CSP      → Greeting (Open app or call 78368 11111) → Hangup
-                                                       │                              │              └─ Unknown  → Greeting (call 78368 11111) → Hangup
-                                                       │                 (no entry → Hangup)
-                                                       (no entry → Greeting + Hangup)
+                                       ┌─ customer_no_pin ──→ Greeting (call 88803 22222) → Hangup
+                                       ├─ csp_no_pin       ──→ Greeting (call 78368 11111) → Hangup
+                                       ├─ customer_with_pin ─→ Gather (PIN attempt 1)
+                                       ├─ csp_with_pin     ──→ Gather (PIN attempt 1)
+                                       └─ unknown          ──→ Gather (PIN attempt 1)
+                                                                  │
+                                                                  ▼ entered → [Connect — API 3]
+                                                                  │           GET /ivr/resolve-pin
+                                                                  │           • Table 2 by PIN
+                                                                  │           • Scoped if known CSP
+                                                                  │
+                                                                  │ Connected → Passthru Async → DB
+                                                                  │ DNP       → Passthru Async + missed-call → DB
+                                                                  │ Did not Dial → Gather (PIN attempt 2)
+                                                                  │                 │
+                                                                  │                 ▼ entered → Connect — API 3 again
+                                                                  │                              │
+                                                                  │                              │ Connected → Passthru Async → DB
+                                                                  │                              │ DNP       → Passthru Async + missed-call → DB
+                                                                  │                              │ Did not Dial → Passthru Sync (API 2 again)
+                                                                  │                              │                ▼
+                                                                  │                              │            Switch Case (5 branches)
+                                                                  │                              │              ├─ customer_no_pin  ─→ Greeting (Open app or call 88803 22222) → Hangup
+                                                                  │                              │              ├─ customer_with_pin → Greeting (Open app or call 88803 22222) → Hangup
+                                                                  │                              │              ├─ csp_no_pin       ─→ Greeting (Open app or call 78368 11111) → Hangup
+                                                                  │                              │              ├─ csp_with_pin    ──→ Greeting (Open app or call 78368 11111) → Hangup
+                                                                  │                              │              └─ unknown         ──→ Greeting (call 78368 11111) → Hangup
+                                                                  │                 (no entry → Hangup)
+                                                                  (no entry → Greeting + Hangup)
 ```
 
 ### The three backend APIs (only three needed)
@@ -701,7 +720,7 @@ Built on three Exotel applet primitives:
 | API | Method | Endpoint | Called by | Returns |
 |---|---|---|---|---|
 | **API 1** | GET | `/ivr/resolve-caller` | Initial Connect applet | Destination if Table 1 hits OR Table 2 by-FROM returns exactly 1 row; empty otherwise. Stashes `user_type` + `csp_id` against `CallSid` in Redis for downstream applets. |
-| **API 2** | POST | `/internal/user-identification` | Passthru Sync on "Did not Dial" + on PIN-exhausted dead-end | `{user_type, user_id}`. 200 on customer / csp / unknown match (Switch Case routes on `user_type`); 404 only on a hard backend error (then App Bazaar falls through to Gather as a graceful fallback). |
+| **API 2** | GET | `/ivr/identify-caller` | Passthru Sync on "Did not Dial" + on PIN-exhausted dead-end | `{"select": "..."}` with `Content-Type: text/plain` — one of **5 composite values**: `customer_no_pin`, `csp_no_pin`, `customer_with_pin`, `csp_with_pin`, `unknown`. Switch Case routes on the value. Always 200; fallback to `unknown` on backend error. |
 | **API 3** | GET | `/ivr/resolve-pin` | Each PIN-validation Connect applet | Destination if PIN matches an active Table 2 row (and CSP scoping passes when applicable); empty otherwise. |
 
 ### Connect applet config (all 3 Connect instances)
@@ -747,12 +766,12 @@ Static audio files (one per dead-end variant — Hindi):
 
 | Greeting | Audio content | When played |
 |---|---|---|
-| `customer-no-active-ticket.mp3` | "You do not have any active ticket. To reach our customer care, please call 88803 22222." | After first Passthru Sync, Switch Case = Customer |
-| `csp-no-active-ticket.mp3` | "You do not have any active ticket. To reach Wiom partner support, please call 78368 11111." | After first Passthru Sync, Switch Case = CSP |
+| `customer-no-active-ticket.mp3` | "You do not have any active ticket. To reach our customer care, please call 88803 22222." | After first Passthru Sync, Switch Case = `customer_no_pin` |
+| `csp-no-active-ticket.mp3` | "You do not have any active ticket. To reach Wiom partner support, please call 78368 11111." | After first Passthru Sync, Switch Case = `csp_no_pin` |
 | `pin-no-entry.mp3` | "We did not receive any input. Goodbye." | When Gather → "no entry" path |
-| `customer-pin-exhausted.mp3` | "Please open the Wiom app or call 88803 22222." | After PIN attempts exhausted, Switch Case = Customer |
-| `csp-pin-exhausted.mp3` | "Please open the Wiom partner app or call 78368 11111." | After PIN attempts exhausted, Switch Case = CSP |
-| `unknown-pin-exhausted.mp3` | "Please call 78368 11111 for assistance." | After PIN attempts exhausted, Switch Case = Unknown |
+| `customer-pin-exhausted.mp3` | "Please open the Wiom app or call 88803 22222." | After PIN attempts exhausted, Switch Case = `customer_no_pin` or `customer_with_pin` |
+| `csp-pin-exhausted.mp3` | "Please open the Wiom partner app or call 78368 11111." | After PIN attempts exhausted, Switch Case = `csp_no_pin` or `csp_with_pin` |
+| `unknown-pin-exhausted.mp3` | "Please call 78368 11111 for assistance." | After PIN attempts exhausted, Switch Case = `unknown` |
 
 All audio files hosted on a CDN URL. The **exact wording is owned by the Solutions team** (see Open TBDs).
 
@@ -773,14 +792,20 @@ Each endpoint writes one row to `call_audit_logs` (the new audit table) AND fire
 
 ### Passthru Sync config (decision endpoints)
 
-Sync = backend response determines next applet via Switch Case. Used twice in the flow:
+Sync = backend response determines next applet via Switch Case. Used twice in the flow. Both invocations call the same `GET /ivr/identify-caller` endpoint and return one of 5 composite values; the App Bazaar Switch Case wires them to different next applets depending on flow position:
 
-| Passthru Sync point | URL | Switch Case branches |
+| Passthru Sync point | Switch Case branch | Next applet |
 |---|---|---|
-| After initial Connect "Did not Dial" | `GET /ivr/identify-caller` | Customer / CSP / Unknown (Unknown routes to Gather) |
-| After both PIN attempts fail | `GET /ivr/identify-caller` | Customer / CSP / Unknown (all three route to Greeting → Hangup) |
+| **After initial Connect "Did not Dial"** | `customer_no_pin` | Greeting (no active ticket — call 88803 22222) → Hangup |
+| | `csp_no_pin` | Greeting (no active ticket — call 78368 11111) → Hangup |
+| | `customer_with_pin` | Gather attempt 1 (PIN prompt) |
+| | `csp_with_pin` | Gather attempt 1 (PIN prompt) |
+| | `unknown` | Gather attempt 1 (PIN prompt — may hold forwarded PIN) |
+| **After both PIN attempts fail** | `customer_no_pin` / `customer_with_pin` | Greeting (Open app or call 88803 22222) → Hangup |
+| | `csp_no_pin` / `csp_with_pin` | Greeting (Open app or call 78368 11111) → Hangup |
+| | `unknown` | Greeting (call 78368 11111) → Hangup |
 
-**Implementation note:** The same `/internal/user-identification` endpoint serves both calls. Result is cached against `CallSid` in Redis on first call; second call is a Redis read (sub-ms).
+**Implementation note:** The same `/ivr/identify-caller` endpoint serves both calls. API 1 already stashed `user_type` + Table-2-by-FROM row count against `CallSid`; API 2 just reads the cache and assembles the 5-value discriminator. Second invocation (after PIN exhaustion) reads the same cache — sub-ms.
 
 ### Account-level disposition webhook
 
@@ -1040,6 +1065,7 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **Single masked number** (not MN1/MN2) | Removes wrong-direction-dial failure. Today CSPs see MN1 in call log and try to dial back — drops because MN1 is one-way. |
 | **Table 2 by-FROM is the primary lookup at Table 1 miss** (not user_identification) | Table 2 itself encodes everything we need: caller identity (matches `customer_mobile` / `csp_user_id` via JOIN with sim_inventory + registered_mobile) AND counterparty (`other_party_mobile` on the row). No separate identity API on the hot path. Single SQL with JOINs returns 0/1/many rows, branching the entire flow. (Earlier draft had `user_identification` called on every Table-1 miss — that was over-engineered.) |
 | **`user_identification` API fires ONLY when Table 2 by-FROM returns 0 rows** | A 0-row result means either (a) recognised user with no active ticket, or (b) unknown FROM. Distinguishing the two requires identity resolution. user_identification answers that narrow question — and skips PIN entirely for the (a) case (saving ~25 s of doomed PIN entry). Not called on bridging or PIN-prompt paths — they already know the user from Table 2 rows. |
+| **API 2 returns a 5-value composite discriminator, not just user_type** | The Switch Case at the post-Connect-empty-destination hop must distinguish FOUR outcomes for recognised callers: (no active ticket × customer/csp = dead-end) and (≥ 2 active tickets × customer/csp = PIN gather). A 3-value user_type alone collapses these — sending recognised multi-ticket callers to the wrong dead-end. The composite values (`customer_no_pin` / `csp_no_pin` / `customer_with_pin` / `csp_with_pin` / `unknown`) encode both user_type and ticket-count signal in one applet hop; API 1 already stashed both against `CallSid`. Alternative (extra Passthru after Switch Case) was rejected on latency grounds. |
 | **Single `ivr-routing-service` owns the entire system** | Tables 1+2, sim_inventory, user_identification, Exotel surface, ES listener, SMS dispatch, CleverTap firing, maskedCallAvailable derivation. Avoids cross-service latency on the hot path; one team, one DB, one deployment. Split later if scale demands it. |
 | **Discard `es-ivr-calling-service`, build sim_inventory fresh** | Existing service was a thin wrapper around the IVR microservice with no audit logging. Starting fresh inside `ivr-routing-service` gives us proper add/remove audit, consistent ownership, and removes the integration ambiguity entirely. |
 | **Skip-Gather via backend directive** in `/ivr/resolve-caller` response | When user_identification says "recognised, 0 tickets", the resolve-caller response is `action: "playback"` — Exotel honours it and routes directly to the dead-end Playback applet. Cleaner than configuring a separate branching Passthru applet. **Depends on Exotel Connect-applet supporting `action: playback` in dynamic-URL responses — confirm with Exotel before locking.** |

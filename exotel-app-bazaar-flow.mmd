@@ -11,19 +11,20 @@ flowchart TD
     C1 -->|DNP — didn't pick| PA2["Passthru Async<br/><i>missed-call hook fires here</i>"]:::passthru
     PA2 --> DB2[(Data saved in DB)]:::store
 
-    C1 -->|Did not Dial| PS1["<b>Passthru Sync — API 2</b><br/>user_identification"]:::sync
+    C1 -->|Did not Dial| PS1["<b>Passthru Sync — API 2</b><br/>user_identification<br/>+ ticket-count check"]:::sync
 
-    %% Switch Case after first user_identification
-    PS1 -->|200| SC1{Switch Case<br/>user_type?}:::switch
-    PS1 -->|404| G1
+    %% Switch Case after first user_identification — 5 branches
+    PS1 --> SC1{Switch Case<br/>user_type + has PIN?}:::switch
 
-    SC1 -->|Customer| GR1["Greeting<br/>No active ticket<br/>→ call 88803 22222"]:::greeting
+    SC1 -->|customer_no_pin| GR1["Greeting<br/>No active ticket<br/>→ call 88803 22222"]:::greeting
     GR1 --> HU1([Hangup]):::hangup
 
-    SC1 -->|CSP| GR2["Greeting<br/>No active ticket<br/>→ call 78368 11111"]:::greeting
+    SC1 -->|csp_no_pin| GR2["Greeting<br/>No active ticket<br/>→ call 78368 11111"]:::greeting
     GR2 --> HU2([Hangup]):::hangup
 
-    SC1 -->|Unknown| G1["<b>Gather — attempt 1</b><br/>Prompt for PIN"]:::gather
+    SC1 -->|customer_with_pin| G1["<b>Gather — attempt 1</b><br/>Prompt for PIN"]:::gather
+    SC1 -->|csp_with_pin| G1
+    SC1 -->|unknown| G1
 
     %% PIN attempt 1
     G1 -->|No entry| GR3["Greeting<br/>You did not enter anything"]:::greeting
@@ -50,17 +51,19 @@ flowchart TD
     C3 -->|DNP| PA6["Passthru Async<br/><i>missed-call hook fires here</i>"]:::passthru
     PA6 --> DB6[(Data saved in DB)]:::store
 
-    %% Final dead-end after PIN exhaustion
-    C3 -->|Did not Dial| PS2["<b>Passthru Sync — API 2 again</b><br/>user_identification"]:::sync
-    PS2 --> SC2{Switch Case<br/>user_type?}:::switch
+    %% Final dead-end after PIN exhaustion — 5 branches (no PIN retry from here)
+    C3 -->|Did not Dial| PS2["<b>Passthru Sync — API 2 again</b><br/>user_identification<br/>+ ticket-count check"]:::sync
+    PS2 --> SC2{Switch Case<br/>user_type + has PIN?}:::switch
 
-    SC2 -->|Customer| GR4["Greeting<br/>Open the app or<br/>call 88803 22222"]:::greeting
+    SC2 -->|customer_no_pin| GR4["Greeting<br/>Open the app or<br/>call 88803 22222"]:::greeting
+    SC2 -->|customer_with_pin| GR4
     GR4 --> HU5([Hangup]):::hangup
 
-    SC2 -->|CSP| GR5["Greeting<br/>Open the app or<br/>call 78368 11111"]:::greeting
+    SC2 -->|csp_no_pin| GR5["Greeting<br/>Open the app or<br/>call 78368 11111"]:::greeting
+    SC2 -->|csp_with_pin| GR5
     GR5 --> HU6([Hangup]):::hangup
 
-    SC2 -->|Unknown| GR6["Greeting<br/>call 78368 11111"]:::greeting
+    SC2 -->|unknown| GR6["Greeting<br/>call 78368 11111"]:::greeting
     GR6 --> HU7([Hangup]):::hangup
 
     classDef start    fill:#37474f,stroke:#263238,color:#fff
