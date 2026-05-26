@@ -51,8 +51,8 @@ A **single new service** owns this entire system. Call it `ivr-routing-service` 
 | **`user_identification` API** | `GET /ivr/identify-caller` — called by a Passthru Sync applet only after Connect-applet returns empty destination. Returns one of 5 composite values via `{"select": "..."}` with `Content-Type: text/plain`: `customer_no_pin`, `csp_no_pin`, `customer_with_pin`, `csp_with_pin`, `unknown`. Switch Case routes on the value. |
 | **Exotel-facing endpoints** | `GET /ivr/resolve-caller`, `GET /ivr/resolve-pin`, `GET /audio/deadend`, `POST /log/disposition`, `POST /log/*` |
 | **ES event listener** | Subscribes to `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` + terminal events. Drives Table 2 entry / mobile-update / exit. |
-| **SMS dispatch** | Calls Gupshup (Wiom's SMS provider) for PIN delivery, missed-call alerts, dead-end SMS. |
-| **CleverTap firing** | Pushes `missed_call_csp_to_customer` / `missed_call_customer_to_csp` events from the disposition webhook. |
+| **SMS dispatch (inline)** | Calls Gupshup directly for **PIN delivery at ticket-open** and **dead-end SMS** (both fire within the call session and stay on IVR). |
+| **Missed-call domain event** | Emits `ES_CSPIVR_MISSED_CALL_DETECTED` to the bus (topic `csp.ivr.missed-call`). **`csp-notification-service`** consumes and fans out to PN / SMS / WhatsApp. IVR does NOT call CleverTap directly. |
 | **`maskedCallAvailable` derivation** | Writes a boolean column on each ES candidate row on Table 2 row creation / soft-delete. ES drilldown serializers surface it on the DTO to CSP App + Technician App. |
 
 Single service in v1 keeps deployment, ownership, and infra simple. Split is possible later if scale warrants it.
@@ -111,8 +111,8 @@ Plus the corresponding **terminal-state events** for each family (Install: 6 ter
 
 ### Outbound integrations
 
-- **Gupshup** — SMS for PIN delivery at ticket-open; missed-call alerts via CleverTap campaign.
-- **CleverTap** — fired from Passthru-Async-on-DNP with `missed_call_csp_to_customer` / `missed_call_customer_to_csp` events.
+- **Gupshup** — Called inline by IVR for PIN delivery SMS at ticket-open and dead-end SMS at call session end.
+- **`csp-notification-service`** — Owns missed-call notification channel routing (PN / SMS / WA). Consumes `ES_CSPIVR_MISSED_CALL_DETECTED` from the bus and decides recipient channel based on app-install state + user preferences. IVR does NOT call CleverTap / FCM / WA providers directly for missed-call alerts.
 
 ### Definition of "fully functional"
 
@@ -228,14 +228,15 @@ Tech owns the query shapes, joins, and index strategy.
 
 #### Lifecycle
 
-The Call CTA in the CSP App and Technician App is gated by **technician assignment**. Table 2 entry must fire on the same signal that turns the CTA visible, so the PIN is in place the first time the user can tap Call. The exact ES event differs per ticket family — see the next subsection for the per-family wiring.
+**The Call CTA in the CSP App and Customer App is gated by the candidate existing — i.e., from the moment the task is created — NOT by technician assignment.** Table 2 entry fires on the candidate-creation event for each family, with the **OWNING CSP (the Owner / partner account holder) as the default executor**. Technician assignment is an OPTIONAL delegation step that re-points the customer-side bridge target to the technician's mobile. Recall reverts to the Owner. This preserves today's behaviour where Restore tasks allow customer ↔ CSP calling from `PENDING_ACCEPTANCE` — before any technician is delegated.
 
 **Core principle — the PIN is immutable for the ticket's lifetime.** Once issued at ticket-open, the same `(pin, ticket_id, side)` row lives unchanged until ticket close. Reassignments change `other_party_mobile` (and `csp_user_id`) — they do **not** rotate the PIN, because both parties already hold their copy and re-issuing would invalidate everything they have. No daily rotation either; rotation buys little and creates SMS noise.
 
 | Phase | Trigger | Action |
 |---|---|---|
-| **Generation (entry)** | Technician-assignment event from one of the three TAS ESs (Install / Restore / Pickup) — see per-family table below | Create 2 rows for this ticket — one with `side = 'customer'` and `other_party_mobile = technician_mobile`; one with `side = 'csp'` and `other_party_mobile = customer_mobile`. Generate unique 5-digit PINs (see PIN generation below). Fire customer-side SMS **once**. Surface CSP-side PIN on the ticket card. |
-| **Update (reassignment) — mobile only** | Same technician-assignment event re-fired with a new `executor_id` (or ES candidate replaced via reassign signal — see per-family table) | Update both rows for this ticket: **rewrite `other_party_mobile` on the customer-side row** with the new technician's mobile; **rewrite `csp_user_id` (and `csp_id` if cross-org)** on the CSP-side row. **PIN is NOT rotated.** Both parties keep the PINs they already hold; the bridge target changes underneath. Fire PN to the new technician on the ticket card so they see the existing PIN. No new SMS to customer. |
+| **Allocation (entry)** | Family-specific **candidate-creation** event (Install: `ES_INSTALL_CANDIDATE_CREATED`; Restore: `ES_RESTORE_CANDIDATE_CREATED`; Pickup: `ES_NBREC_RECOVERY_TASK_ASSIGNED`) | Create 2 rows for this ticket. Resolve Owner via `csp-gateway-service GET /api/internal/csp-users?csp_id={candidate.csp_id}&role=owner` → read `csp_user_id` + `registered_mobile`. Customer-side row: `other_party_mobile = owner.registered_mobile`. CSP-side row: `other_party_mobile = customer.registered_mobile`, `csp_user_id = owner.csp_user_id`. Generate unique 5-digit PINs. Fire customer-side SMS **once**. Surface CSP-side PIN on the Owner's ticket card. |
+| **Mobile-only update — technician delegation** | Install / Restore `*_TECHNICIAN_ASSIGNED` (with `executor_id`), or Pickup `ES_NBREC_TASK_ASSIGNED` (with team-member id) | Universal update path. Resolve executor mobile via `csp-gateway-service GET /api/internal/csp-users/{executor_id}`. **Rewrite `other_party_mobile` on the customer-side row** with the resolved mobile; **rewrite `csp_user_id` on the CSP-side row**. **PIN is NOT rotated.** PN to new technician on the ticket card so they see the existing PIN. No new SMS to customer. |
+| **Mobile-only update — recall to Owner** | Restore: `ES_RESTORE_TASK_RECALLED` (CSP action `RECALL_TASK`). Install: same `ES_INSTALL_TECHNICIAN_ASSIGNED` re-fires with `executor_id = Owner` and `is_self_assigned = true` (verified via `csp-tas-service.InstallationStateMachine` line 182: `TECHNICIAN_ASSIGNED + ASSIGN_TECHNICIAN → TECHNICIAN_ASSIGNED // reassign`). Pickup: same `ES_NBREC_TASK_ASSIGNED` re-fires with `executor_id = Owner`. | Revert customer-side `other_party_mobile` to Owner's mobile via the same gateway lookup. CSP-side `csp_user_id` reverts to Owner. PIN preserved. |
 | **Lookup (by FROM)** | Primary call-routing entry — fires on every Table 1 miss | See contract above. |
 | **Lookup (by PIN)** | IVR PIN flow (Paths 3, 4) | See contract above. |
 | **Soft-delete (exit)** | Ticket transitions to a **terminal state** in its ES — see per-family table below | Set `expires_at = now()`, `cooldown_until = now() + P_PIN_COOLDOWN_WINDOW` on both rows. Excluded from active lookups thereafter; PIN value stays reserved (not reissuable) until `cooldown_until`. |
@@ -244,20 +245,29 @@ The Call CTA in the CSP App and Technician App is gated by **technician assignme
 
 **Cooldown window (`P_PIN_COOLDOWN_WINDOW`) — default 90 days.** Sized against today's Wiom volume (~10k active tickets × 2 PINs = ~20k active; ~500 closing/day × 90 = ~45k cooldown; total ~65k of 100k pool — comfortable). If Wiom volume grows 3×+, escalate to 6-digit PINs (1M pool) — see Deferred work.
 
-#### Per-ticket-family wiring (entry / update / exit signals)
+#### Call routing behaviour by execution phase
 
-The Call CTA is visible after technician assignment for **all three** TAS execution services. Subscribe to these CEF events on the event bus — Table 2's lifecycle manager (call it `pin-registry-service` or `ivr-pin-listener`) is a fan-in consumer.
+| Execution phase | Customer-initiated call bridges to | Why |
+|---|---|---|
+| **Candidate created, no technician yet** (Restore PENDING_ACCEPTANCE / ACCEPTED; Install ACCEPTED / AWAITING_TECHNICIAN_ASSIGNMENT; Pickup PENDING_PICKUP self-assigned) | **OWNER** | Default executor at allocation. Preserves today's Restore behaviour where customer can call CSP from the moment the complaint task is created. |
+| **Technician delegated** (Restore ASSIGNED_TECHNICIAN; Install TECHNICIAN_ASSIGNED with `is_self_assigned=false`; Pickup delegated) | **TECHNICIAN** | Mobile-update event re-pointed customer-side to the technician. |
+| **Recalled to Owner** (Restore RECALL_TASK; Install re-assign with `is_self_assigned=true`; Pickup un-assign back to CSP) | **OWNER** | Revert path. PIN preserved across both transitions — neither party needs a new credential. |
 
-| Family | ES (source of truth) | **Entry** — write 2 rows | **Update** — rewrite mobile + rotate PIN | **Exit** — soft-delete |
+#### Per-ticket-family wiring (allocate / update / exit signals)
+
+Subscribe to these CEF events on the event bus — Table 2's lifecycle manager (call it `pin-registry-service` or `ivr-pin-listener`) is a fan-in consumer.
+
+| Family | ES (source of truth) | **Allocate** — write 2 rows | **Update** — mobile only, PIN preserved | **Exit** — soft-delete |
 |---|---|---|---|---|
-| **Install** | `es-installation-service-prd-v2.3.yaml` | `ES_INSTALL_TECHNICIAN_ASSIGNED` (state → `TECHNICIAN_ASSIGNED`; sets `executor_id`, `is_self_assigned`). Bridged to legacy RMQ wire_key `INSTALLATION_SLOT_ASSIGN` via `BookingInstallationEventBridge.onTechnicianAssigned` after commit — payload carries technician name + phone fetched from `csp-gateway-service GET /api/internal/csp-users/{id}`. | Same `ES_INSTALL_TECHNICIAN_ASSIGNED` event re-fires with a new `executor_id` when the CSP picks a different technician (state already `TECHNICIAN_ASSIGNED` → idempotent re-emit per `trigger_mutation_matrix.technician_assigned`). Listener compares stored `csp_user_id` vs payload; if different, **rewrite `other_party_mobile` + `csp_user_id` on both rows. PIN is NOT touched.** PN to new technician so they see the existing PIN on their ticket card; no new SMS to customer. | Any transition to terminal state: `INSTALLATION_REPORTED_FAILED`, `CONNECTION_ACTIVE`, `CANCELLED_BY_CUSTOMER`, `CANCELLED_BY_UPSTREAM`, `INSTALLATION_CANCELLED_ONSITE`, `INSTALLATION_EXPIRED`. Soft-delete + set `cooldown_until`. Subscribe to the corresponding `ES_INSTALL_*` events. |
-| **Restore** | `es-restore-prd-v1.4.yaml` | `ES_RESTORE_TECHNICIAN_ASSIGNED` (state `ASSIGNED_TECHNICIAN`, fired by CSP action `ASSIGN_TECHNICIAN`, sets `assigned_technician_id`). | `TASK_AUTO_REASSIGNED` upstream signal causes the original candidate to be `CANCELLED` and a new candidate to be inserted for the new executor — when the new CSP runs `ASSIGN_TECHNICIAN`, a fresh `ES_RESTORE_TECHNICIAN_ASSIGNED` fires. Listener treats this as **mobile-only update on the same `ticket_id`** — PIN survives the CSP swap. (Note: cross-CSP reassign is the one edge case where `csp_id` also changes.) | Terminal states: `COMPLETED`, `CANCELLED`. Driven by upstream `COMPLAINT_TASK_CLOSED` (SR OS `CLOSED`), `COMPLAINT_RESOLUTION_SIGNAL` (`UNRESOLVABLE`), `PLATFORM_TAKEOVER_INITIATED`, `COMPLAINT_RECLASSIFIED_TO_PLATFORM`. Soft-delete + set `cooldown_until`. |
-| **Pickup (NetBox Recovery)** | `es-netbox-recovery-service-prd-v1.9.yaml` | Default executor is the **owning CSP** (auto-assigned at candidate creation from ACS signal — state `PENDING_PICKUP`, reason `RECOVERY_TASK_ASSIGNED`). When the CSP **delegates** to a team member (v1.9 M7 TASK_ASSIGNMENT), `ES_NBREC_TASK_ASSIGNED` fires with the team-member identity. Listener writes Table 2 rows on **both** signals — same entry semantics. | `ES_NBREC_TASK_ASSIGNED` re-fires when the CSP reassigns to a different team member, or unassigns (back to CSP-self). **Mobile-only update — rewrite `csp_user_id` and `other_party_mobile`. PIN unchanged.** | Terminal states: `COMPLETED`, `CANCELLED`, `FAILED`. Soft-delete + set `cooldown_until`. |
+| **Install** | `es-installation-service-prd-v2.3.yaml` | `ES_INSTALL_CANDIDATE_CREATED` at candidate creation (state `ACCEPTED` or `AWAITING_TECHNICIAN_ASSIGNMENT`). Owner is the default executor (resolved via gateway lookup on `candidate.csp_id + role=owner`). Customer-side `other_party_mobile = owner.mobile`. | `ES_INSTALL_TECHNICIAN_ASSIGNED` — universal mobile-update path (no special branch on `is_self_assigned`). Resolve executor mobile via `csp-gateway GET /api/internal/csp-users/{executor_id}` → update customer-side row. Covers: first delegation, reassign Tech A → Tech B, and **recall to Owner** (event re-fires with `executor_id = Owner, is_self_assigned = true` — Install has no separate recall event). `is_self_assigned` is informational (drives CTA visibility per ASM-ES-INSTALL-14), not IVR routing. | Any transition to terminal state: `INSTALLATION_REPORTED_FAILED`, `CONNECTION_ACTIVE`, `CANCELLED_BY_CUSTOMER`, `CANCELLED_BY_UPSTREAM`, `INSTALLATION_CANCELLED_ONSITE`, `INSTALLATION_EXPIRED`. Soft-delete + set `cooldown_until`. |
+| **Restore** | `es-restore-prd-v1.4.yaml` | `ES_RESTORE_CANDIDATE_CREATED` at candidate creation (state `PENDING_ACCEPTANCE`, triggered by SR OS `COMPLAINT_TASK_CREATED`). Owner is default executor. **This preserves today's pre-assignment customer↔CSP calling.** | `ES_RESTORE_TECHNICIAN_ASSIGNED` — universal mobile-update (CSP action `ASSIGN_TECHNICIAN`). Cross-CSP reassign also updates `csp_id`. **`ES_RESTORE_TASK_RECALLED`** — revert customer-side mobile back to Owner (CSP action `RECALL_TASK`). PIN preserved across both. | Terminal states: `COMPLETED`, `CANCELLED`. Driven by upstream `COMPLAINT_TASK_CLOSED` (SR OS `CLOSED`), `COMPLAINT_RESOLUTION_SIGNAL` (`UNRESOLVABLE`), `PLATFORM_TAKEOVER_INITIATED`, `COMPLAINT_RECLASSIFIED_TO_PLATFORM`. Soft-delete + set `cooldown_until`. |
+| **Pickup (NetBox Recovery)** | `es-netbox-recovery-service-prd-v1.9.yaml` | `ES_NBREC_RECOVERY_TASK_ASSIGNED` at candidate creation. Default executor = owning CSP (Owner; auto-self-assigned per NBREC v1.9 semantics — state `PENDING_PICKUP`). | `ES_NBREC_TASK_ASSIGNED` re-fires when CSP delegates to a team member or unassigns back to Owner. Universal mobile-update path; revert to Owner happens by virtue of `executor_id = Owner` on the same event. PIN preserved. | Terminal states: `COMPLETED`, `CANCELLED`, `FAILED`. Soft-delete + set `cooldown_until`. |
 
 **Implementation notes for the listener:**
 
 - All three ESs use **transactional outbox → bus** delivery, so the listener gets at-least-once semantics. Make Table 2 writes **idempotent** (key on `ticket_id` + `side` — upsert, not insert).
-- When the executor is the **CSP themselves** (`is_self_assigned = true` in Install ES; `executor.isSelf = true` in CSP App), the Call CTA is **hidden** in app (see CSP App: `canCallExecutor = executorAssigned && exec?.isSelf != true && !isClosureState`). The listener should still write the rows — backend-side `user_identification` still needs them for the customer-side path. But the CSP-side row's `other_party_mobile` should resolve to the customer (it always does in this design).
+- The Owner-resolution lookup (`csp-gateway-service GET /api/internal/csp-users?csp_id=...&role=owner`) is called once at allocation. The resolved mobile is persisted into customer-side `other_party_mobile` — not re-resolved on every call. If the Owner's registered_mobile later changes, Table 2 is not retroactively updated (acceptable for v1; surface as a TBD if needed).
+- `is_self_assigned` on Install is **informational only for IVR**. It drives CSP App CTA visibility (per ASM-ES-INSTALL-14: CTA visible only when `is_self_assigned=false`) but does NOT branch IVR's mobile-update logic — the universal path resolves the executor mobile from `executor_id` regardless.
 - For Install, the listener should also receive `BookingInstallationEventBridge`'s legacy `INSTALLATION_SLOT_ASSIGN` wire if subscribing to the bus is not yet possible — the payload is equivalent.
 
 #### CTA visibility — app-side gating
@@ -679,8 +689,11 @@ Built on three Exotel applet primitives:
    ▼                      ▼                        ▼
 [Passthru Async]      [Passthru Async]      [Passthru Sync — API 2]
    /log/connected        /log/dnp +              GET /ivr/identify-caller
-   → save to DB         missed-call alert            returns one of 5 values:
-                        → save to DB                 customer_no_pin / csp_no_pin /
+   → save to DB         emit ES_CSPIVR_              returns one of 5 values:
+                        MISSED_CALL_DETECTED         customer_no_pin / csp_no_pin /
+                        → save to DB +
+                        outbox to bus (→
+                        notification-service)
                                                      customer_with_pin / csp_with_pin /
                                                      unknown
                                                 ▼
@@ -927,34 +940,89 @@ Every decision point, API call, and state transition emits a typed event. All ev
 
 ---
 
-## CleverTap event schema
+## Notification service integration (outbound for PN / SMS / WA)
 
-Missed-call alerts piggyback on Wiom's existing CleverTap campaign infrastructure — no new SMS-delivery system to build.
+**Architectural principle:** `csp-ivr-service` is responsible for DETECTING that a call was missed; it is NOT responsible for deciding HOW the missed party is notified (push vs SMS vs WhatsApp). All channel routing is owned by **`csp-notification-service`**, which consumes a domain event from the bus and fans out to the appropriate provider (CleverTap / Gupshup / FCM / BSP).
 
-### `missed_call_csp_to_customer`
+### IVR's outbound contract
 
-Fired when a CSP-initiated bridge ends with the customer not picking up.
+| Field | Value |
+|---|---|
+| **Event** | `ES_CSPIVR_MISSED_CALL_DETECTED` |
+| **Bus topic** | `csp.ivr.missed-call` |
+| **Fired by** | Passthru-Async-on-DNP (faster than disposition webhook, sub-second from the DNP event) |
+| **Delivery** | At-least-once via **transactional outbox** — `call_audit_logs` INSERT and outbox INSERT happen in the same DB transaction; a separate worker drains the outbox to the bus. |
+
+### Event payload
 
 ```json
 {
-  "event": "missed_call_csp_to_customer",
-  "customer_mobile": "+91XXXXXXXXXX",
-  "csp_user_mobile": "+91XXXXXXXXXX",
-  "csp_user_name": "...",
+  "event": "ES_CSPIVR_MISSED_CALL_DETECTED",
+  "call_sid": "exotel-call-sid",
+  "missed_party_type": "customer | csp",
+  "missed_party_id": "customer_id or csp_user_id",
+  "missed_party_mobile": "+91XXXXXXXXXX",
+  "missed_party_pin": "47291",
+  "caller_party_type": "customer | csp",
+  "caller_party_id": "...",
+  "caller_display_name": "Technician name or customer name",
   "ticket_id": "uuid",
   "ticket_type": "Install | Restore | Pickup",
-  "masked_number": "+91XXXXXXXXXX",
-  "disposition": "no_answer | busy | failed",
+  "direction": "csp_to_customer | customer_to_csp",
   "call_initiated_at": "ISO-8601",
-  "call_attempt_id": "exotel_call_sid"
+  "call_disposition": "no_answer | busy | failed",
+  "masked_number": "+91XXXXXXXXXX",
+  "callback_deeplink": "wiom://ticket/{ticket_id}/call"
 }
 ```
 
-Triggers a CleverTap campaign that sends SMS / WhatsApp to `customer_mobile` with a callback instruction.
+### The PIN-in-reminder design
 
-### `missed_call_customer_to_csp`
+**Every missed-call notification (PN / SMS / WA) carries the missed party's own PIN** (`missed_party_pin` on the event payload) so they can call back from any SIM and bridge through to the other party — even from an unregistered phone.
 
-Symmetric — fired when a customer-initiated bridge ends unanswered. Triggers SMS / WhatsApp / push to the CSP.
+Critical scenarios this unlocks:
+
+- **UC 11 fallback:** Customer is on a relative's phone when the CSP calls. Customer misses it. Notification arrives on customer's registered mobile (SMS/WA — they don't need to be in-app). When they dial the masked number from any phone, they enter the PIN from the notification → bridge.
+- **UC 12 fallback:** CSP missed a customer call. CSP App push notification includes the CSP-side PIN. When the CSP calls back from a non-inventoried SIM (forgot to register a new phone), the PIN in the PN gets them through.
+- **UC 09 / UC 10 (recognised callback):** Even when the missed party calls back from their registered mobile, the PIN reminder is useful if Table 1 has expired — they have the PIN handy if IVR prompts for one (multi-ticket case).
+
+**Privacy:** the PIN embedded in the notification is the recipient's OWN PIN — already in their possession from ticket-open. The notification is a convenience reminder, not new disclosure.
+
+### Notification service consumer contract
+
+`csp-notification-service` owns:
+
+- **Channel routing logic** — look up missed_party_id's device registry and preferences, choose PN (FCM / CleverTap) or fall back to SMS/WA if no active device.
+- **Template selection** — per `ticket_type` × `missed_party_type` × language (Hindi-first).
+- **Provider invocation** — fire the actual CleverTap event, Gupshup SMS, or BSP WhatsApp call.
+- **Delivery receipts** — record DLR back to its own audit log.
+- **Deep-linking** — uses the `callback_deeplink` field as the tap target on the PN.
+
+### Channels currently planned by `csp-notification-service`
+
+| Channel | When | Delivery | Copy notes |
+|---|---|---|---|
+| **Push Notification (CSP App)** | `missed_party_type = csp` AND CSP App active install present | FCM (or CleverTap PN) | Hindi-first, includes caller name + ticket_type + tap-to-callback + **PIN reminder** |
+| **Push Notification (Customer App)** | `missed_party_type = customer` AND Customer App active install present | FCM (or CleverTap PN) | Same — PIN reminder included |
+| **SMS (DLT-templated)** | PN delivery fails OR no active app install (most customers) | Gupshup with "Wiom" sender ID | "`<Caller>` tried to reach you about your `<ticket_type>`. Call `<masked_number>` and enter PIN `<pin>` to connect." |
+| **WhatsApp** | Customer's WA opted-in | BSP with approved templates | Includes PIN |
+
+### Why IVR doesn't fire CleverTap directly
+
+An earlier draft had IVR firing CleverTap events directly from the Passthru-Async-on-DNP hop. Rejected because:
+
+1. Conflates IVR (a routing capability) with notification policy (channel preferences, copy templates, recipient preferences, delivery receipts).
+2. Locks the notification stack to CleverTap. Future PN providers (FCM-native, OneSignal, etc.) would require IVR changes.
+3. Duplicates concerns: `csp-notification-service` already exists to own multi-channel routing for every event-driven notification in Wiom.
+
+Cleanest contract: IVR emits one domain event with all the data the Notification service needs; routing decisions live in one place.
+
+### What IVR still owns directly (not via Notification service)
+
+- **Dead-end SMS** — sent inline from the Passthru applet that hits the dead-end. Rationale: dead-end SMS is part of the IVR's own graceful-fallback contract, fires within the call session, and shouldn't depend on an async notification consumer being healthy.
+- **PIN delivery SMS / WA at ticket-open** — sent inline by IVR's listener (see PIN lifecycle distribution). Same rationale: tightly coupled to PIN generation; Notification service v1 doesn't yet model "credential delivery" as a use case.
+
+Open TBD: should dead-end SMS + PIN delivery also migrate to `csp-notification-service` v2 once it supports synchronous SMS dispatch?
 
 ---
 
@@ -987,6 +1055,13 @@ Both layers are independent and complementary — Truecaller covers app-side ide
 ## Use cases (13) with implementation notes
 
 Grouped by whether the caller is identified by their FROM, then by how they're calling.
+
+> **Routing target depends on execution phase**, not just on the use case:
+> - **Candidate created, no technician yet** → call bridges to **OWNER** (default executor at allocation; preserves today's pre-assignment calling for Restore)
+> - **Technician delegated** → call bridges to **TECHNICIAN**
+> - **Recalled to Owner** → call bridges back to **OWNER**
+>
+> Use cases below describe the PATH (routing logic) — actual bridge target is determined by the current `other_party_mobile` on the relevant Table 2 row.
 
 ### Caller identified (FROM is a registered mobile or in `sim_inventory`)
 
@@ -1066,7 +1141,7 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **Table 2 by-FROM is the primary lookup at Table 1 miss** (not user_identification) | Table 2 itself encodes everything we need: caller identity (matches `customer_mobile` / `csp_user_id` via JOIN with sim_inventory + registered_mobile) AND counterparty (`other_party_mobile` on the row). No separate identity API on the hot path. Single SQL with JOINs returns 0/1/many rows, branching the entire flow. (Earlier draft had `user_identification` called on every Table-1 miss — that was over-engineered.) |
 | **`user_identification` API fires ONLY when Table 2 by-FROM returns 0 rows** | A 0-row result means either (a) recognised user with no active ticket, or (b) unknown FROM. Distinguishing the two requires identity resolution. user_identification answers that narrow question — and skips PIN entirely for the (a) case (saving ~25 s of doomed PIN entry). Not called on bridging or PIN-prompt paths — they already know the user from Table 2 rows. |
 | **API 2 returns a 5-value composite discriminator, not just user_type** | The Switch Case at the post-Connect-empty-destination hop must distinguish FOUR outcomes for recognised callers: (no active ticket × customer/csp = dead-end) and (≥ 2 active tickets × customer/csp = PIN gather). A 3-value user_type alone collapses these — sending recognised multi-ticket callers to the wrong dead-end. The composite values (`customer_no_pin` / `csp_no_pin` / `customer_with_pin` / `csp_with_pin` / `unknown`) encode both user_type and ticket-count signal in one applet hop; API 1 already stashed both against `CallSid`. Alternative (extra Passthru after Switch Case) was rejected on latency grounds. |
-| **Single `ivr-routing-service` owns the entire system** | Tables 1+2, sim_inventory, user_identification, Exotel surface, ES listener, SMS dispatch, CleverTap firing, maskedCallAvailable derivation. Avoids cross-service latency on the hot path; one team, one DB, one deployment. Split later if scale demands it. |
+| **Single `ivr-routing-service` owns the entire system** | Tables 1+2, sim_inventory, user_identification, Exotel surface, ES listener, inline SMS dispatch (PIN delivery + dead-end), `maskedCallAvailable` derivation. Avoids cross-service latency on the hot path; one team, one DB, one deployment. Split later if scale demands it. **Missed-call multi-channel notification is delegated to `csp-notification-service` via a bus event — see separate decision.** |
 | **Discard `es-ivr-calling-service`, build sim_inventory fresh** | Existing service was a thin wrapper around the IVR microservice with no audit logging. Starting fresh inside `ivr-routing-service` gives us proper add/remove audit, consistent ownership, and removes the integration ambiguity entirely. |
 | **Skip-Gather via backend directive** in `/ivr/resolve-caller` response | When user_identification says "recognised, 0 tickets", the resolve-caller response is `action: "playback"` — Exotel honours it and routes directly to the dead-end Playback applet. Cleaner than configuring a separate branching Passthru applet. **Depends on Exotel Connect-applet supporting `action: playback` in dynamic-URL responses — confirm with Exotel before locking.** |
 | **Unknown FROM routes to PIN gather (not direct to dead-end)** | Critical for UC 13 (colleague forwarding) — colleague isn't recognised but holds a forwarded PIN. Giving up immediately on unknown FROM would block this case. |
@@ -1084,10 +1159,13 @@ Grouped by whether the caller is identified by their FROM, then by how they're c
 | **VLT whitelisting added** | Telco-level trust mark complements Truecaller; together they directly address DNP. |
 | **Table 2 triple access pattern (by FROM, by PIN, by ticket+side)** | Same physical table serves three lookup patterns. By FROM is the hot path (every call). By PIN is the gather flow. By (ticket+side) is listener writes only. No need for a third table. |
 | **Calling eligibility scoped to Install / Restore / Pickup tickets** | No calling on closed or pre-booking tickets. Aligns the routing surface with operational reality. |
-| **Table 2 entry on technician-assignment event, not on ticket-open** | The Call CTA in the CSP App and Technician App becomes visible **only after technician assignment** (CSP App: `executorAssigned && !isSelf && !isClosure`; Technician App: backend-driven `maskedCallAvailable`). PINs should exist exactly when the CTA can be tapped — no earlier (wasted rows + SMS), no later (failed first tap). Three ES events drive entry: `ES_INSTALL_TECHNICIAN_ASSIGNED`, `ES_RESTORE_TECHNICIAN_ASSIGNED`, `ES_NBREC_TASK_ASSIGNED` (plus the auto-self-assignment at NBREC candidate creation). |
+| **Table 2 entry on CANDIDATE_CREATION event with OWNING CSP (Owner) as default executor — NOT on technician assignment** | Earlier draft tied allocation to `*_TECHNICIAN_ASSIGNED`. That was wrong: (a) Restore today allows customer↔CSP calling from `PENDING_ACCEPTANCE` (before any technician is assigned) — the customer needs to reach the Owner about the complaint; (b) The Owner can also work the ticket themselves without delegating (Restore `IN_PROGRESS` via `START_WORK`; Install `is_self_assigned=true`); (c) NBREC already had this right (`ES_NBREC_RECOVERY_TASK_ASSIGNED` at candidate creation IS allocation). Universal pattern: allocate at candidate creation with Owner as default; technician assignment is a mobile-only UPDATE; recall reverts to Owner. PIN never rotates. Routing impact: **pre-assignment customer-initiated call → bridges to OWNER; post-assignment → TECHNICIAN; on recall → OWNER**. |
+| **Universal mobile-update path on `*_TECHNICIAN_ASSIGNED` (no special-case branching on `is_self_assigned`)** | Always resolve executor mobile via `csp-gateway GET /api/internal/csp-users/{executor_id}` and update customer-side `other_party_mobile`. Covers all four cases in one path: first delegation, Tech A → Tech B, recall to Owner (re-fire with `executor_id=Owner, is_self_assigned=true`), and self-assign at allocation handoff. Earlier draft tried to no-op on `is_self_assigned=true` — but that breaks the recall case (where previous mobile was Tech's, not Owner's). Verified via `csp-tas-service.InstallationStateMachine` line 182: `TECHNICIAN_ASSIGNED + ASSIGN_TECHNICIAN → TECHNICIAN_ASSIGNED // reassign`. |
+| **Owner-mobile resolution via `csp-gateway-service GET /api/internal/csp-users?csp_id={candidate.csp_id}&role=owner`** | One indexed lookup at allocation reads the Owner's `csp_user_id` + `registered_mobile`. Each CSP organisation has exactly one Owner (the partner account holder) whose registered_mobile is the canonical pre-assignment routing target. |
 | **Table 2 exit on ES terminal-state transition, not on a generic ticket_close event** | Each of the three ESs has its own terminal states. Subscribing to the family-specific terminal events keeps Table 2 in lockstep with the ES state machines and avoids relying on a derived "ticket closed" facade. |
 | **`pin-registry-service` as the listener owning Table 2 lifecycle** | Single fan-in consumer subscribed to all three ESs (Install / Restore / Pickup). Upsert on `(ticket_id, side)` makes the listener idempotent under at-least-once outbox delivery. Centralises the gate that backend uses to derive `maskedCallAvailable`. |
-| **Missed-call notifications via CleverTap campaigns** | Reuses Wiom's existing campaign infrastructure. |
+| **IVR emits `ES_CSPIVR_MISSED_CALL_DETECTED` to the event bus; `csp-notification-service` owns channel routing (PN / SMS / WA)** | IVR is a routing capability, not a notification policy engine. Letting Notification service own channel selection means: (a) channel preferences, copy templates, language routing, and provider migrations all live in one place; (b) IVR doesn't need to know which users have which apps installed; (c) future PN providers (FCM-native, OneSignal) don't require IVR changes. Transactional outbox ensures at-least-once delivery so a Notification service blip never loses a missed-call alert. Bus topic: `csp.ivr.missed-call`. |
+| **Missed-call notification carries the missed party's own PIN — doubles as a bridging-credential reminder** | PIN-in-notification enables the recipient to call back from ANY SIM (not just their registered mobile) and bridge through to the other party. Without this, a customer who missed the CSP's call from a relative's phone would be stuck at the IVR Gather prompt with no way to recall their PIN. The PIN is the recipient's own (received at ticket-open) — embedding it in the reminder is a convenience, not new disclosure. Notification service templates include the PIN inline (PN body, SMS body, WA body). |
 | **Hindi as default IVR language** | Voice-first Bharat user. English IVR is a hard blocker. |
 
 ---

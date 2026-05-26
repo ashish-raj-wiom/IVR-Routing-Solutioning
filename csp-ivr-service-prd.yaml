@@ -1,0 +1,1795 @@
+# ============================================================================
+# csp-ivr-service — Execution Service YAML PRD
+# ============================================================================
+# Framing: Capability Service (Framing A — NOT TAS-fed).
+# Does NOT produce execution candidates. Provides masked-call routing as a
+# capability consumed by the CSP App, Customer App, and field operations.
+# Candidate-producing sections are marked NOT_APPLICABLE per design.
+# ============================================================================
+
+service_id: csp-ivr-service
+service_type: execution_service
+service_classification: capability   # Framing A — not candidate-producing
+version: "1.0"
+owner: csp-execution-platform
+short_code: CSPIVR
+skill_version: v2
+generated_date: "2026-05-26"
+
+# ============================================================================
+# Section 1 — Service Identity
+# ============================================================================
+service_identity:
+  name: "CSP IVR Service"
+  one_liner: "Bridges CSP ↔ Customer phone calls via a single masked number without exposing either party's mobile."
+  purpose: |
+    Provides masked-call routing as a capability. CSPs and Customers dial a
+    single bidirectional masked number; the service resolves the caller's
+    identity and the counterparty, then bridges the call via Exotel. When the
+    caller is unrecognised or has multiple active tickets, a PIN gather
+    sequence authorises and disambiguates.
+  framing_rationale: |
+    This service is a CAPABILITY, not a candidate-producer. It does not feed
+    TAS. CSPs do not see a queue of "IVR tasks" — they see a Call CTA on
+    other services' tasks (Install / Restore / Pickup) and this service
+    handles the underlying routing. All candidate-producing sections of the
+    ES template are marked NOT_APPLICABLE.
+  replaces: |
+    NONE in v1. The legacy `es-ivr-calling-service` will be discarded as
+    part of this redesign (see decommission_plan in Section 22).
+  design_reference:
+    primary: "C:/Users/ashis/ivr-fix/IVR-Routing-Solutioning-technical-notes.md"
+    leadership_html: "C:/Users/ashis/ivr-fix/ivr-routing-design.html"
+    live_page: "https://ashish-raj-wiom.github.io/IVR-Routing-Solutioning/"
+    flow_diagram: "C:/Users/ashis/ivr-fix/exotel-app-bazaar-flow.png"
+
+# ============================================================================
+# Section 2 — Architecture Summary
+# ============================================================================
+architecture:
+  type: "Single new service owns all routing surfaces."
+  service_name: "ivr-routing-service (implementation name; canonical service_id is csp-ivr-service)"
+
+  responsibilities:
+    - "Table 1 (active call mapping) — write on in-app CTA, lookup on dial."
+    - "Table 2 (PIN registry) — two rows per active ticket, immutable PIN per ticket, 90-day cooldown after close."
+    - "sim_inventory — CSP SIM → csp_user_id map (built fresh; old es-ivr-calling-service discarded)."
+    - "user_identification API — called only when Table 2 by-FROM returns 0 rows."
+    - "Exotel-facing endpoints — 3 GET endpoints (resolve-caller, identify-caller, resolve-pin) + dead-end audio + disposition webhook + logging endpoints."
+    - "ES event listener — subscribes to 3 execution services for Table 2 lifecycle."
+    - "SMS / WhatsApp dispatch via Gupshup — PIN delivery + missed-call + dead-end SMS."
+    - "CleverTap firing for missed-call alerts."
+    - "maskedCallAvailable derivation — boolean surfaced on CSP App + Technician App task drilldowns."
+
+  external_dependencies:
+    - name: "Exotel App Bazaar"
+      role: "Telephony provider. Owns Connect / Passthru / Gather / Greeting / Switch Case / Playback applets."
+      contract: "10 documented data-flow rules — see Section 16."
+    - name: "Gupshup"
+      role: "SMS gateway for PIN delivery and dead-end SMS."
+    - name: "CleverTap"
+      role: "Campaign engine for missed-call notifications (SMS + push)."
+    - name: "AWS EventBridge"
+      role: "Not used by IVR v1 (no scheduled threshold crossings — IVR is event-driven)."
+
+# ============================================================================
+# Section 3 — OS References
+# ============================================================================
+os_refs:
+  note: |
+    This service does NOT directly consume OS-emitted events. It consumes
+    events emitted by execution services (es-installation, es-restore,
+    es-netbox-recovery) which themselves react to OS signals. The upstream
+    OS chain is referenced for context but no governance dependency lands
+    on the OS layer directly.
+
+  upstream_execution_services:
+    - service: "es-installation-service"
+      version_ref: "v2.3"
+      yaml_prd_path: "csp-os-yaml/yaml-prd/EXECUTION_SERVICES/es-installation-service-prd-v2.3.yaml"
+      purpose: "Source of ES_INSTALL_TECHNICIAN_ASSIGNED + Install terminal events that drive Table 2 lifecycle for Install tickets."
+    - service: "es-restore"
+      version_ref: "v1.4"
+      yaml_prd_path: "csp-os-yaml/yaml-prd/EXECUTION_SERVICES/es-restore-prd-v1.4.yaml"
+      purpose: "Source of ES_RESTORE_TECHNICIAN_ASSIGNED + Restore terminal events."
+    - service: "es-netbox-recovery"
+      version_ref: "v1.9"
+      yaml_prd_path: "csp-os-yaml/yaml-prd/EXECUTION_SERVICES/es-netbox-recovery-service-prd-v1.9.yaml"
+      purpose: "Source of ES_NBREC_TASK_ASSIGNED + NBREC terminal events."
+
+  identity_tables_read:
+    - table: "customers.registered_mobile"
+      owner_os: "Connection Lifecycle OS"
+      access: READ_ONLY
+      purpose: "Resolve customer identity from FROM during Table 2 by-FROM lookup."
+    - table: "csp_users.registered_mobile"
+      owner_os: "Connection Lifecycle OS"
+      access: READ_ONLY
+      purpose: "Resolve CSP user identity from FROM during Table 2 by-FROM lookup."
+
+# ============================================================================
+# Section 3a — Upstream Chain Documentation (capability — abridged)
+# ============================================================================
+upstream_chain_documentation:
+  note: |
+    IVR consumes only ES-emitted events. The full OS → ES → IVR chain for
+    each ticket family is documented here for traceability.
+  chains:
+    - family: "Install"
+      flow: "Demand & Allocation OS → Connection Lifecycle OS → es-installation-service → ES_INSTALL_TECHNICIAN_ASSIGNED → csp-ivr-service (writes Table 2)"
+    - family: "Restore"
+      flow: "Support & Resolution OS → es-restore → ES_RESTORE_TECHNICIAN_ASSIGNED → csp-ivr-service"
+    - family: "Pickup (NetBox Recovery)"
+      flow: "Asset Custody OS / ACS signal → es-netbox-recovery → ES_NBREC_TASK_ASSIGNED → csp-ivr-service"
+
+# ============================================================================
+# Section 4 — Internal Execution States
+# ============================================================================
+# Capability service: there is no per-candidate state machine in the
+# TAS-candidate sense. The closest equivalent is per-ticket Table 2 row
+# lifecycle (ACTIVE → EXPIRED → COOLDOWN → HARD_DELETED). Documented as
+# table_2_lifecycle, not as ES states.
+# ============================================================================
+states:
+  applicability: NOT_APPLICABLE
+  rationale: "Capability service. No per-candidate state machine. Per-ticket Table 2 lifecycle documented in §17 (PIN lifecycle)."
+
+# ============================================================================
+# Section 4a — Reason Codes
+# ============================================================================
+reason_codes:
+  applicability: NOT_APPLICABLE
+  rationale: "Capability service. No CSP-facing candidate states → no reason codes. Per-call outcomes are captured in §18 telemetry catalog (event names serve the same purpose for analytics)."
+
+# ============================================================================
+# Section 4b — Ownership Map (REQUIRED — Phase 4 governance audit)
+# ============================================================================
+ownership_map:
+  - concept: "Customer registered mobile"
+    owner: "Connection Lifecycle OS (customers.registered_mobile)"
+    es_role: "OS_READ — joined into Table 2 by-FROM resolution"
+    es_may_not: "Define its own customer identity table"
+
+  - concept: "CSP user registered mobile"
+    owner: "Connection Lifecycle OS (csp_users.registered_mobile)"
+    es_role: "OS_READ — joined into Table 2 by-FROM resolution"
+    es_may_not: "Maintain a parallel CSP identity table"
+
+  - concept: "CSP SIM inventory"
+    owner: "csp-ivr-service (sim_inventory table)"
+    es_role: "ES_OWNED — full write authority; audit trail captured."
+    es_may_not: "Treat SIM data as authoritative for CSP identity (csp_users is)"
+
+  - concept: "Ticket-side PIN"
+    owner: "csp-ivr-service (Table 2)"
+    es_role: "ES_OWNED — generated on technician-assignment event; immutable for ticket lifetime; 90-day cooldown after close."
+    es_may_not: "Be inferred from or derived from any OS-owned identifier"
+
+  - concept: "Active-call mapping (FROM → TO)"
+    owner: "csp-ivr-service (Table 1)"
+    es_role: "ES_OWNED — written on in-app CTA; short TTL."
+    es_may_not: "Persist beyond TTL"
+
+  - concept: "Technician assignment signal"
+    owner: "Execution Service (Install / Restore / NBREC)"
+    es_role: "EVENT_CONSUMER — IVR reacts but does not own this signal."
+    es_may_not: "Emit its own assignment events"
+
+  - concept: "Ticket terminal state"
+    owner: "Execution Service (Install / Restore / NBREC)"
+    es_role: "EVENT_CONSUMER — IVR reacts (soft-deletes Table 2 rows)."
+    es_may_not: "Decide when a ticket is closed (only react to the closing event)"
+
+  - concept: "Masked DID"
+    owner: "Exotel (provisioned to Wiom)"
+    es_role: "INFRASTRUCTURE — used as the To number in Exotel applet config; not a Wiom-side persisted asset."
+    es_may_not: "Mint or recycle masked numbers internally"
+
+# ============================================================================
+# Section 4c — Event Disambiguation
+# ============================================================================
+event_disambiguation: []
+event_disambiguation_note: |
+  No state-dependent dual interpretations for consumed events in IVR. Each
+  technician-assignment event variant (Install / Restore / NBREC) is
+  unambiguously routed to its family-specific Table 2 upsert. Terminal
+  events unambiguously soft-delete.
+
+# ============================================================================
+# Section 5 — Upstream Signal Mapping (events consumed)
+# ============================================================================
+# Core principle: For ALL three families, the OWNING CSP (the Owner / partner
+# account holder) is the default executor from candidate creation. Pre-
+# technician-assignment, customer-initiated calls route to the Owner.
+# Technician assignment is an OPTIONAL delegation step that re-points the
+# customer-side bridge target to the technician's mobile. Recall reverts.
+# PIN is allocated at candidate creation and is IMMUTABLE for ticket lifetime.
+# ============================================================================
+
+upstream_signal_mapping:
+
+  # ---------- ALLOCATION (Table 2 rows + PINs created) ----------
+
+  - source_service: "es-installation-service"
+    event_id: "ES_INSTALL_CANDIDATE_CREATED"
+    phase: ALLOCATE
+    ivr_action: |
+      INSERT 2 rows into Table 2 keyed on (ticket_id, side). Generate 2 unique
+      5-digit PINs. Default executor = OWNING CSP (Owner).
+      Resolve Owner via csp-gateway-service:
+        GET /api/internal/csp-users?csp_id={candidate.csp_id}&role=owner
+      Then:
+      - customer-side row.other_party_mobile = owner.registered_mobile
+      - csp-side row.other_party_mobile = customer.registered_mobile
+      - csp-side row.csp_user_id = owner.csp_user_id
+      - csp-side row.csp_id = candidate.csp_id
+    side_effects: "Dispatch SMS+WhatsApp to customer with masked number + customer-side PIN. Surface csp-side PIN on the Owner's ticket card in CSP App."
+    note: "Customer-initiated call PRE-technician-assignment bridges to the Owner. This preserves today's behaviour (Restore tasks allow CSP↔customer calling from PENDING_ACCEPTANCE)."
+
+  - source_service: "es-restore"
+    event_id: "ES_RESTORE_CANDIDATE_CREATED"
+    phase: ALLOCATE
+    ivr_action: |
+      Same semantics as Install ES_INSTALL_CANDIDATE_CREATED. Triggered when
+      Restore consumes SR OS COMPLAINT_TASK_CREATED and creates a candidate
+      in PENDING_ACCEPTANCE state. Owner is the default executor.
+    note: "Restore lifecycle starts at PENDING_ACCEPTANCE — well before any technician is assigned (which is optional). The customer-initiated call must bridge to the Owner from the moment the task exists."
+
+  - source_service: "es-netbox-recovery"
+    event_id: "ES_NBREC_RECOVERY_TASK_ASSIGNED"
+    phase: ALLOCATE
+    ivr_action: |
+      Auto-self-assignment trigger at candidate creation. UPSERT 2 rows;
+      default executor = Owner (auto-self-assigned per NBREC v1.9 candidate-
+      creation semantics).
+    note: "NBREC's own framing aligns with this universal pattern — the candidate-creation event IS the allocation trigger."
+
+  # ---------- MOBILE-ONLY UPDATE (technician delegation) ----------
+
+  - source_service: "es-installation-service"
+    event_id: "ES_INSTALL_TECHNICIAN_ASSIGNED"
+    phase: UPDATE_MOBILE_ONLY
+    ivr_action: |
+      Universal mobile-update (no special case on is_self_assigned):
+      - Resolve executor mobile via csp-gateway: GET /api/internal/csp-users/{executor_id}
+      - UPDATE customer-side row.other_party_mobile = resolved.registered_mobile
+      - UPDATE csp-side row.csp_user_id = executor_id
+      - PIN preserved on both rows.
+
+      Cases this single path covers:
+      1. **First delegation** (is_self_assigned=false): customer-side mobile
+         flips Owner → Technician.
+      2. **Reassign Technician A → Technician B** (is_self_assigned=false):
+         flips to B's mobile.
+      3. **Recall to Owner** (is_self_assigned=true after a prior technician
+         was assigned): executor_id = Owner's csp_user_id, mobile flips back
+         to Owner. **Verified via csp-tas-service code** —
+         InstallationStateMachine line 182 allows TECHNICIAN_ASSIGNED +
+         ASSIGN_TECHNICIAN → TECHNICIAN_ASSIGNED as 'reassign';
+         assignTechnician() publishes ES_INSTALL_TECHNICIAN_ASSIGNED with
+         executor_id=Owner, is_self_assigned=true on this path.
+      4. **First self-assign at allocation handoff** (is_self_assigned=true
+         on first fire): executor_id=Owner; mobile lookup resolves to Owner,
+         which matches what ALLOCATE already set — effectively idempotent.
+
+      is_self_assigned is informational only for IVR — it drives CTA
+      visibility in the CSP App (per ASM-ES-INSTALL-14: CTA visible only
+      when is_self_assigned=false) but does NOT branch IVR's mobile-update
+      logic. Push notification fires to new technician when
+      is_self_assigned=false.
+    note: "Re-fires with any executor_id are reassignments. PIN never rotates. csp-tas-service code path: CandidateWorkflowServiceImpl.assignTechnician → InstallationStateMachine self-loop on TECHNICIAN_ASSIGNED."
+
+  - source_service: "es-restore"
+    event_id: "ES_RESTORE_TECHNICIAN_ASSIGNED"
+    phase: UPDATE_MOBILE_ONLY
+    ivr_action: |
+      UPDATE customer-side row.other_party_mobile = assigned_technician.registered_mobile.
+      UPDATE csp-side row.csp_user_id = assigned_technician_id.
+      Cross-CSP reassign also updates csp_id on csp-side row. PIN preserved.
+    note: "Restore-specific: this is the CSP action ASSIGN_TECHNICIAN delegating the task to a Rohit."
+
+  - source_service: "es-restore"
+    event_id: "ES_RESTORE_TASK_RECALLED"
+    phase: REVERT_TO_OWNER
+    ivr_action: |
+      CSP recalled the task from technician (CSP action RECALL_TASK).
+      - REVERT customer-side row.other_party_mobile = owner.registered_mobile
+      - REVERT csp-side row.csp_user_id = owner's csp_user_id
+      - PIN preserved.
+    note: "After recall, customer-initiated calls bridge to Owner again — same as pre-assignment behaviour."
+
+  - source_service: "es-netbox-recovery"
+    event_id: "ES_NBREC_TASK_ASSIGNED"
+    phase: UPDATE_MOBILE_ONLY
+    ivr_action: |
+      CSP delegates the pickup to a specific team member. UPDATE customer-side
+      row.other_party_mobile = team_member.registered_mobile; UPDATE csp-side
+      row.csp_user_id = team_member.csp_user_id. PIN preserved. Re-fires on
+      subsequent delegation handle the same way.
+    note: "Unassign (back to Owner self) reverts mobile back via the same event payload (executor_id = Owner)."
+
+  # ---------- DEALLOCATION (Table 2 soft-delete + 90d cooldown) ----------
+
+  - source_service: "es-installation-service"
+    event_id: "ES_INSTALL_CONNECTION_ACTIVE"
+    phase: DEALLOCATE
+    ivr_action: "Soft-delete both Table 2 rows. expires_at = now(), cooldown_until = now() + 90d."
+
+  - source_service: "es-installation-service"
+    phase: DEALLOCATE
+    event_id_list:
+      - "ES_INSTALL_INSTALLATION_REPORTED_FAILED"
+      - "ES_INSTALL_CANCELLED_BY_CUSTOMER"
+      - "ES_INSTALL_CANCELLED_BY_UPSTREAM"
+      - "ES_INSTALL_INSTALLATION_CANCELLED_ONSITE"
+      - "ES_INSTALL_INSTALLATION_EXPIRED"
+    ivr_action: "Soft-delete both Table 2 rows — terminal."
+
+  - source_service: "es-restore"
+    phase: DEALLOCATE
+    event_id_list:
+      - "ES_RESTORE_COMPLETED"
+      - "ES_RESTORE_CANCELLED"
+    ivr_action: "Soft-delete both Table 2 rows — terminal."
+
+  - source_service: "es-netbox-recovery"
+    phase: DEALLOCATE
+    event_id_list:
+      - "ES_NBREC_COMPLETED"
+      - "ES_NBREC_CANCELLED"
+      - "ES_NBREC_FAILED"
+    ivr_action: "Soft-delete both Table 2 rows — terminal."
+
+# ============================================================================
+# Section 5a — Excluded Signals
+# ============================================================================
+excluded_signals:
+  note: "OS-level events are not consumed by IVR. The 3 execution services it depends on already consume the relevant OS signals and emit downstream ES events that IVR reacts to. Excluded categories:"
+  categories:
+    - category: "All OS-emitted events (13 OSes)"
+      reason: "IVR consumes ES events only. The es-installation / es-restore / es-netbox-recovery services act as the integration boundary."
+    - category: "Pre-assignment ES events"
+      reason: "IVR only cares from the technician-assignment event onward. Earlier candidate states (PENDING_ACCEPTANCE, etc.) have no IVR action."
+    - category: "Quality OS suspend / unsuspend signals"
+      reason: "Calling eligibility is gated by active-ticket presence in Table 2, not by Quality state. If a ticket gets suspended, the owning ES's terminal/cancel event will soft-delete the Table 2 row."
+
+# ============================================================================
+# Section 5b — Event Payload Mapping
+# ============================================================================
+event_payload_mapping:
+  - event_id: "ES_INSTALL_TECHNICIAN_ASSIGNED"
+    field_mappings:
+      - event_field: ticket_id
+        ivr_field: table_2.ticket_id
+        transformation: "Direct."
+        authority: "es-installation-service-prd-v2.3"
+      - event_field: executor_id
+        ivr_field: table_2.csp_user_id (csp-side row)
+        transformation: "Direct."
+      - event_field: executor.mobile (resolved via csp-gateway-service GET /api/internal/csp-users/{id})
+        ivr_field: table_2.other_party_mobile (customer-side row)
+        transformation: "Lookup against csp_users.registered_mobile at write time."
+      - event_field: customer_mobile (from CL OS via execution service payload)
+        ivr_field: table_2.other_party_mobile (csp-side row) AND table_2.customer_mobile (customer-side row, for audit)
+        transformation: "Direct."
+      - event_field: csp_id (org)
+        ivr_field: table_2.csp_id (csp-side row only)
+        transformation: "Direct. Used for PIN scoping."
+
+  - event_id: "ES_RESTORE_TECHNICIAN_ASSIGNED"
+    field_mappings:
+      - event_field: ticket_id
+        ivr_field: table_2.ticket_id
+        transformation: "Direct."
+      - event_field: assigned_technician_id
+        ivr_field: table_2.csp_user_id (csp-side row)
+        transformation: "Direct."
+      - event_field: assigned_technician.mobile
+        ivr_field: table_2.other_party_mobile (customer-side row)
+        transformation: "Lookup against csp_users.registered_mobile at write time."
+      - event_field: customer_mobile
+        ivr_field: table_2.other_party_mobile (csp-side row)
+        transformation: "Direct."
+      - event_field: csp_id
+        ivr_field: table_2.csp_id (csp-side row)
+        transformation: "Direct. Cross-CSP reassign updates this field."
+
+  - event_id: "ES_NBREC_TASK_ASSIGNED"
+    field_mappings:
+      - event_field: ticket_id
+        ivr_field: table_2.ticket_id
+        transformation: "Direct."
+      - event_field: team_member_id (or csp_user_id on self-assign)
+        ivr_field: table_2.csp_user_id (csp-side row)
+        transformation: "Direct."
+      - event_field: customer_mobile
+        ivr_field: table_2.other_party_mobile (csp-side row)
+        transformation: "Direct."
+      - event_field: csp_id
+        ivr_field: table_2.csp_id (csp-side row)
+        transformation: "Direct."
+
+  - event_id_pattern: "ES_*_<terminal_state>"
+    field_mappings:
+      - event_field: ticket_id
+        ivr_field: WHERE clause on table_2 soft-delete
+        transformation: "Direct. Soft-delete all rows for this ticket_id."
+
+# ============================================================================
+# Section 6 — ES Events (events produced by IVR)
+# ============================================================================
+events:
+  produces:
+    - event_id: "ES_CSPIVR_PIN_ISSUED"
+      when: "Both Table 2 rows persisted for a new ticket and PIN dispatched (customer SMS / WA + CSP ticket card)."
+      payload_summary:
+        - ticket_id
+        - customer_side_pin_hash (NOT raw PIN — hashed for audit)
+        - csp_side_pin_hash
+        - dispatch_channels (SMS / WA flags)
+
+    - event_id: "ES_CSPIVR_PIN_EXPIRED"
+      when: "Both Table 2 rows soft-deleted on ticket terminal-state transition."
+      payload_summary:
+        - ticket_id
+        - cooldown_until
+
+    - event_id: "ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED"
+      when: "Table 2 active-row existence flips for a ticket_id × side combination — affects CSP App / Technician App `maskedCallAvailable` derivation."
+      payload_summary:
+        - ticket_id
+        - side (customer / csp)
+        - now_available (boolean)
+
+    - event_id: "ES_CSPIVR_CALL_BRIDGE_INITIATED"
+      when: "Exotel Connect applet receives a destination from API 1 or API 3."
+      payload_summary:
+        - call_sid
+        - from_mobile
+        - to_mobile
+        - ticket_id (if resolved)
+        - bridge_via (table_1 | table_2_by_from | table_2_by_pin)
+
+    - event_id: "ES_CSPIVR_CALL_BRIDGE_OUTCOME"
+      when: "Exotel disposition webhook arrives after end-of-call."
+      payload_summary:
+        - call_sid
+        - dial_call_status (completed / no-answer / busy / failed)
+        - dial_call_duration
+
+    - event_id: "ES_CSPIVR_MISSED_CALL_DETECTED"
+      when: "Passthru-Async-on-DNP fires (faster than disposition webhook)."
+      primary_consumer: "csp-notification-service — translates this event into channel-specific deliveries (push notification via FCM/CleverTap, SMS via Gupshup, WhatsApp via BSP) based on recipient type + app-install state + user preferences. **IVR does NOT directly fire any channel-specific notification.** This is the canonical outbound event for missed-call alerting."
+      payload:
+        - field: call_sid
+          notes: "Exotel CallSid for correlation across logs."
+        - field: missed_party_type
+          values: "customer | csp"
+          notes: "Which side missed the call (the recipient who didn't pick)."
+        - field: missed_party_id
+          notes: "customer_id (if customer) or csp_user_id (if csp) — required for Notification service to look up registered devices for PN delivery."
+        - field: missed_party_mobile
+          notes: "Recipient's registered mobile — SMS/WA fallback target."
+        - field: caller_party_type
+          values: "customer | csp"
+        - field: caller_party_id
+          notes: "Identifier of the calling party (so notification copy can show who tried to reach the recipient)."
+        - field: caller_display_name
+          notes: "Technician name for CSP-initiated calls; customer name (or anonymised) for customer-initiated. Looked up at event emission to avoid stale data."
+        - field: ticket_id
+        - field: ticket_type
+          values: "Install | Restore | Pickup"
+          notes: "Used to choose notification template (e.g., 'Your technician tried to reach you about your Install') and for deep-link target on PN tap."
+        - field: direction
+          values: "csp_to_customer | customer_to_csp"
+        - field: call_initiated_at
+          notes: "ISO-8601 timestamp from Exotel."
+        - field: call_disposition
+          values: "no_answer | busy | failed"
+          notes: "From Exotel DialCallStatus."
+        - field: masked_number
+          notes: "The number recipient should call back on (single bidirectional DID)."
+        - field: missed_party_pin
+          notes: "**The missed party's own PIN for this ticket** (Table 2 row WHERE ticket_id = event.ticket_id AND side = event.missed_party_type). Included so the missed-call notification doubles as a **PIN reminder**: if the recipient calls back from an unregistered SIM (UC 11 — customer on relative's phone, UC 12 — CSP on different SIM), the PIN in the notification is what they enter at the IVR Gather prompt. Recipient already owns this PIN (received it at ticket-open); embedding it in the reminder is for convenience, not new disclosure."
+        - field: callback_deeplink
+          notes: "Deep-link URI for tap action on PN (e.g., 'wiom://ticket/{ticket_id}/call' opens the right CTA in CSP App or Customer App)."
+      delivery:
+        bus: "Event bus (RabbitMQ topic `csp.ivr.missed-call`)"
+        guarantees: "At-least-once via transactional outbox (same DB transaction as the call_audit_logs INSERT — see §22 design decision on missed-call alert sourcing)."
+
+    - event_id: "ES_CSPIVR_PIN_LOCKOUT"
+      when: "Caller exhausted 2 PIN attempts on a single call."
+      payload_summary:
+        - call_sid
+        - user_type_at_lockout (customer | csp | unknown)
+
+  governance_note: |
+    All produced events use the ES_CSPIVR_ prefix. None duplicate any OS-owned
+    event ID or any ES_-prefixed event owned by another execution service
+    (Install / Restore / NBREC). The MASKED_CALL_AVAILABILITY_CHANGED event
+    is a CRUD-derived signal exposed for app consumption, not an OS-level
+    state change.
+
+# ============================================================================
+# Section 7 — ES Parameters
+# ============================================================================
+es_parameters:
+  - key: ES_CSPIVR_TABLE_1_TTL_SECONDS
+    default: 300
+    description: "Max TTL on Table 1 mapping (min of this and call-connected time + buffer)."
+    rationale: "Preserves today's 5-minute mapping window."
+
+  - key: ES_CSPIVR_PIN_COOLDOWN_DAYS
+    default: 90
+    description: "Days a closed-ticket PIN value is reserved (not reissuable) after expires_at."
+    rationale: "Protects against stale-PIN cross-pollination (technician remembers old PIN, dials in, would otherwise reach a stranger). 90 days matches today's pool-vs-volume math (~65k of 100k pool used at current volume)."
+
+  - key: ES_CSPIVR_PIN_DIGITS
+    default: 5
+    description: "PIN length. 5 digits = 100k keyspace; adequate at current volume."
+    rationale: "Escalate to 6 (1M keyspace) if generation retry count exceeds threshold or active+cooldown reservation approaches 70% of pool."
+
+  - key: ES_CSPIVR_PIN_ATTEMPTS_PER_CALL
+    default: 2
+    description: "Number of PIN entry attempts per call before dead-end IVR."
+    rationale: "App Bazaar flow constraint — adding more retries doubles applet count per attempt. Two suffices for typos."
+
+  - key: ES_CSPIVR_PIN_AUDIT_RETENTION_DAYS
+    default: 365
+    description: "Hard-delete threshold for closed Table 2 rows (after cooldown_until + this)."
+    rationale: "Compliance retention; TBD with legal."
+
+  - key: ES_CSPIVR_CALL_BRIDGE_MAX_RING_SECONDS
+    default: 30
+    description: "max_ringing_duration value returned to Exotel Connect applet."
+
+  - key: ES_CSPIVR_USER_IDENTIFICATION_CACHE_TTL_SECONDS
+    default: 600
+    description: "TTL on the Redis cache of {CallSid → user_type, csp_id, table_2_row_count}. Allows API 2 to read sub-ms on second invocation (post-PIN-exhausted dead-end)."
+
+  governance_note: |
+    All parameters use ES_CSPIVR_ prefix. No semantic duplication of OS
+    parameters — none of these concepts (PIN length, call TTL, PIN cooldown)
+    are governed by any OS. CONF-ES-06, CONF-ES-07, CONF-ES-19: PASS.
+
+# ============================================================================
+# Section 8 — Data Model
+# ============================================================================
+data_model:
+
+  table_1:
+    name: "table_1 (active call mapping)"
+    purpose: "Short-TTL map of in-app-CTA originated calls. Written when the CSP App or Customer App taps Call CTA; read by Exotel API 1 on dial-in."
+    fields:
+      - name: mapping_id
+        notes: "Primary key."
+      - name: from_list
+        notes: "Array of E.164 numbers. CSP-side: every SIM in sim_inventory for that CSP user + their registered mobile. Customer-side: registered mobile only."
+      - name: to
+        notes: "Counterparty's mobile."
+      - name: ticket_id
+        notes: "The ticket this mapping belongs to."
+      - name: direction
+        notes: "csp_to_customer | customer_to_csp."
+      - name: created_at
+        notes: "When the mapping was written."
+      - name: ttl_expires_at
+        notes: "min(call_connected_at + buffer, created_at + ES_CSPIVR_TABLE_1_TTL_SECONDS)."
+
+  table_2:
+    name: "table_2 (PIN registry)"
+    purpose: "Two rows per active ticket — one per side. Drives PIN gather flow and by-FROM resolution at Table 1 miss."
+    fields:
+      - name: pin_id
+        notes: "Primary key."
+      - name: pin
+        notes: "5-digit numeric. IMMUTABLE for row lifetime. Globally unique among active + cooldown rows."
+      - name: ticket_id
+        notes: "Owning ticket."
+      - name: side
+        notes: "customer | csp."
+      - name: other_party_mobile
+        notes: "Bridge target. MUTABLE — rewritten on technician reassignment without disturbing PIN."
+      - name: csp_id
+        notes: "Org id on CSP-side rows. Used for PIN scoping."
+      - name: csp_user_id
+        notes: "Specific technician. Mutable on reassignment."
+      - name: customer_mobile
+        notes: "Customer's registered mobile on customer-side rows (for lookup convenience)."
+      - name: created_at
+        notes: "Ticket-open time."
+      - name: expires_at
+        notes: "Soft-delete time on terminal transition. Excludes row from active lookups."
+      - name: cooldown_until
+        notes: "expires_at + ES_CSPIVR_PIN_COOLDOWN_DAYS. PIN value reserved until past this."
+
+  sim_inventory:
+    name: "sim_inventory"
+    purpose: "CSP SIM → csp_user_id map. Used in Table 2 by-FROM resolution to recognise a CSP calling from any of their inventoried SIMs."
+    fields:
+      - name: sim_id
+      - name: mobile
+      - name: csp_user_id
+      - name: csp_id
+        notes: "Denormalised for PIN-scoping speed."
+      - name: added_at
+      - name: added_by_user_id
+      - name: removed_at
+        notes: "Nullable; soft-delete marker. Removing does NOT alter active Table 2 rows."
+      - name: removed_by_user_id
+      - name: verification_status
+        notes: "pending | verified | failed."
+
+  call_audit_logs:
+    name: "call_audit_logs"
+    purpose: "Every Passthru hit and every applet-level event writes here. Drives observability + downstream analytics."
+    fields:
+      - name: log_id
+      - name: call_sid
+      - name: event_type
+        notes: "See §18 telemetry catalog (~30 categories)."
+      - name: from_mobile
+      - name: to_mobile
+      - name: ticket_id
+      - name: payload
+        notes: "JSON envelope with Exotel-supplied params (CallSid, From, To, DialCallStatus, DialCallDuration, etc.)."
+      - name: created_at
+
+  pin_audit_logs:
+    name: "pin_audit_logs"
+    purpose: "Every PIN attempt logged for security review. Records attempt number + outcome + reason — NEVER the raw digits."
+    fields:
+      - name: pin_attempt_id
+      - name: call_sid
+      - name: attempt_number
+        notes: "1 or 2."
+      - name: outcome
+        notes: "valid | invalid_format | no_match | multi_match | scoping_rejected."
+      - name: user_type_at_attempt
+      - name: created_at
+
+  governance_note: |
+    All tables are ES_OWNED. None duplicates an OS-owned canonical field
+    (customer/CSP mobiles are READ from CL OS, not stored as authoritative
+    here). CONF-ES-01: PASS. The unseen_count column intentionally absent —
+    capability service has no attention model. CONF-ES-09: PASS by exclusion.
+
+# ============================================================================
+# Section 9 — Trigger-Mutation Matrix
+# ============================================================================
+trigger_mutation_matrix:
+
+  - trigger: "ES_INSTALL_CANDIDATE_CREATED / ES_RESTORE_CANDIDATE_CREATED / ES_NBREC_RECOVERY_TASK_ASSIGNED — ALLOCATE"
+    mutations:
+      - "INSERT 2 rows into table_2 (customer-side + csp-side)"
+      - "Generate 2 unique 5-digit PINs via random + uniqueness check"
+      - "Set customer-side.other_party_mobile = owner.registered_mobile (the OWNING CSP, default executor)"
+      - "Set csp-side.other_party_mobile = customer.registered_mobile"
+      - "Set csp-side.csp_user_id = owner's csp_user_id; csp-side.csp_id = owner's csp_id"
+      - "INSERT into pin_audit_logs (issuance)"
+      - "Dispatch SMS+WA to customer.registered_mobile via Gupshup"
+    emits_es_event: "ES_CSPIVR_PIN_ISSUED, ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED (×2 — both sides flip to available)"
+
+  - trigger: "ES_INSTALL_TECHNICIAN_ASSIGNED — UPDATE_MOBILE_ONLY (covers first-delegation, A→B reassign, AND recall-to-Owner)"
+    mutations:
+      - "Resolve executor mobile via csp-gateway: GET /api/internal/csp-users/{executor_id}"
+      - "UPDATE customer-side row.other_party_mobile = resolved.registered_mobile (NO branching on is_self_assigned — the executor_id is authoritative)"
+      - "UPDATE csp-side row.csp_user_id = executor_id"
+      - "PIN preserved on both rows"
+      - "INSERT into call_audit_logs"
+      - "On is_self_assigned=false: Push notification to the new technician"
+      - "On is_self_assigned=true after a prior delegation: this is the RECALL path — customer-side mobile flips back to Owner. Verified via csp-tas-service.InstallationStateMachine line 182 self-loop on TECHNICIAN_ASSIGNED + ASSIGN_TECHNICIAN."
+    emits_es_event: "ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED (when CTA visibility flips per is_self_assigned, per ASM-ES-INSTALL-14)"
+
+  - trigger: "ES_RESTORE_TECHNICIAN_ASSIGNED — UPDATE_MOBILE_ONLY"
+    mutations:
+      - "UPDATE customer-side row.other_party_mobile = assigned_technician.registered_mobile"
+      - "UPDATE csp-side row.csp_user_id = assigned_technician_id; csp-side row.csp_id (if cross-CSP reassign)"
+      - "PIN preserved"
+      - "Push notification to new technician"
+    emits_es_event: "ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED (if applicable)"
+
+  - trigger: "ES_RESTORE_TASK_RECALLED — REVERT_TO_OWNER"
+    mutations:
+      - "REVERT customer-side row.other_party_mobile = owner.registered_mobile"
+      - "REVERT csp-side row.csp_user_id = owner's csp_user_id"
+      - "PIN preserved"
+    emits_es_event: "ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED (Owner now sees the CTA again; technician loses it)"
+
+  - trigger: "ES_NBREC_TASK_ASSIGNED — UPDATE_MOBILE_ONLY (delegation)"
+    mutations:
+      - "UPDATE customer-side row.other_party_mobile = team_member.registered_mobile"
+      - "UPDATE csp-side row.csp_user_id = team_member.csp_user_id"
+      - "PIN preserved. Subsequent re-emissions with executor_id = Owner revert to Owner."
+
+  - trigger: "Any ES_<family>_<terminal_state> — DEALLOCATE"
+    mutations:
+      - "UPDATE table_2 SET expires_at = now(), cooldown_until = now() + 90d WHERE ticket_id = :ticket_id"
+      - "INSERT into call_audit_logs"
+    emits_es_event: "ES_CSPIVR_PIN_EXPIRED, ES_CSPIVR_MASKED_CALL_AVAILABILITY_CHANGED (×2 — both sides flip to unavailable)"
+
+  - trigger: "initiateCall API received from CSP App or Customer App"
+    mutations:
+      - "INSERT into table_1 with from_list, to, ticket_id, direction, created_at, ttl_expires_at"
+      - "INSERT into call_audit_logs (cta_tapped)"
+    emits_es_event: "none (this is the pre-dial CTA hook, no Exotel call yet)"
+
+  - trigger: "Exotel Connect API 1 (dial received) — Table 1 hit"
+    mutations:
+      - "INSERT into call_audit_logs (dial_received, table_1_hit)"
+      - "Return bridge response to Exotel"
+    emits_es_event: "ES_CSPIVR_CALL_BRIDGE_INITIATED"
+
+  - trigger: "Exotel Connect API 1 — Table 1 miss → Table 2 by-FROM = 1"
+    mutations:
+      - "INSERT into call_audit_logs (table_2_lookup_by_from, single_match)"
+      - "Stash user_type + csp_id + table_2_row_count against CallSid in Redis"
+      - "Return bridge response"
+    emits_es_event: "ES_CSPIVR_CALL_BRIDGE_INITIATED"
+
+  - trigger: "Exotel Connect API 1 — Table 1 miss → Table 2 by-FROM ≥ 2 or 0"
+    mutations:
+      - "INSERT into call_audit_logs"
+      - "Stash user_type + csp_id + table_2_row_count against CallSid"
+      - "Return empty destination → Did not Dial transition"
+    emits_es_event: "none yet"
+
+  - trigger: "Exotel Passthru Sync to API 2 (identify-caller)"
+    mutations:
+      - "Read cache by CallSid; if missing, do a fresh identity + count resolution"
+      - "INSERT into call_audit_logs"
+      - "Return {select: customer_no_pin | csp_no_pin | customer_with_pin | csp_with_pin | unknown}"
+    emits_es_event: "none"
+
+  - trigger: "Exotel Gather → Connect API 3 (resolve-pin)"
+    mutations:
+      - "INSERT into pin_audit_logs (attempt outcome)"
+      - "INSERT into call_audit_logs"
+      - "On valid PIN: return bridge response. On invalid: empty destination."
+    emits_es_event: "ES_CSPIVR_CALL_BRIDGE_INITIATED (on valid PIN) | ES_CSPIVR_PIN_LOCKOUT (on attempt-2 failure)"
+
+  - trigger: "Exotel disposition webhook (end-of-call)"
+    mutations:
+      - "INSERT into call_audit_logs (full disposition payload)"
+    emits_es_event: "ES_CSPIVR_CALL_BRIDGE_OUTCOME"
+
+  - trigger: "Exotel Passthru-Async-on-DNP"
+    mutations:
+      - "INSERT into call_audit_logs"
+      - "INSERT into outbox table (with the ES_CSPIVR_MISSED_CALL_DETECTED payload) in the same DB transaction"
+      - "Outbox worker drains to event bus → csp-notification-service consumes → fans out to PN / SMS / WA (see §19)"
+    emits_es_event: "ES_CSPIVR_MISSED_CALL_DETECTED"
+    atomicity_note: "DB save + outbox INSERT are atomic. CleverTap / Gupshup / FCM calls are NOT made by IVR — they are downstream of the bus."
+
+# ============================================================================
+# Section 10 — Allowed Actions
+# ============================================================================
+allowed_actions:
+  applicability: NOT_APPLICABLE
+  rationale: "Capability service. CSPs do not act on IVR candidates — they tap a Call CTA on tasks from OTHER services (Install / Restore / NBREC) and this service handles the call. The allowed_actions model belongs to those services."
+
+# ============================================================================
+# Section 11 — Attention Model
+# ============================================================================
+attention_model:
+  applicability: NOT_APPLICABLE
+  rationale: "Capability service. No execution candidates → no attention triggers, no THRESHOLD_CROSSING, no terminal_attention_rule. CONF-ES-08/09/10/11 mark NOT_APPLICABLE."
+
+# ============================================================================
+# Section 11a — Attention Trigger Logic
+# ============================================================================
+attention_trigger_logic:
+  applicability: NOT_APPLICABLE
+  rationale: "See §11."
+
+# ============================================================================
+# Section 11b — TAS Candidates API
+# ============================================================================
+tas_candidates_api:
+  applicability: NOT_APPLICABLE
+  rationale: |
+    csp-ivr-service is NOT a TAS source service. Per TAS v2.2 §4 ("Source
+    Services v1"), only 5 services produce candidates: Support & Resolution,
+    Connection Install, Recharge Validator, Asset Custody, Coverage Service.
+    IVR is a capability used by CSPs alongside their tasks, not a task source.
+  tas_integration_status: "deferred — no integration needed in foreseeable future"
+  flagged_alternatives_considered:
+    - "Treating each PIN-issued ticket as a 'standby IVR candidate' — rejected. CSPs don't act on IVR; the call IS the action and it's user-initiated. Would create a queue of 1000s of zero-action 'candidates'."
+
+# ============================================================================
+# Section 12 — App Ack Interface
+# ============================================================================
+app_ack_interface:
+  applicability: NOT_APPLICABLE
+  rationale: "No candidates → no attention versions → no ack."
+
+# ============================================================================
+# Section 13 — Threshold Model
+# ============================================================================
+threshold_model:
+  applicability: NOT_APPLICABLE
+  rationale: "No candidates → no deadlines → no threshold_state. PIN cooldown (90 days) is a parameter, not a threshold."
+
+# ============================================================================
+# Section 14 — Write Paths to OS
+# ============================================================================
+os_write_paths: []
+os_write_paths_note: |
+  csp-ivr-service does not write to any OS. All persistence is within its
+  own data stores (Tables 1, 2, sim_inventory, audit logs). Reads from
+  CL OS identity tables (customers, csp_users) are READ_ONLY.
+
+# ============================================================================
+# Section 15 — API Contracts (Exotel-facing + internal)
+# ============================================================================
+api_contracts:
+
+  exotel_facing:
+    auth: "v1 — IP allowlist (Exotel publishes egress IP range). HMAC signed-payload pending Exotel confirmation."
+
+    api_1_resolve_caller:
+      method: GET
+      path: "/ivr/resolve-caller"
+      called_by: "Initial Connect applet (Dynamic URL)"
+      query_params_from_exotel:
+        - CallSid
+        - From
+        - To
+        - CallFrom
+        - CallTo
+        - Direction
+        - "flow_id, Created, StartTime, EndTime, CurrentTime, CallType, DialCallDuration, DialWhomNumber (standard)"
+      backend_behaviour:
+        - "Log dial_received."
+        - "Lookup Table 1 by From. If active row → return bridge response with destination = table_1.to."
+        - "Else Table 2 by-FROM (resolve against customers / csp_users / sim_inventory)."
+        - "Stash user_type + csp_id + table_2_row_count against CallSid."
+        - "1 row → return bridge. ≥ 2 rows or 0 rows → return empty destination."
+        - "Always returns HTTP 200."
+      response_bridge:
+        shape: |
+          {
+            "destination": { "numbers": ["+91XXXXXXXXXX"] },
+            "outgoing_phone_number": "+91<masked_did>",
+            "record": true,
+            "recording_channels": "dual",
+            "max_ringing_duration": 30,
+            "fetch_after_attempt": false
+          }
+      response_no_bridge:
+        shape: '{ "destination": { "numbers": [] } }'
+        downstream_effect: "Triggers Exotel 'We didn't dial anyone' transition → Passthru Sync → API 2."
+      slo: "p95 < 200 ms within Exotel's 5s budget."
+      idempotency: "Safe — pure read. Same input → same output for the lifetime of Table 1 / Table 2 state."
+
+    api_2_identify_caller:
+      method: GET
+      path: "/ivr/identify-caller"
+      called_by: "Passthru Sync applet — twice in the flow (first after API 1 empty, second after PIN exhausted)."
+      query_params_from_exotel: "Standard set (CallSid, From, To, Direction, etc.)"
+      backend_behaviour:
+        - "Read cache: {CallSid → user_type, csp_id, table_2_row_count}."
+        - "If cache present: assemble composite discriminator + return."
+        - "If cache missing: fresh resolution against identity tables + Table 2 by-FROM count."
+      response_format:
+        status: 200
+        content_type: "text/plain"
+        body: '{"select": "<value>"}'
+      branch_values:
+        - value: customer_no_pin
+          condition: "user_type = customer AND table_2_row_count = 0"
+          routes_to: "Greeting (call centre 88803 22222) → Hangup"
+        - value: csp_no_pin
+          condition: "user_type = csp AND table_2_row_count = 0"
+          routes_to: "Greeting (trust line 78368 11111) → Hangup"
+        - value: customer_with_pin
+          condition: "user_type = customer AND table_2_row_count ≥ 2"
+          routes_to: "Gather attempt 1 (PIN disambiguates which ticket)"
+        - value: csp_with_pin
+          condition: "user_type = csp AND table_2_row_count ≥ 2"
+          routes_to: "Gather attempt 1 (PIN disambiguates which ticket)"
+        - value: unknown
+          condition: "user_type = unknown (FROM not in identity tables)"
+          routes_to: "Gather attempt 1 (caller may hold forwarded PIN — UC 13)"
+      error_handling: |
+        On unrecoverable backend error: return 200 with {"select": "unknown"}.
+        Routes caller to PIN Gather first (forwarded-PIN holders still get
+        through) and to trust-line dead-end if they fail. Never 5xx — Exotel's
+        Passthru 5xx fallback is undocumented.
+      multi_match_enforcement: |
+        FROM matching BOTH customer AND CSP record is a data-model invariant
+        violation. LOG.error and return customer-side value (customer takes
+        precedence as more user-visible). Surface on ops dashboard.
+
+    api_3_resolve_pin:
+      method: GET
+      path: "/ivr/resolve-pin"
+      called_by: "Each PIN-validating Connect applet (×2 — attempt 1 and attempt 2)."
+      query_params_from_exotel: "Standard set PLUS `digits` (quote-wrapped per Exotel Gather docs — MUST strip)."
+      backend_behaviour:
+        - "Strip literal double-quotes from `digits`. Validate format (5 digits)."
+        - "Read cached user_type + csp_id from CallSid."
+        - "Lookup Table 2 by PIN; apply scoping per user_type."
+        - "1 row → bridge. Else empty destination."
+      scoping_rules:
+        - user_type: unknown
+          rule: "WHERE pin = :pin AND expires_at IS NULL (no scoping; UC 13 colleague case)"
+        - user_type: csp
+          rule: "WHERE pin = :pin AND side = 'csp' AND csp_id = :resolved_csp_id"
+        - user_type: customer
+          rule: "WHERE pin = :pin AND side = 'customer' AND customer_mobile = :From"
+      response_format: "Same as API 1 (bridge or empty destination)."
+      idempotency: "Stateless. No backend attempt counter — flow structure caps at 2."
+
+    audio_deadend:
+      method: GET
+      path: "/audio/deadend"
+      called_by: "Exotel Playback applet (if Playback supports dynamic audio URL)."
+      backend_behaviour:
+        - "Read cached user_type from CallSid."
+        - "Stream / 302 to appropriate audio file:"
+        - "  customer → customer-deadend.mp3 (88803 22222)"
+        - "  csp / unknown → non-customer-deadend.mp3 (78368 11111)"
+      fallback: "If Playback does not support dynamic URL: a universal greeting plays; backend logs which branch would have fired."
+
+    disposition_webhook:
+      method: POST
+      path: "/log/disposition"
+      called_by: "Exotel disposition webhook (end-of-call)."
+      body_shape: |
+        { CallSid, From, To, DialCallStatus, DialCallDuration, RecordingUrl, StartTime, EndTime, BridgedTo }
+      backend_behaviour: "INSERT into call_audit_logs (analytics-grade). DOES NOT fire missed-call alerts (those fire from Passthru-Async-on-DNP, faster and more reliable)."
+
+    logging_endpoints:
+      auth: "IP allowlist (same as other Exotel-facing)"
+      method: GET (Exotel Passthru is HTTP GET)
+      endpoints:
+        - path: "/log/dial_received"
+          when: "Exotel registered call on masked number"
+        - path: "/log/pin_prompted"
+          when: "Gather applet fired"
+        - path: "/log/pin_entered"
+          when: "Digits collected"
+        - path: "/log/pin_lockout"
+          when: "PIN attempts exhausted"
+        - path: "/log/deadend_played"
+          when: "Playback completed"
+        - path: "/log/bridge_connected"
+        - path: "/log/bridge_dnp_initial"
+        - path: "/log/bridge_connected_pin"
+        - path: "/log/bridge_dnp_pin"
+        - path: "/log/bridge_connected_pin_retry"
+        - path: "/log/bridge_dnp_pin_retry"
+      behaviour: "Fire-and-forget — backend returns 200 immediately, writes async to call_audit_logs."
+
+  app_facing:
+    auth: "Mobile JWT (existing CSP App / Customer App auth)."
+    initiate_call:
+      method: POST
+      path: "/api/calls/initiate"
+      called_by: "CSP App and Customer App when user taps Call CTA on a task."
+      request_body:
+        - csp_user_id (CSP App)
+        - customer_id (Customer App)
+        - ticket_id
+        - direction (csp_to_customer | customer_to_csp)
+      backend_behaviour:
+        - "Resolve from_list (CSP-side: all SIMs + registered mobile; Customer-side: registered mobile)"
+        - "Resolve to_mobile from Table 2 by (ticket_id, opposite-side)"
+        - "INSERT Table 1 row with TTL"
+        - "Return masked_number to app"
+      response_body:
+        - masked_number
+        - mapping_id
+        - ttl_seconds
+
+    masked_call_available_check:
+      method: GET
+      path: "/api/calls/available"
+      query_params: "?ticket_id=...&side=..."
+      called_by: "Backend (NOT directly by apps) — derives maskedCallAvailable boolean on task drilldown DTOs."
+      backend_behaviour: "SELECT 1 FROM table_2 WHERE ticket_id = :ticket_id AND side = :side AND expires_at IS NULL."
+      response_body: "{ available: boolean }"
+
+# ============================================================================
+# Section 16 — Exotel Applet Wiring
+# ============================================================================
+exotel_applet_wiring:
+  canonical_flow_reference: "See `exotel-app-bazaar-flow.png` and §Canonical flow ASCII in technical notes."
+  primitives_used:
+    - "Connect (Dynamic URL) — 3 instances: API 1, API 3 attempt-1, API 3 attempt-2"
+    - "Passthru Async — DB writes + CleverTap fires (fire-and-forget)"
+    - "Passthru Sync — API 2 (decision endpoint, drives Switch Case)"
+    - "Gather — DTMF collection (5 digits, finish on #, 5s timeout)"
+    - "Switch Case — 5 branches (customer_no_pin / csp_no_pin / customer_with_pin / csp_with_pin / unknown)"
+    - "Greeting — static Hindi audio (6 variants per dead-end)"
+    - "Playback — dead-end audio (if dynamic URL supported)"
+  data_flow_rules_compliance:
+    rule_1_get_only: "All 3 Exotel-facing APIs use HTTP GET. POST not supported."
+    rule_2_strip_digits_quotes: "API 3 MUST strip('\"') from `digits` per Gather docs."
+    rule_3_no_action_redirect: "Connect responses cannot redirect flow; branching via Passthru Sync → Switch Case downstream."
+    rule_4_three_connect_outcomes: "Connected / DNP / Did not Dial — wired in App Bazaar transitions."
+    rule_5_switch_case_body_branching: "Switch Case branches on {\"select\": \"<value>\"} body, not status code. Always 200."
+    rule_6_fetch_after_attempt_false: "All Connect responses set fetch_after_attempt: false to avoid double-billing on DNP."
+    rule_7_outgoing_phone_number_override: "Response field `outgoing_phone_number` overrides Caller ID per call (set to the masked DID)."
+    rule_8_greeting_audio_specs: "Greeting MP3s: 8-bit, 8000 Hz, mono, < 2 MB."
+    rule_9_standard_call_params: "Every webhook carries CallSid, From, To, CallFrom, CallTo, Direction, Created, StartTime, EndTime, etc."
+    rule_10_no_auth_header: "Exotel sends no auth header out-of-box. IP allowlist for v1; HMAC pending confirmation."
+
+  switch_case_config:
+    first_invocation_position: "After initial Connect (API 1) returns 'Did not Dial' → Passthru Sync (API 2) → Switch Case."
+    second_invocation_position: "After PIN exhausted on both attempts → Passthru Sync (API 2 again) → Switch Case (all 5 branches route to Greeting + Hangup)."
+    branch_routing: "See API 2 contract §15 above."
+
+# ============================================================================
+# Section 17 — PIN Lifecycle
+# ============================================================================
+pin_lifecycle:
+  generation:
+    - "Two PINs minted on the family-specific **CANDIDATE_CREATION** event (Install: ES_INSTALL_CANDIDATE_CREATED; Restore: ES_RESTORE_CANDIDATE_CREATED; NBREC: ES_NBREC_RECOVERY_TASK_ASSIGNED) — NOT on technician assignment."
+    - "5-digit numeric, generated by random + uniqueness retry (skipping active + cooldown rows)."
+    - "PIN is immutable for the row's lifetime — no rotation, ever."
+    - "**Default executor at allocation = OWNING CSP (the Owner / partner account holder).** customer-side row.other_party_mobile = owner.registered_mobile. csp-side row.csp_user_id = owner's csp_user_id."
+    - "Pre-technician-assignment, customer-initiated calls bridge to the Owner. This preserves today's behaviour where Restore tasks allow customer↔CSP calling from PENDING_ACCEPTANCE before any technician is delegated."
+    - "Technician assignment is an OPTIONAL delegation step — it triggers a mobile-only UPDATE (see §5 phase: UPDATE_MOBILE_ONLY), not a fresh allocation. PIN is preserved."
+
+  distribution:
+    customer:
+      channels: ["SMS via Gupshup", "WhatsApp via BSP"]
+      trigger: "Listener consumes family-specific technician-assignment event."
+      content: "Masked number + customer-side PIN + dial instruction (Hindi-first; DLT-templated)."
+    csp:
+      channels: ["CSP App ticket card (UI surface)"]
+      trigger: "App fetches via existing ticket API; csp-ivr-service derives maskedCallAvailable via §15 endpoint."
+      content: "PIN displayed prominently on the ticket card so a screenshot includes it cleanly."
+    colleague_uc13:
+      channels: ["CSP forwards their SMS, OR shares screenshot of ticket card via WhatsApp"]
+      trigger: "Manual — out of service scope."
+
+  reassignment_mobile_only_update:
+    - "PIN is NOT rotated."
+    - "Customer-side row: rewrite other_party_mobile to new technician's phone. NO new SMS — customer's existing PIN still works."
+    - "CSP-side row: rewrite csp_user_id (and csp_id if cross-org)."
+    - "Old technician's ticket card disappears; new technician sees existing PIN on theirs."
+    - "Push notification to new technician (no customer-facing comm)."
+
+  expiry_cooldown_gc:
+    soft_delete_on: "Terminal-state event in owning ES."
+    cooldown_duration: "ES_CSPIVR_PIN_COOLDOWN_DAYS (default 90)"
+    cooldown_behaviour: |
+      Row invisible to active lookups. PIN value reserved from generation
+      pool. Entering a cooldown PIN → 'invalid PIN' → dead-end (not bridged
+      to a different ticket). Protects against stale-PIN cross-pollination.
+    hard_delete_on: "Background job — cooldown_until + ES_CSPIVR_PIN_AUDIT_RETENTION_DAYS (default 365)."
+
+  scoping_csp_side_guardrail:
+    rule: |
+      When PIN is entered by a known CSP caller (FROM in sim_inventory or
+      matched a csp_users.registered_mobile), the lookup is restricted to
+      side='csp' AND csp_id = caller's resolved csp_id.
+    rationale: |
+      Prevents one CSP guessing or accidentally reaching another CSP's
+      customer via a forwarded PIN. Customer-side PIN lookups are unscoped
+      (per-ticket PIN + 2-attempt cap deemed sufficient).
+
+# ============================================================================
+# Section 18 — Telemetry / Logging Catalog
+# ============================================================================
+telemetry_catalog:
+
+  call_entry_and_cta:
+    - event: cta_tapped
+      when: "Call CTA tapped in CSP App or Customer App."
+    - event: initiate_call_received
+      when: "Backend received the initiateCall request."
+    - event: table_1_write
+    - event: masked_number_returned
+
+  dial_routing:
+    - event: dial_received
+    - event: table_1_lookup
+    - event: mapping_hit
+    - event: user_identification_called
+    - event: user_identification_response
+    - event: direct_bridge_single_ticket
+    - event: pin_prompted
+    - event: pin_entered
+      payload_notes: "attempt_number, length — NEVER the digits."
+    - event: pin_attempt_valid
+    - event: pin_attempt_invalid
+    - event: pin_lockout
+    - event: pin_abandoned
+    - event: table_2_lookup_by_pin
+    - event: table_2_lookup_by_from
+    - event: pin_scoping_rejected
+
+  bridge_and_disposition:
+    - event: bridge_initiated
+    - event: bridge_answered
+    - event: bridge_not_answered
+    - event: disposition_webhook_received
+
+  dead_end:
+    - event: deadend_call_centre_played
+    - event: deadend_trust_line_played
+    - event: deadend_sms_sent
+
+  post_call_notifications:
+    - event: clevertap_missed_call_fired
+    - event: missed_call_alert_delivered
+
+  pin_lifecycle:
+    - event: ticket_pin_issued
+    - event: pin_sms_sent
+    - event: pin_sms_delivered
+    - event: pin_sms_failed
+    - event: ticket_pin_expired
+
+  system_health:
+    - event: user_identification_api_timeout
+    - event: user_identification_api_error
+    - event: exotel_primary_url_5xx
+    - event: exotel_disposition_webhook_failed
+    - event: table_2_pin_collision_detected
+
+# ============================================================================
+# Section 19 — Notification Service Integration (outbound for PN/SMS/WA)
+# ============================================================================
+notification_integration:
+
+  architectural_principle: |
+    csp-ivr-service is responsible for DETECTING that a call was missed; it is
+    NOT responsible for deciding HOW the missed party is notified (push vs SMS
+    vs WhatsApp vs in-app banner) or for calling channel-specific providers.
+    All channel routing is owned by csp-notification-service, which consumes
+    `ES_CSPIVR_MISSED_CALL_DETECTED` from the event bus.
+
+  ivr_outbound_contract:
+    event: "ES_CSPIVR_MISSED_CALL_DETECTED (see §6 events.produces for full payload)"
+    bus_topic: "csp.ivr.missed-call"
+    delivery: "At-least-once via transactional outbox. IVR commits the call_audit_logs row + the outbox row in one DB transaction; a separate worker drains the outbox to the bus."
+
+  notification_service_consumer_contract:
+    consumer: "csp-notification-service"
+    routing_logic_owned_by_consumer:
+      - "Look up the missed_party_id's device registry → choose PN channel (FCM for native push, CleverTap for campaign push) or fall back to SMS/WA if no active device."
+      - "Look up missed_party_id's notification preferences (PN opt-in, SMS opt-in, language)."
+      - "Choose template per ticket_type + missed_party_type + language (Hindi-first)."
+      - "Fire the channel-specific delivery (CleverTap event with campaign mapping, Gupshup SMS, BSP WhatsApp)."
+      - "Record delivery receipts back to its own audit log."
+    deep_link: "Notification service uses the `callback_deeplink` field on the event payload as the tap target on the PN."
+
+  missed_call_notification_doubles_as_pin_reminder:
+    use_case: |
+      Every missed-call notification (PN / SMS / WA) carries the **missed
+      party's own PIN** so they can call back from any SIM and bridge
+      through to the other party — even from an unregistered phone.
+
+      Critical scenarios this unlocks:
+      - **UC 11 fallback**: Customer is on a relative's phone when the
+        CSP calls. Customer misses it. Notification arrives on customer's
+        registered mobile (SMS/WA — they don't need to be in-app). When
+        they dial the masked number from any phone, they enter the PIN
+        from the notification → bridge.
+      - **UC 12 fallback**: CSP missed a customer call. CSP App push
+        notification includes the CSP-side PIN. When the CSP calls back
+        from a non-inventoried SIM (forgot to register a new phone), the
+        PIN in the PN gets them through.
+      - **UC 09 / UC 10 (recognised callback)**: Even when the missed
+        party calls back from their registered mobile, the PIN reminder
+        is useful if Table 1 has expired — they have the PIN handy if
+        IVR prompts for one (multi-ticket case).
+
+    privacy_note: "The PIN embedded in the notification is the recipient's OWN PIN — already in their possession from ticket-open. The notification is a convenience reminder, not new disclosure."
+
+    template_treatment:
+      pn: "PN body shows 'Tap to call back' (deep-link) + PIN displayed prominently in case the user dials from a different phone."
+      sms_wa: "Template line: '<Caller> tried to reach you about your <ticket_type>. Call <masked_number> and enter PIN <pin> to connect.'"
+
+  channels_currently_planned_by_notification_service:
+    - channel: "Push Notification (CSP App)"
+      when: "missed_party_type = csp AND CSP App active install present"
+      delivery: "Via FCM (or CleverTap PN — Notification service's choice)"
+      copy_template: "Hindi-first, includes caller name + ticket_type + tap-to-callback + PIN reminder"
+    - channel: "Push Notification (Customer App)"
+      when: "missed_party_type = customer AND Customer App active install present"
+      delivery: "Via FCM (or CleverTap PN)"
+      copy_template: "Same — PIN reminder included"
+    - channel: "SMS (DLT-templated)"
+      when: "Fallback when PN delivery fails OR no active app install (most customers)"
+      delivery: "Via Gupshup with 'Wiom' sender ID"
+      copy_template: "Includes PIN — primary channel for customers without app"
+    - channel: "WhatsApp"
+      when: "Customer's WA opted-in"
+      delivery: "Via BSP with approved templates"
+      copy_template: "Includes PIN"
+
+  why_ivr_doesnt_fire_clevertap_directly:
+    rationale: |
+      In an earlier draft, IVR fired CleverTap events directly from the
+      Passthru-Async-on-DNP hop. This was rejected because:
+      1. Conflates IVR (a routing capability) with notification policy
+         (channel preferences, copy templates, recipient preferences, delivery
+         receipts).
+      2. Locks the notification stack to CleverTap. Future PN providers
+         (FCM-native, OneSignal, etc.) would require IVR changes.
+      3. Duplicates concerns: csp-notification-service already exists to own
+         multi-channel routing for every event-driven notification in Wiom.
+      Cleanest contract: IVR emits a domain event with all the data the
+      Notification service needs; routing decisions live in one place.
+
+  what_ivr_still_owns_directly:
+    - "Dead-end SMS — sent inline from the Passthru applet that hits the dead-end (NOT via Notification service). Rationale: dead-end SMS is part of the IVR's own graceful-fallback contract, fires within the call session, and shouldn't depend on an async notification consumer being healthy. Open TBD: should this also migrate to Notification service v2 once it supports synchronous SMS dispatch?"
+    - "PIN delivery SMS / WA at ticket-open — sent inline by IVR's listener (see §17 PIN lifecycle distribution). Same rationale: tightly coupled to PIN generation; Notification service v1 doesn't yet model 'credential delivery' as a use case."
+
+# ============================================================================
+# Section 20 — Comms-Layer Dependencies
+# ============================================================================
+comms_layer_dependencies:
+  outbound_sms_must_use:
+    - "DLT-registered templates with 'Wiom' sender ID (not generic 11444XXXX)."
+  outbound_whatsapp_must_use:
+    - "WhatsApp BSP with approved templates."
+  default_language: "Hindi (voice-first Bharat user)."
+  language_expansion: "Per CSP geography post-Hindi. Solution-team owned."
+
+  trust_layers:
+    - layer: "Truecaller whitelisting"
+      effect: "Green verified banner with Wiom name (most Bharat users have Truecaller installed)."
+    - layer: "VLT (Verified Logo Trustmark)"
+      effect: "Telco-level verified-business-caller flag, complementary to Truecaller."
+
+  messages_to_ship_before_launch:
+    - "Ticket-open SMS / WhatsApp to customer (masked number + customer-side PIN + dial instruction)."
+    - "Missed-call alert SMS / WhatsApp (CSP-side and customer-side variants)."
+    - "Dead-end SMS to caller's FROM (call centre or trust line variant)."
+    - "IVR voice prompts (PIN entry, dead-end call-centre, dead-end trust-line)."
+
+# ============================================================================
+# Section 21 — Use Cases (13)
+# ============================================================================
+use_cases:
+  identified_app:
+    - id: UC_01
+      name: "CSP dials from CSP App via registered SIM"
+      path: Path_1 (Table 1 hit)
+      expected: "Bridge directly. No PIN."
+    - id: UC_02
+      name: "Customer dials from Customer App via registered SIM"
+      path: Path_1
+
+  identified_dialer_csp:
+    - id: UC_03
+      name: "CSP dials previously-used masked number — single active ticket"
+      path: Path_2 (Table 2 by-FROM = 1)
+    - id: UC_04
+      name: "CSP dials masked number — multi-ticket"
+      path: Path_3 (Table 2 by-FROM ≥ 2 → PIN prompt)
+    - id: UC_05
+      name: "CSP callback on customer-initiated MN — single ticket"
+      path: Path_2
+    - id: UC_06
+      name: "CSP callback on customer-initiated MN — multi-ticket"
+      path: Path_3
+
+  identified_dialer_customer:
+    - id: UC_07
+      name: "Customer dials masked number — single ticket (~99%)"
+      path: Path_2
+    - id: UC_08
+      name: "Customer dials masked number — multi-ticket (~1%)"
+      path: Path_3
+    - id: UC_09
+      name: "Customer callback after CSP missed-call — single ticket"
+      path: Path_2
+    - id: UC_10
+      name: "Customer callback after CSP missed-call — multi-ticket"
+      path: Path_3
+
+  not_identified:
+    - id: UC_11
+      name: "Customer dials from unregistered SIM (relative's phone, secondary SIM)"
+      path: Path_4 (Unknown FROM → PIN prompt)
+    - id: UC_12
+      name: "CSP dials from unregistered SIM (not in sim_inventory)"
+      path: Path_4
+    - id: UC_13
+      name: "CSP forwards masked number to colleague (colleague's phone unregistered)"
+      path: Path_4
+      implementation_note: "PIN must be visible on ticket-card screenshot. UI requirement."
+
+  edge_cases_not_standalone:
+    - case: "Recognised user, 0 active tickets (e.g., closed-ticket customer dialling back) → skip PIN entirely → dead-end IVR."
+    - case: "2 wrong PIN attempts on Path 3 or Path 4 → dead-end IVR with user_type-based helpline."
+
+# ============================================================================
+# Section 22 — Design Decisions
+# ============================================================================
+design_decisions:
+  - decision: "Single bidirectional masked number (not MN1/MN2)"
+    rationale: "Removes wrong-direction-dial failure (today CSPs see MN1 in call log, try to dial back, drops because MN1 is one-way)."
+
+  - decision: "Table 2 by-FROM is the primary lookup at Table 1 miss"
+    rationale: "Table 2 encodes everything: caller identity (via JOIN with sim_inventory + identity tables) AND counterparty (other_party_mobile on the row). Single resolution returns 0/1/many → branches the entire flow. user_identification API ONLY fires when Table 2 by-FROM = 0."
+
+  - decision: "Single ivr-routing-service owns the entire system"
+    rationale: "Tables 1+2, sim_inventory, user_identification, Exotel surface, ES listener, SMS dispatch, CleverTap firing, maskedCallAvailable derivation. Avoids cross-service latency on the hot path. One team, one DB, one deployment."
+
+  - decision: "Discard legacy es-ivr-calling-service; build sim_inventory fresh"
+    rationale: "Existing service was a thin wrapper around the IVR microservice with no audit logging. Starting fresh gives proper add/remove audit, consistent ownership, removes integration ambiguity."
+
+  - decision: "API 2 returns 5-value composite discriminator (not just user_type)"
+    rationale: |
+      The Switch Case at the post-Connect-empty-destination hop must distinguish 4 outcomes for recognised callers: (no active ticket × customer/csp = dead-end) and (≥ 2 active tickets × customer/csp = PIN gather). A 3-value user_type would collapse these and send recognised multi-ticket callers to the wrong dead-end. Composite values encode both signals in one applet hop; API 1 already stashes both against CallSid.
+    alternative_rejected: "Extra Passthru after Switch Case to check ticket-count — adds ~200-300 ms per affected call."
+
+  - decision: "Unknown FROM routes to PIN gather (not direct to dead-end)"
+    rationale: "Critical for UC 13 (colleague forwarding) — colleague isn't recognised but holds a forwarded PIN. Giving up immediately on unknown FROM would block this case."
+
+  - decision: "Two PINs per ticket (customer-side + CSP-side)"
+    rationale: "Symmetric authorisation; either party can authenticate when off-CTA. PIN encodes ticket + direction."
+
+  - decision: "Customer-side PIN via SMS; CSP-side via app ticket card only"
+    rationale: "Customers are not app-engaged; SMS reaches them. CSPs see ticket details in app — no SMS noise."
+
+  - decision: "5-digit PIN, random with uniqueness retry"
+    rationale: "100K combos × 2-attempt cap = 0.002% brute-force probability per call. Sized against today's ~65K used of 100K pool."
+
+  - decision: "PIN is immutable for row lifetime — no rotation, ever"
+    rationale: "PIN is shared with both parties at ticket-open. Rotating invalidates what they hold and forces re-distribution. PIN is already short, scoped, and 2-attempt-capped."
+
+  - decision: "Reassignment rewrites mobile only, leaves PIN untouched"
+    rationale: "Both parties keep PINs they already have. Only bridge target (other_party_mobile) changes underneath. Avoids 'which PIN is current' failure mode."
+
+  - decision: "PIN cooldown after ticket close (90 days)"
+    rationale: "Closed-ticket PIN reserved (excluded from generation pool) for 90 days. Protects against stale-PIN cross-pollination."
+
+  - decision: "PIN scoping for CSPs (sim_inventory match → restricted lookup)"
+    rationale: "Prevents one CSP from guessing/reaching another CSP's customer. Backstop on stale-PIN risk on CSP side."
+
+  - decision: "2-attempt cap per call"
+    rationale: "App Bazaar flow constraint — more retries doubles applet count per attempt. Brute-force at 2 attempts × 100K = 0.002%."
+
+  - decision: "Dead-end ALSO sends SMS, not just voice"
+    rationale: "Voice ephemeral; SMS lets the caller act later."
+
+  - decision: "One bidirectional DID, not a pool"
+    rationale: "Truecaller + VLT verification applied to one number. No pool-picking algorithm."
+
+  - decision: "Truecaller whitelisting reuses one of MN1/MN2"
+    rationale: "No fresh whitelisting work; verified status carries forward. The other number eventually decommissioned."
+
+  - decision: "Missed-call alerts via CleverTap campaigns"
+    rationale: "Reuses Wiom's existing campaign infrastructure."
+
+  - decision: "Hindi as default IVR language"
+    rationale: "Voice-first Bharat user. English IVR is a hard blocker."
+
+  - decision: "Missed-call alerts fire from Passthru-Async-on-DNP, NOT from disposition webhook"
+    rationale: "DNP detected within seconds at Passthru; disposition arrives after end-of-call (variable lag). Single source of truth avoids duplicates or requires CallSid dedup."
+
+  - decision: "IVR emits ES_CSPIVR_MISSED_CALL_DETECTED to event bus; csp-notification-service owns channel routing (PN / SMS / WA)"
+    rationale: |
+      IVR is a routing capability, not a notification policy engine. Letting
+      Notification service own channel selection means: (a) channel preferences,
+      copy templates, language routing, and provider migrations all live in
+      one place; (b) IVR doesn't need to know which users have which apps
+      installed; (c) future PN providers (FCM-native, OneSignal) don't require
+      IVR changes. Transactional outbox ensures at-least-once delivery so a
+      Notification service blip never loses a missed-call alert.
+
+  - decision: "Missed-call notification carries the missed party's own PIN — doubles as a bridging-credential reminder"
+    rationale: |
+      The PIN-in-notification enables the recipient to call back from ANY
+      SIM (not just their registered mobile) and bridge through to the
+      other party. Without this, a customer who missed the CSP's call from
+      a relative's phone would be stuck at the IVR Gather prompt with no
+      way to recall their PIN. The PIN is the recipient's own (they
+      received it at ticket-open) — embedding it in the reminder is a
+      convenience, not new disclosure. Notification service templates
+      include the PIN inline (PN body, SMS body, WA body).
+
+  - decision: "Calling eligibility scoped to Install / Restore / Pickup tickets"
+    rationale: "No calling on closed or pre-booking tickets. Aligns routing surface with operational reality."
+
+  - decision: "Table 2 entry on CANDIDATE_CREATION event with OWNING CSP (Owner) as default executor — NOT on technician assignment"
+    rationale: |
+      Earlier draft tied allocation to *_TECHNICIAN_ASSIGNED. That was wrong:
+      (a) Restore today allows customer↔CSP calling from PENDING_ACCEPTANCE
+          (before any technician is assigned) — the customer needs to be able
+          to reach the Owner to discuss the complaint.
+      (b) The Owner can also choose to work the ticket themselves without
+          delegating (Restore IN_PROGRESS via START_WORK; Install
+          is_self_assigned=true). PIN must exist in this self-execute path.
+      (c) NBREC already had this right — ES_NBREC_RECOVERY_TASK_ASSIGNED at
+          candidate creation IS the allocation trigger.
+      Universal pattern: allocate at candidate creation with Owner as default;
+      technician assignment is a mobile-only UPDATE (re-points the customer-
+      side bridge target); recall reverts to Owner. PIN never rotates.
+    impact_on_call_routing:
+      pre_technician_assignment: "Customer-initiated call → bridges to OWNER."
+      post_technician_assignment: "Customer-initiated call → bridges to TECHNICIAN."
+      on_recall: "Customer-initiated call → bridges back to OWNER."
+      install_is_self_assigned_true: "Customer-initiated call → bridges to OWNER (who is also the technician)."
+
+  - decision: "Table 2 exit on ES terminal-state transition, not on a generic ticket_close facade"
+    rationale: "Each of the 3 ESs has its own terminal states. Subscribing family-specific terminal events keeps Table 2 in lockstep with ES state machines."
+
+# ============================================================================
+# Section 23 — Trade-offs Accepted
+# ============================================================================
+tradeoffs_accepted:
+  - tradeoff: "Customer callback from dialer now requires a PIN in multi-ticket case"
+    accepted_because: "Customer has the PIN via SMS from ticket-open. The friction is one IVR step."
+
+  - tradeoff: "PIN possession = authorisation, regardless of who holds it (UC 13 colleague forwarding)"
+    accepted_because: "Usability ↔ security trade-off — colleague case is a real CSP workflow."
+
+  - tradeoff: "Customer-side PIN lookup is unscoped (no equivalent to CSP sim_inventory scoping)"
+    accepted_because: "2-attempt cap + per-ticket PIN + 100K PIN space = acceptable risk. Scoping would require identifying the customer, which would re-introduce a Resolve-FROM step."
+
+  - tradeoff: "Immutable PIN means a leaked PIN stays leaked for ticket's lifetime"
+    accepted_because: "Blast radius is one ticket × one direction. PIN possession = authorisation by design (UC 13 requires this). For very long tickets, ES terminal events will close them and cooldown takes over."
+
+  - tradeoff: "PIN pool finite (100K) — cooldown reservation can pressure pool at scale"
+    accepted_because: "Today: ~65K of 100K used. At ~3× growth, escalate to 6-digit PINs (1M pool). Generation alerts at retry threshold."
+
+  - tradeoff: "Table 2 by-FROM JOIN cost on every Table-1-miss call"
+    accepted_because: "Indexed lookup. Target p95 < 50 ms on JOIN; well within Exotel's 5s. Cache user_type against CallSid for downstream applet reuse."
+
+  - tradeoff: "Skip-Gather depends on Exotel supporting `action: playback` in Connect-applet response"
+    accepted_because: "If unsupported, fallback is a Passthru applet between Connect-1 and Gather. Confirm with Exotel before locking."
+
+  - tradeoff: "Listener lag on reassignment can leave Table 2 with old mobile briefly"
+    accepted_because: "Sub-30s window typically. Mitigated by at-least-once outbox + idempotent upsert. Acceptable for a routing capability."
+
+# ============================================================================
+# Section 24 — Deferred / Future Work
+# ============================================================================
+deferred_work:
+  - item: "PIN reminder SMS on prompt abandonment"
+    deferred_because: "Can't determine which PIN to resend mid-call when CSP has multiple tickets, or when caller is unrecognised."
+
+  - item: "6-digit PIN escalation (1M pool)"
+    deferred_until: "Generation algorithm's average retry count exceeds threshold OR active+cooldown reservation approaches 70% of pool. Expect ~3× current Wiom volume."
+    migration_strategy: "Add new column, generate 6-digit for new rows, leave existing 5-digit rows alone (they expire naturally)."
+
+  - item: "PIN expiry notification at ticket close"
+    deferred_because: "Not blocking. Add later if dead-end IVR traffic shows confused customers."
+
+  - item: "Auto-recognition of repeat unknown-SIM callers (Table 4 idea)"
+    deferred_because: "Would add an audit step before PIN that costs UX. Revisit with response-pattern data."
+
+  - item: "Per-FROM rate limiting (beyond per-call 2-attempt cap)"
+    deferred_because: "Not needed for v1; brute-force economics are bad enough without it."
+
+  - item: "Regional-language IVR expansion (post-Hindi)"
+    deferred_because: "Hindi first. Add per CSP geography in a follow-up."
+
+  - item: "WhatsApp BSP-fallback for SMS-undeliverable customers"
+    deferred_because: "Operational concern, handled by comms platform."
+
+  - item: "IVR option to actively transfer caller to support ('press 1 to connect')"
+    deferred_because: "Today's dead-end gives a number to call but doesn't auto-connect. Could add later."
+
+  - item: "Branched dead-end Playbacks (separate applets per user_type) if dynamic audio URL unsupported"
+    deferred_because: "v1 falls back to a universal message if Playback can't take a dynamic URL."
+
+# ============================================================================
+# Section 25 — Open TBDs
+# ============================================================================
+open_tbds:
+  - item: "PIN format (random 5-digit vs last 5 of ticket ID)"
+    owner: "Solution team"
+    recommendation: "Random (uniqueness guarantees)."
+
+  - item: "Exact wording of every IVR prompt and SMS / WA template (Hindi-first)"
+    owner: "Solution team"
+
+  - item: "Final list of regional languages (post-Hindi)"
+    owner: "Solution team"
+
+  - item: "PIN cooldown window length (default 90 days)"
+    owner: "Tech + Solution team"
+    validation: "Validate against actual technician-recall behaviour after a couple of months in prod."
+
+  - item: "Audit retention window after cooldown ends (suggest 1 year)"
+    owner: "Compliance"
+
+  - item: "PIN-pool monitoring + alert threshold (retry count, % reservation)"
+    owner: "Tech"
+
+  - item: "Missed-call CleverTap payload schema — finalise fields"
+    owner: "Tech + Solution team"
+
+  - item: "DLT template registration for all SMS variants"
+    owner: "Comms / Ops"
+
+  - item: "WhatsApp BSP template approvals"
+    owner: "Comms"
+
+  - item: "Retention window for closed-ticket PIN rows (hard-delete)"
+    owner: "Tech / Compliance"
+    recommendation: "90 days post-cooldown."
+
+  - item: "Exotel Auth mechanism — does Exotel support HMAC signed-payload? Header name? Signing algorithm?"
+    owner: "Tech + Exotel"
+    fallback: "IP allowlist (Exotel publishes egress IP range)."
+
+  - item: "Passthru applet timeout, retry on 5xx, fallback URL"
+    owner: "Tech + Exotel"
+    note: "Not documented by Exotel."
+
+  - item: "Switch Case default/fallback branch — what happens if no case matches?"
+    owner: "Tech + Exotel"
+    note: "Not documented."
+
+  - item: "Disposition webhook contract — body shape not in any of the 5 applet docs"
+    owner: "Tech + Exotel"
+
+  - item: "sim_inventory verification flow — OTP at add time vs trust-declare? Self-service or admin-only? Cap on SIMs per CSP?"
+    owner: "Ops + Tech"
+
+  - item: "Audio file ownership — record / commission / store 6 Greeting MP3s (Hindi, Exotel-compliant specs)"
+    owner: "Solution team"
+
+# ============================================================================
+# Section 26 — Glossary
+# ============================================================================
+glossary:
+  Recognised: "Caller's number is in Table 1 OR matches a row in Table 2 (directly by FROM or via a valid PIN)."
+  Authorised: "Connection is legitimate — PIN entered (or FROM matched) belongs to an active ticket for the party being reached."
+  Seamless: "Call connects without the user opening an app, navigating UI, or understanding masked numbers."
+  Graceful_fallback: "Unrecognised or unauthorised caller knows why the call didn't connect and has a clear next step (voice + SMS)."
+  Masked_number: "Virtual phone number provisioned by Exotel routing via dynamic backend lookup; replaces direct CSP↔customer number exchange."
+  MN1_MN2: "Today's two-masked-number scheme (Customer→CSP and CSP→Customer). To be retired."
+  CSP: "Connection Service Provider — Wiom's field partner."
+  PIN: "5-digit numeric credential, issued per ticket per side, used as fallback authorisation when FROM isn't recognised."
+  Table_1: "Active call mapping (FROM → TO), short-lived. Hit = recognised + seamless bridge."
+  Table_2: "PIN registry (PIN → other_party_mobile), per-ticket × per-side. Three access patterns: by FROM, by PIN, by (ticket_id, side)."
+  user_identification: "API called on Table 2 by-FROM = 0. Returns user_type + (combined with API 1's cached row count) the 5-value composite discriminator for Switch Case."
+  Dead_end_IVR: "Terminal voice message when authorisation fails. Routes to call centre (recognised customer) or trust line (everyone else)."
+  Calling_eligibility: "Calls only enabled on active Install / Restore / Pickup tickets."
+  DNP: "Did-Not-Pick. Recipient sees the call but doesn't answer."
+  DLT: "India's regulatory framework for transactional SMS. Templates must be pre-registered."
+  VLT: "Verified Logo Trustmark — telco-level verified-business-caller flag."
+  BSP: "Business Solution Provider — for WhatsApp Business API."
+  TAS: "Task Aggregation Service — NOT integrated with csp-ivr-service (this is a capability service, not a candidate-producer)."
+
+# ============================================================================
+# Section 27 — Governance Declaration
+# ============================================================================
+governance_declaration:
+  generated_against:
+    os_files:
+      - "Quality_OS_v1_15_1_LOCKED.md (not consumed; for completeness)"
+      - "Support_Resolution_OS_v1_6_1_LOCKED.md (chain context only)"
+      - "Connection_Lifecycle_OS_v1_7_1_LOCKED.md (identity tables READ_ONLY)"
+      - "Demand_Allocation_OS_v1_9_1_LOCKED.md (chain context only)"
+      - "Asset_Custody_OS_v1_11_1_LOCKED.md (chain context only)"
+    tas_spec: "TAS_Build_Spec_v2_2_LOCKED.md (referenced for NOT_APPLICABLE rationale)"
+    yaml_prds_referenced:
+      - "es-installation-service-prd-v2.3.yaml"
+      - "es-restore-prd-v1.4.yaml"
+      - "es-netbox-recovery-service-prd-v1.9.yaml"
+    skill_version: "execution-spec-generator v2"
+    framing: "Capability ES (Framing A). Most TAS / attention / candidate-producing checks N/A by design."
+
+  checks:
+    - id: CONF-ES-01
+      category: "Data Boundary"
+      rule: "No ES-owned field duplicates an OS canonical field"
+      status: PASS
+      note: "Tables 1, 2, sim_inventory, and audit logs are all ES_OWNED. Customer / CSP mobile numbers are READ from CL OS identity tables, never persisted as authoritative in IVR's store."
+
+    - id: CONF-ES-02
+      category: "Data Boundary"
+      rule: "All OS-reference fields have access: READ_ONLY and source_os"
+      status: PASS
+      note: "See §3 os_refs.identity_tables_read — customers.registered_mobile and csp_users.registered_mobile both marked READ_ONLY against Connection Lifecycle OS."
+
+    - id: CONF-ES-03
+      category: "Event Boundary"
+      rule: "All ES-produced event IDs use ES_ prefix"
+      status: PASS
+      note: "All 7 produced events use ES_CSPIVR_ prefix (see §6.produces)."
+
+    - id: CONF-ES-04
+      category: "Event Boundary"
+      rule: "No OS-owned event ID in events.produces"
+      status: PASS
+      note: "None of the produced events use any OS-namespace prefix (CL_, SR_, ACS_, etc.)."
+
+    - id: CONF-ES-05
+      category: "State Boundary"
+      rule: "No ES state name matches any OS_OWNED_STATE"
+      status: NOT_APPLICABLE
+      note: "Capability service has no per-candidate state machine (§4). Per-ticket Table 2 lifecycle uses ACTIVE / EXPIRED / COOLDOWN / HARD_DELETED — none collide with any OS state."
+
+    - id: CONF-ES-06
+      category: "Parameter Boundary"
+      rule: "All ES parameter keys use ES_ prefix"
+      status: PASS
+      note: "All 7 ES parameters use ES_CSPIVR_ prefix (§7)."
+
+    - id: CONF-ES-07
+      category: "Parameter Boundary"
+      rule: "No ES parameter key matches any SPR canonical name"
+      status: PASS
+      note: "PIN length, call TTL, PIN cooldown, retry attempts — none of these concepts are SPR-governed."
+
+    - id: CONF-ES-08
+      category: "Attention Model"
+      rule: "All 5 attention fields present on execution_candidate"
+      status: NOT_APPLICABLE
+      note: "No execution candidates (§11). Capability service does not surface to TAS."
+
+    - id: CONF-ES-09
+      category: "Attention Model"
+      rule: "unseen_count is NOT a stored column"
+      status: NOT_APPLICABLE
+      note: "No attention model. By exclusion: no unseen_count column exists in IVR's data model (§8)."
+
+    - id: CONF-ES-10
+      category: "Attention Model"
+      rule: "Every THRESHOLD_CROSSING trigger references an ES_ parameter"
+      status: NOT_APPLICABLE
+      note: "No attention triggers. PIN cooldown is parameter-driven but not a threshold-crossing event in the TAS sense — it's an SQL-level reservation rule."
+
+    - id: CONF-ES-11
+      category: "Attention Model"
+      rule: "Terminal states defined + terminal_attention_rule present"
+      status: NOT_APPLICABLE
+      note: "No states (§4)."
+
+    - id: CONF-ES-12
+      category: "TAS Interface"
+      rule: "TAS read interface specified + app_ack_interface specified"
+      status: NOT_APPLICABLE
+      note: "No TAS integration (§11b). No candidates → no ack."
+
+    - id: CONF-ES-13
+      category: "Service Structure"
+      rule: "service_type: execution_service in header"
+      status: PASS
+      note: "Header declares service_type: execution_service AND service_classification: capability to flag the Framing A nature."
+
+    - id: CONF-ES-14
+      category: "OS Completeness"
+      rule: "Every events.consumes[].owner_os value appears in os_refs"
+      status: PASS_WITH_NOTE
+      note: "All consumed events are ES events (from es-installation / es-restore / es-netbox-recovery), not OS events. The upstream ES YAML PRDs are referenced in §3 os_refs.upstream_execution_services."
+
+    - id: CONF-ES-15
+      category: "TAS Contract"
+      rule: "TAS candidates endpoint defined with SERVICE_JWT auth"
+      status: NOT_APPLICABLE
+      note: "Not a TAS source service per TAS v2.2 §4. See §11b."
+
+    - id: CONF-ES-16
+      category: "TAS Contract"
+      rule: "All ~25 TAS mandatory response fields present"
+      status: NOT_APPLICABLE
+      note: "See §11b."
+
+    - id: CONF-ES-17
+      category: "TAS Contract"
+      rule: "task_family/aggregation_type match GUARD-TAS-08 invariant"
+      status: NOT_APPLICABLE
+      note: "No task_family. See §11b."
+
+    - id: CONF-ES-18
+      category: "TAS Contract"
+      rule: "task_family is one of the 5 known values"
+      status: NOT_APPLICABLE
+      note: "No task_family."
+
+    - id: CONF-ES-19
+      category: "Parameter Governance"
+      rule: "No ES_ parameter semantically duplicates an OS parameter"
+      status: PASS
+      note: "All 7 parameters govern IVR-internal concepts (PIN length, TTL, cooldown, retry counts). None semantically duplicate an OS parameter — none of these concepts are OS-governed."
+
+    - id: CONF-ES-20
+      category: "Completeness"
+      rule: "Every consumed event has explicit event_payload_mapping"
+      status: PASS
+      note: "§5b documents field-level mapping for all 3 technician-assignment event variants + the terminal-event pattern."
+
+    - id: CONF-ES-21
+      category: "Completeness"
+      rule: "Every state entry has reason_code, reason_display_template, source"
+      status: NOT_APPLICABLE
+      note: "No states → no per-state reason codes (§4a). Per-call outcomes are captured in §18 telemetry catalog with event-level granularity."
+
+    - id: CONF-ES-22
+      category: "OS Completeness"
+      rule: "Every OS-emitted event is consumed OR listed in excluded_signals"
+      status: PASS
+      note: "§5a documents that IVR consumes ES events only (not OS events directly). The 3 upstream ESes act as the OS-to-IVR integration boundary. All non-consumed OS events excluded by category."
+
+    - id: CONF-ES-23
+      category: "TAS Integration"
+      rule: "All Phase 5.5 TAS-INT checks (01-08) passed, OR TAS integration explicitly deferred"
+      status: NOT_APPLICABLE
+      note: "TAS integration explicitly deferred per service framing. csp-ivr-service is not in TAS v2.2 §4 source-services list. No integration planned in foreseeable future."
+
+  summary:
+    pass: 9
+    not_applicable: 13
+    warning: 0
+    fail: 0
+    pass_with_note: 1
+    total: 23
+    overall: "PASS — capability ES framing; 13 candidate-producing checks N/A by design; no governance violations."
+
+  governance_warnings: []
+
+# ============================================================================
+# Section 28 — OS Clarifications Needed
+# ============================================================================
+os_clarifications_needed: []
+os_clarifications_note: |
+  No outstanding clarifications against OS files. IVR's only OS-layer
+  dependency is READ_ONLY access to Connection Lifecycle OS identity tables
+  (customers, csp_users), which is well-established.
+
+# ============================================================================
+# Section 29 — Engineering Assumptions
+# ============================================================================
+engineering_assumptions:
+  - "Exotel Connect applet honours `action: playback` in dynamic-URL response (Skip-Gather mechanism for 0-tickets dead-end). If unsupported: fallback Passthru adds one applet hop."
+  - "Exotel Playback applet supports dynamic audio URL. If unsupported: v1 ships a universal dead-end greeting."
+  - "Exotel egress IP range is published and stable enough for IP allowlist as v1 auth. HMAC pending Exotel confirmation."
+  - "Gupshup DLT templates can be registered with 'Wiom' sender ID by launch."
+  - "WhatsApp BSP setup with approved templates available by launch."
+  - "Truecaller + VLT whitelisting can be reused from one of today's MN1/MN2 numbers without fresh verification."
+  - "es-installation-service / es-restore / es-netbox-recovery deliver events via at-least-once outbox → idempotent upsert on (ticket_id, side) handles redelivery."
+  - "Owner-mobile resolution is done via csp-gateway-service against the `csp_users` table — filtered by `csp_id` + `role = 'owner'`. The gateway exposes an internal endpoint (e.g., `GET /api/internal/csp-users?csp_id={id}&role=owner`) that returns the Owner row, from which csp-ivr-service reads `csp_user_id` + `registered_mobile`. Called once at candidate-creation time and the resolved mobile is persisted into customer-side row.other_party_mobile."
+  - "Each CSP organisation has exactly one Owner (the partner account holder) whose registered_mobile is the canonical pre-assignment routing target."
+  - "Customer SMS delivery is reliable enough that PIN reaches the customer before the call is needed. WA + push reminders mitigate failure."
+  - "Backend p95 < 200 ms on resolve-caller / resolve-pin within Exotel's 5s budget."
+  - "Redis (or equivalent) is available with sub-ms reads for the CallSid → user_type cache."
+
+# ============================================================================
+# Section 30 — YAML PRD Cross-Reference
+# ============================================================================
+prd_cross_reference:
+  yaml_prd_files_path: "C:/Users/ashis/csp-os-yaml/yaml-prd/"
+  authority_hierarchy: "OS docs (governance) > YAML PRD (code nomenclature)"
+  nomenclature_source: "YAML PRD (for ES event names from upstream services)"
+  governance_source: "OS docs (referenced but mostly NOT_APPLICABLE for capability service)"
+
+  upstream_yaml_prds_referenced:
+    - file: "EXECUTION_SERVICES/es-installation-service-prd-v2.3.yaml"
+      used_for: |
+        ES_INSTALL_CANDIDATE_CREATED (ALLOCATE), ES_INSTALL_TECHNICIAN_ASSIGNED
+        (UPDATE_MOBILE_ONLY — with is_self_assigned branch), Install terminal
+        event names, ASM-ES-INSTALL-14 (technician-mobile non-persistence /
+        is_self_assigned semantics).
+    - file: "EXECUTION_SERVICES/es-restore-prd-v1.4.yaml"
+      used_for: |
+        ES_RESTORE_CANDIDATE_CREATED (ALLOCATE — triggered by SR OS
+        COMPLAINT_TASK_CREATED at PENDING_ACCEPTANCE), ES_RESTORE_TECHNICIAN_ASSIGNED
+        (UPDATE), ES_RESTORE_TASK_RECALLED (REVERT_TO_OWNER per CSP action
+        RECALL_TASK), Restore terminal event names. customer_mobile RAW
+        persistence per CUSTOMER_ENRICHMENT_PATTERN Variant B (line 3187,
+        INV-ES-RESTORE-CUST-01).
+    - file: "EXECUTION_SERVICES/es-netbox-recovery-service-prd-v1.9.yaml"
+      used_for: |
+        ES_NBREC_RECOVERY_TASK_ASSIGNED (ALLOCATE — auto-self-assignment at
+        candidate creation), ES_NBREC_TASK_ASSIGNED (UPDATE — team-member
+        delegation; reverts to Owner via same event with executor_id=Owner),
+        NBREC terminal event names.
+
+  divergences_detected: []
+  unverified_prd_items: []
+
+  note: |
+    Event ID strings used in this spec follow the upstream ES YAML PRDs.
+    If any of those ESes rename an event in a future version, this spec's
+    §5 upstream_signal_mapping must be re-validated.
+
+# ============================================================================
+# End of spec
+# ============================================================================
