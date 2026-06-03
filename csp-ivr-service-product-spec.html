@@ -291,7 +291,7 @@
     <tr><td>Customer</td><td>End consumer of the connection. Receives the masked number + customer-side PIN by SMS at ticket open.</td><td>Customer App ticket card → taps Call CTA; OR dials masked number from the SMS / WA from any phone.</td></tr>
   </table>
 
-  <h3>A5.2 Happy-path user journey — CSP-initiated</h3>
+  <h3>A5.2 Happy-path user journey — CSP-initiated (UC 01)</h3>
   <div class="mermaid">
 flowchart LR
     A[CSP needs to call customer about a ticket] --> B[Taps Call CTA on the ticket card]
@@ -300,18 +300,15 @@ flowchart LR
     D --> E[CSP talks to customer; call recorded]
   </div>
 
-  <h3>A5.3 Happy-path user journey — Customer-initiated</h3>
+  <h3>A5.3 Happy-path user journey — Customer-initiated (UC 02)</h3>
   <div class="mermaid">
 flowchart LR
-    A[Customer wants to talk to CSP about ticket] --> B[Reads masked number from SMS / WA / ticket card]
-    B --> C[Dials masked number]
-    C --> D{Recognised + 1 active ticket?}
-    D -- Yes --> E[Bridges directly to current executor — Owner or Technician]
-    D -- "Recognised, multi-ticket OR unknown SIM" --> F[IVR asks for PIN]
-    F --> G[Customer enters PIN from SMS]
-    G --> E
-    E --> H[Customer talks to CSP]
+    A[Customer needs to talk to CSP about a ticket] --> B[Taps Call CTA on the ticket card in Customer App]
+    B --> C[Customer App returns the masked number; Customer dials it]
+    C --> D[IVR resolves and bridges seamlessly]
+    D --> E[Customer talks to CSP; call recorded]
   </div>
+  <p style="font-size:13px;color:var(--muted);margin:6px 0;">Happy paths are <strong>UC 01</strong> (CSP taps in-app Call CTA) and <strong>UC 02</strong> (Customer taps in-app Call CTA). Every other initiation pattern — dialling the masked number from SMS, callback from call log, multi-ticket disambiguation, unregistered SIM, colleague forwarding — is an <em>alternative journey</em> documented in A5.4.</p>
 
   <h3>A5.4 Alternative journeys</h3>
   <table>
