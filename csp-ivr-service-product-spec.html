@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSP IVR Service — Product Solution Spec v1.0</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
+    --core: #0b6b3a; --core-bg: #e9f5ee;
+    --cond: #8a5a00; --cond-bg: #fbf1dd;
+    --what: #1f3c6e; --what-bg: #e8eef8;
+    --how: #5b2a86; --how-bg: #efe6f7;
+    --example-bg: #fffbeb; --example-rule: #f3d56a; --example-ink: #78350f;
+    --required: #b91c1c; --required-bg: #fee2e2;
+    --illustrative: #6b7280; --illustrative-bg: #f1f3f5;
+    --quickcheck-bg: #fef9c3; --quickcheck-rule: #ca8a04; --quickcheck-ink: #713f12;
+    --hint-bg: #ecfeff; --hint-rule: #0e7490; --hint-ink: #155e75;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--bg);
+  }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 24px 18px; border-right: 1px solid var(--rule); background: var(--surface); font-size: 13px;
+  }
+  nav.toc h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 18px 0 6px; }
+  nav.toc h2:first-of-type { margin-top: 0; }
+  nav.toc h2.qc { color: var(--quickcheck-ink); border-left: 3px solid var(--quickcheck-rule); padding-left: 8px; }
+  nav.toc h2.what { color: var(--what); border-left: 3px solid var(--what); padding-left: 8px; }
+  nav.toc h2.how { color: var(--how); border-left: 3px solid var(--how); padding-left: 8px; }
+  nav.toc h2.close { color: var(--muted); border-left: 3px solid var(--muted); padding-left: 8px; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; }
+  nav.toc li { margin: 4px 0; }
+  nav.toc li a { text-decoration: none; color: var(--ink); display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 4px; font-size: 12.5px; }
+  nav.toc li a:hover { background: var(--bg); }
+  nav.toc li a .ix { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 32px; font-weight: 600; }
+
+  main { padding: 40px 56px 120px; max-width: 1080px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 32px; }
+  header.doc .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  header.doc h1 { font-size: 30px; margin: 6px 0 8px; line-height: 1.2; }
+  header.doc p.lede { color: var(--muted); font-size: 15px; margin: 0; max-width: 75ch; }
+  header.doc .meta-row { display: flex; gap: 24px; margin-top: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+
+  .convention { margin-top: 14px; padding: 12px 14px; background: var(--bg); border: 1px dashed var(--rule); border-radius: 5px; font-size: 13px; }
+  .convention strong { font-weight: 700; }
+  .convention .badge { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; margin: 0 4px; vertical-align: middle; }
+  .badge.req { background: var(--required-bg); color: var(--required); }
+  .badge.ill { background: var(--illustrative-bg); color: var(--illustrative); }
+
+  .quickcheck {
+    margin: 28px 0 40px; background: var(--quickcheck-bg);
+    border: 1px solid var(--quickcheck-rule); border-left: 5px solid var(--quickcheck-rule);
+    border-radius: 6px; padding: 18px 22px;
+  }
+  .quickcheck h2 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--quickcheck-ink); }
+  .quickcheck .qc-tag { font-size: 11px; color: var(--quickcheck-ink); opacity: 0.9; margin-bottom: 12px; }
+  .quickcheck dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+  .quickcheck dt { font-weight: 600; color: var(--quickcheck-ink); }
+  .quickcheck dd { margin: 0; color: var(--ink); }
+
+  .part-divider { margin: 56px 0 32px; padding: 28px 32px; border-radius: 8px; color: white; }
+  .part-divider.what { background: var(--what); }
+  .part-divider.how { background: var(--how); }
+  .part-divider .label { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.8; }
+  .part-divider h2 { font-size: 28px; margin: 4px 0 6px; }
+  .part-divider p { margin: 0; font-size: 14px; opacity: 0.92; max-width: 75ch; }
+  .part-divider .author-note { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.25); font-size: 13px; font-style: italic; opacity: 0.92; }
+
+  section.spec { margin: 40px 0; scroll-margin-top: 24px; }
+  section.spec h2 { font-size: 21px; margin: 0 0 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  section.spec h2 .num { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  section.spec h3 { font-size: 15px; margin: 16px 0 4px; }
+  .tier { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 3px; font-weight: 600; }
+  .tier.core { background: var(--core-bg); color: var(--core); }
+  .tier.cond { background: var(--cond-bg); color: var(--cond); }
+  .tier.what { background: var(--what-bg); color: var(--what); }
+  .tier.how { background: var(--how-bg); color: var(--how); }
+
+  .expected { background: #f4f4f2; border-left: 3px solid var(--ink); padding: 10px 14px; font-size: 13px; margin: 10px 0 14px; color: #333; }
+  .expected strong { font-weight: 700; }
+  .hint { background: var(--hint-bg); border-left: 3px solid var(--hint-rule); padding: 8px 14px; font-size: 13px; margin: 8px 0 14px; color: var(--hint-ink); border-radius: 4px; }
+  .hint strong { color: var(--hint-ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+
+  .mermaid { background: var(--surface); border: 1px solid var(--rule); border-radius: 5px; padding: 14px; margin: 14px 0; text-align: center; overflow-x: auto; }
+
+  .design-note { background: #fff7ed; border: 1px solid #fed7aa; border-left: 3px solid #c2410c; padding: 10px 14px; margin: 14px 0; font-size: 13px; border-radius: 5px; }
+  .design-note strong { color: #9a3412; }
+
+  ul.criteria { padding-left: 20px; }
+  ul.criteria li { margin: 6px 0; }
+
+  .gherkin { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--core); padding: 12px 14px; margin: 10px 0; font-size: 13.5px; }
+  .gherkin .kw { font-weight: 700; color: var(--core); }
+
+  hr.sect-end { border: none; border-top: 1px dashed var(--rule); margin: 32px 0 0; }
+
+  footer.checklist { margin-top: 60px; padding-top: 30px; border-top: 2px solid var(--ink); }
+  footer.checklist h2 { font-size: 20px; margin-top: 0; }
+  footer.checklist table { font-size: 13.5px; }
+  footer.checklist td.part-cell { width: 70px; }
+  footer.checklist td.tier-cell { width: 90px; }
+  footer.checklist td.check { width: 80px; text-align: center; font-family: monospace; }
+  footer.note { margin-top: 24px; padding: 14px; background: var(--bg); border-left: 3px solid var(--ink); font-size: 13px; }
+
+  @media print {
+    nav.toc { display: none; }
+    .layout { grid-template-columns: 1fr; }
+    main { padding: 20px; max-width: none; }
+    section.spec, .part-divider, .quickcheck { page-break-inside: avoid; }
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc" aria-label="Table of contents">
+  <h2 class="qc">Quick Check</h2>
+  <ol><li><a href="#quickcheck"><span class="ix">QC.</span>7-line summary</a></li></ol>
+  <h2 class="what">Part A — WHAT (decisions)</h2>
+  <ol>
+    <li><a href="#s1"><span class="ix">A1.</span>Document Metadata</a></li>
+    <li><a href="#s2"><span class="ix">A2.</span>Context &amp; Problem</a></li>
+    <li><a href="#s3"><span class="ix">A3.</span>Objective &amp; Definition of Success</a></li>
+    <li><a href="#s4"><span class="ix">A4.</span>OS Ownership</a></li>
+    <li><a href="#s5"><span class="ix">A5.</span>Key Workflows (User Journey)</a></li>
+    <li><a href="#s6"><span class="ix">A6.</span>Business Logic, Invariants &amp; Relationships</a></li>
+    <li><a href="#s7"><span class="ix">A7.</span>Business Edge Cases &amp; Decisions</a></li>
+    <li><a href="#s8"><span class="ix">A8.</span>Design Guidance</a></li>
+    <li><a href="#s9"><span class="ix">A9.</span>Cross-OS Impact Decisions</a></li>
+    <li><a href="#s10"><span class="ix">A10.</span>Assumptions, Risks &amp; Dependencies</a></li>
+    <li><a href="#s11"><span class="ix">A11.</span>Open Questions / Decisions Needed</a></li>
+  </ol>
+  <h2 class="how">Part B — HOW (detailing)</h2>
+  <ol>
+    <li><a href="#s12"><span class="ix">B1.</span>Data Requirements</a></li>
+    <li><a href="#s13"><span class="ix">B2.</span>State Machine</a></li>
+    <li><a href="#s14"><span class="ix">B3.</span>Configurable Parameters</a></li>
+    <li><a href="#s15"><span class="ix">B4.</span>System Logical Flow</a></li>
+    <li><a href="#s16"><span class="ix">B5.</span>System Sequence Diagram</a></li>
+    <li><a href="#s17"><span class="ix">B6.</span>Front-End UI Requirements</a></li>
+    <li><a href="#s18"><span class="ix">B7.</span>Settlement &amp; Money Flow</a></li>
+    <li><a href="#s19"><span class="ix">B8.</span>Failure Modes</a></li>
+    <li><a href="#s20"><span class="ix">B9.</span>Acceptance Criteria (Gherkin)</a></li>
+    <li><a href="#s21"><span class="ix">B10.</span>Migration Impact &amp; Data Treatment</a></li>
+    <li><a href="#s22"><span class="ix">B11.</span>Compliance: Legal, Privacy &amp; Finance</a></li>
+    <li><a href="#s23"><span class="ix">B12.</span>Metrics &amp; Measurement</a></li>
+    <li><a href="#s24"><span class="ix">B13.</span>Build Phases</a></li>
+  </ol>
+  <h2 class="close">Closeout</h2>
+  <ol>
+    <li><a href="#checklist"><span class="ix">—</span>Completeness Checklist</a></li>
+    <li><a href="#changelog"><span class="ix">—</span>Changelog</a></li>
+    <li><a href="#glossary"><span class="ix">—</span>Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="doc">
+  <div class="eyebrow">Wiom · Product Solution Spec · v1.0 · PM deliverable</div>
+  <h1>CSP IVR Service — Masked-Number Call Routing with PIN-Authorised Bridging</h1>
+  <p class="lede">A new capability service that lets CSPs and customers call each other about an active ticket without exposing either party's real mobile number. One bidirectional masked number for both directions, a per-ticket PIN registry that authorises off-app calling (callbacks, redials, calls from new SIMs, multi-ticket disambiguation, colleague-forwarded calls), and a graceful dead-end IVR for every unauthorised case. Replaces today's MN1 / MN2 two-number routing entirely.</p>
+  <div class="meta-row">
+    <span><strong>Audience:</strong> Senior PM · Engineering (csp-execution-platform) · Design · Comms / Ops · Legal</span>
+    <span><strong>Type:</strong> PM business-behaviour spec</span>
+  </div>
+  <div class="convention">
+    <strong>Companion artefact:</strong>
+    <a href="https://ashish-raj-wiom.github.io/IVR-Routing-Solutioning/">Leadership-facing design page</a>.
+  </div>
+</header>
+
+<aside class="quickcheck" id="quickcheck" aria-label="Quick check summary">
+  <h2>Quick Check</h2>
+  <div class="qc-tag">7-line summary. Reflects the body below.</div>
+  <dl>
+    <dt>What problem?</dt><dd>Today's MN1/MN2 routing drops every call initiated outside the in-app CTA — callbacks, dialer redials, calls from a different SIM, customers with multiple tickets, colleague-forwarded calls. Material trust-eroding silent drops.</dd>
+    <dt>Primary owner OS?</dt><dd>Cross-cutting (capability service). Coordination owner: <code>csp-execution-platform</code>.</dd>
+    <dt>Cross-OS impact?</dt><dd>No — IVR consumes existing ES events from es-installation, es-restore, es-netbox-recovery; no OS state is amended. See A9.</dd>
+    <dt>Money flow change?</dt><dd>No.</dd>
+    <dt>Migration needed?</dt><dd>Yes — Table 2 backfilled for all active tickets at cutover; <code>sim_inventory</code> built fresh; legacy <code>es-ivr-calling-service</code> decommissioned 30 days post-cutover.</dd>
+    <dt>PII processed?</dt><dd>Yes — customer + CSP registered mobiles, PIN values. No new class of PII; existing classification applies.</dd>
+    <dt>Legal sign-off required?</dt><dd>Yes — DLT template registration for outbound SMS; DPDP review for the PIN-in-SMS reminder design.</dd>
+  </dl>
+</aside>
+
+<div class="part-divider what">
+  <div class="label">Part A</div>
+  <h2>WHAT — Decisions</h2>
+  <p>Senior PM decisions: governance, user-facing workflows, business invariants, edge-case calls, design intent. Stable across implementation revisions.</p>
+  <div class="author-note">Authored by the PM (Ashis Raj). Changes here trigger re-review.</div>
+</div>
+
+<!-- ====================================================================== -->
+<!-- A1 Metadata -->
+<!-- ====================================================================== -->
+<section class="spec" id="s1">
+  <h2><span class="num">A1.</span> Document Metadata <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Title, owner, status, version.</div>
+  <table>
+    <tr><th style="width:25%">Field</th><th>Value</th></tr>
+    <tr><td>Title</td><td>CSP IVR Service — Masked-Number Call Routing with PIN-Authorised Bridging</td></tr>
+    <tr><td>Owner</td><td>Ashis Raj (PM, csp-execution-platform)</td></tr>
+    <tr><td>Status</td><td>In review</td></tr>
+    <tr><td>Version</td><td>v1.0</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A2 Context & Problem -->
+<!-- ====================================================================== -->
+<section class="spec" id="s2">
+  <h2><span class="num">A2.</span> Context &amp; Problem Statement <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Observable problem, affected actor, current behaviour, cost of inaction, governing principle.</div>
+  <table>
+    <tr><th style="width:30%">Question</th><th>Answer</th></tr>
+    <tr><td>What problem does this solve?</td><td>CSPs and customers frequently need to talk to each other about an active Install / Restore / Pickup ticket, but the existing MN1/MN2 routing only works when both parties initiate from the in-app Call CTA on their registered SIM within a 5-minute window. Every other initiation pattern — callbacks from saved contacts, dialer re-dials, calls from a different SIM, multi-ticket customers, CSPs forwarding the masked number to a colleague — silently drops with no feedback to the caller.</td></tr>
+    <tr><td>Who experiences it?</td><td>Field technicians on rooftops who miss the customer's call and try to call back from a different SIM. Customers calling from a relative's phone when their own is unreachable. CSPs who see MN1 in their call log and try to dial back. Customers with multiple active tickets (Restore + Pickup) who have no way to indicate which ticket the call is about. Colleagues taking calls on behalf of the registered CSP user.</td></tr>
+    <tr><td>What is the current behaviour?</td><td>Two masked DIDs (MN1 = customer→CSP, MN2 = CSP→customer) backed by the legacy <code>es-ivr-calling-service</code>. Lookup is a short-TTL Redis cache keyed on FROM. On miss → silent drop. No PIN, no dead-end IVR, no missed-call notification. CSPs work around by sharing personal numbers — defeating privacy and blocking audit.</td></tr>
+    <tr><td>What happens if we don't solve it?</td><td>Trust erosion (silent drops feel like Wiom doesn't work), wasted technician time (jobs missed because the customer couldn't be reached), avoidable support volume (customers ringing helplines because masked calling failed), and continued personal-number leakage (which undermines the masking platform's whole purpose).</td></tr>
+    <tr><td>Governing decision / principle</td><td>"Move fast without breaking trust" — the masked-number contract is foundational to Wiom's privacy posture; it must work in every plausible initiation pattern, not just the narrow in-app happy path. Privacy + reachability are not in trade-off; both must hold.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A3 Objective & Success -->
+<!-- ====================================================================== -->
+<section class="spec" id="s3">
+  <h2><span class="num">A3.</span> Objective &amp; Definition of Success <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Outcome objective, qualitative success, guardrails, rollback trigger.</div>
+  <table>
+    <tr><th style="width:30%">Field</th><th>Value</th></tr>
+    <tr><td>Core objective</td><td>Eliminate silent call drops in CSP↔customer masked calling so that any initiation pattern by an authorised party connects — without exposing real mobile numbers, and with a graceful fallback for every unauthorised case.</td></tr>
+    <tr><td>Definition of success (qualitative)</td><td>A CSP can dial back a missed customer call from any SIM and get through. A customer with two active tickets can disambiguate which one they're calling about. A customer on a relative's phone can use a PIN from SMS to reach their technician. A colleague taking a call for a CSP gets through with the forwarded PIN. Personal-number leakage drops to near-zero.</td></tr>
+    <tr><td>Guardrail principle 1</td><td>No real mobile number is ever exposed to the counterparty under any initiation pattern. The masking contract is absolute.</td></tr>
+    <tr><td>Guardrail principle 2</td><td>The in-app CTA happy path must not regress on latency or behaviour. Today's working flow is preserved exactly.</td></tr>
+    <tr><td>Guardrail principle 3</td><td>No call is bridged on a closed or pre-booking ticket. Calling eligibility is gated by active-ticket presence.</td></tr>
+    <tr><td>Guardrail principle 4</td><td>A leaked or stale PIN cannot bridge to a different ticket than the one it was issued for, ever.</td></tr>
+    <tr><td>What would trigger rollback / redesign?</td><td>Any masked-number leak (real mobile exposed to counterparty). Material regression on in-app CTA happy-path connection rate. Any verified instance of a PIN bridging to the wrong ticket. Sustained backend error rate that pushes Exotel to the Fallback URL on more than 1% of calls.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A4 OS Ownership -->
+<!-- ====================================================================== -->
+<section class="spec" id="s4">
+  <h2><span class="num">A4.</span> OS Ownership <span class="tier cond">Cross-cutting capability</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Owning OS or cross-cutting + coordination owner.</div>
+  <table>
+    <tr><th style="width:30%">Field</th><th>Value</th></tr>
+    <tr><td>Primary owner OS</td><td><strong>Cross-cutting</strong> — this is a capability service, not an OS. It reads identity data from Connection Lifecycle OS (READ_ONLY) and consumes ES events from three execution services, but owns no OS state, transitions, or parameters of its own.</td></tr>
+    <tr><td>Why this OS (or why cross-cutting)?</td><td>IVR call routing is consumed by every CSP↔customer interaction across Install, Restore, and Pickup tickets. No single OS owns the masking contract; it spans the candidate-creation events of all three execution-layer services.</td></tr>
+    <tr><td>Coordination owner</td><td><code>csp-execution-platform</code> team — owns coherence of the IVR capability across the three execution services.</td></tr>
+    <tr><td>Participating OSes</td><td>Connection Lifecycle OS — read-only identity (customer.registered_mobile, csp_users.registered_mobile). No amendment.<br>(All other OSes: not participating — see A9 for the explicit per-OS Yes/No.)</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A5 Workflows -->
+<!-- ====================================================================== -->
+<section class="spec" id="s5">
+  <h2><span class="num">A5.</span> Key Workflows (User Journey) <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> User-journey only — actors, entry points, happy path, key alternative journeys. System-level flow with branches is in B4.</div>
+
+  <h3>A5.1 Actors and entry points</h3>
+  <table>
+    <tr><th>Actor</th><th>Role</th><th>How they enter</th></tr>
+    <tr><td>CSP — Owner</td><td>Partner account holder. Default executor on every new ticket until they delegate to a technician.</td><td>CSP App ticket card → taps Call CTA; OR dials the masked number directly from their phone.</td></tr>
+    <tr><td>CSP — Technician (Rohit)</td><td>Field worker assigned by the Owner to do the install / restore / pickup work.</td><td>CSP App ticket card (their assigned tickets) → taps Call CTA; OR receives a forwarded SMS with masked number + PIN from the Owner.</td></tr>
+    <tr><td>CSP — colleague (no app access)</td><td>Someone taking the call on the Owner's or Technician's behalf when they can't (e.g., signal issues).</td><td>SMS / screenshot forwarded from the Owner / Technician; dials masked number from their own phone.</td></tr>
+    <tr><td>Customer</td><td>End consumer of the connection. Receives the masked number + customer-side PIN by SMS at ticket open.</td><td>Customer App ticket card → taps Call CTA; OR dials masked number from the SMS / WA from any phone.</td></tr>
+  </table>
+
+  <h3>A5.2 Happy-path user journey — CSP-initiated</h3>
+  <div class="mermaid">
+flowchart LR
+    A[CSP needs to call customer about a ticket] --> B[Taps Call CTA on the ticket card]
+    B --> C[CSP App returns the masked number; CSP dials it]
+    C --> D[IVR resolves and bridges seamlessly]
+    D --> E[CSP talks to customer; call recorded]
+  </div>
+
+  <h3>A5.3 Happy-path user journey — Customer-initiated</h3>
+  <div class="mermaid">
+flowchart LR
+    A[Customer wants to talk to CSP about ticket] --> B[Reads masked number from SMS / WA / ticket card]
+    B --> C[Dials masked number]
+    C --> D{Recognised + 1 active ticket?}
+    D -- Yes --> E[Bridges directly to current executor — Owner or Technician]
+    D -- "Recognised, multi-ticket OR unknown SIM" --> F[IVR asks for PIN]
+    F --> G[Customer enters PIN from SMS]
+    G --> E
+    E --> H[Customer talks to CSP]
+  </div>
+
+  <h3>A5.4 Alternative journeys</h3>
+  <table>
+    <tr><th>Branch ID</th><th>Trigger</th><th>Path</th><th>Outcome</th></tr>
+    <tr><td>ALT-01</td><td>CSP dials back a missed customer call from their call log</td><td>FROM is recognised via registered mobile / sim_inventory → Table 2 by-FROM returns 1 row → direct bridge. No PIN.</td><td>Bridge to the customer of that ticket — UC 05 / UC 07 today's silent drop becomes a connect.</td></tr>
+    <tr><td>ALT-02</td><td>CSP has 2+ active tickets and calls back</td><td>Table 2 by-FROM returns ≥ 2 → IVR prompts for PIN → PIN identifies which ticket.</td><td>Bridge to the customer of the chosen ticket. UC 04 / UC 06.</td></tr>
+    <tr><td>ALT-03</td><td>Customer dials from a relative's phone (unregistered SIM)</td><td>FROM unrecognised → IVR prompts for PIN → customer reads PIN from SMS on their own phone.</td><td>Bridge to current executor. UC 11.</td></tr>
+    <tr><td>ALT-04</td><td>CSP forwards SMS to a colleague; colleague dials</td><td>Colleague's SIM unrecognised → IVR prompts for PIN → colleague enters PIN from forwarded SMS.</td><td>Bridge to the customer. UC 13 (colleague forwarding).</td></tr>
+    <tr><td>ALT-05</td><td>Recognised caller with 0 active tickets (closed-ticket customer dials weeks later)</td><td>Table 2 returns 0 → user_identification recognises caller → skip PIN entirely → dead-end greeting + SMS with helpline number.</td><td>Caller knows why the call didn't connect; has a clear next step. Not a silent drop.</td></tr>
+    <tr><td>ALT-06</td><td>Caller enters 2 wrong PINs</td><td>After 2 failed attempts → dead-end greeting tailored to user_type → dead-end SMS sent inline.</td><td>Graceful fallback. No bridge.</td></tr>
+    <tr><td>ALT-07</td><td>Bridge connects but recipient doesn't pick up (DNP)</td><td>Missed-call event fires to <code>csp-notification-service</code> → recipient receives PN / SMS / WA with caller name, masked number, AND their own PIN.</td><td>Recipient can call back from any phone, use the PIN to bridge through.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A6 Business logic & invariants -->
+<!-- ====================================================================== -->
+<section class="spec" id="s6">
+  <h2><span class="num">A6.</span> Business Logic, Invariants &amp; Relationships <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Business rules, invariants, business-load-bearing entity relationships, threshold principles.</div>
+
+  <h3>A6.1 Core business rules</h3>
+  <table>
+    <tr><th>#</th><th>Rule</th><th>Rationale</th></tr>
+    <tr><td>BR-01</td><td>Each active ticket has exactly two PINs — one customer-side, one CSP-side. PINs are issued once at ticket creation; never re-issued for the lifetime of the ticket.</td><td>Symmetric authorisation. Re-issuing would invalidate copies already held by either party.</td></tr>
+    <tr><td>BR-02</td><td>Calling eligibility is tied strictly to active-ticket existence. No call can be bridged on a closed, expired, or pre-booking ticket.</td><td>Routing surface must align with operational reality. Closed-ticket bridging causes confusion and wastes ops time.</td></tr>
+    <tr><td>BR-03</td><td>The OWNING CSP (Owner — partner account holder) is the default executor on every new ticket. The customer-side bridge target points to the Owner until a technician is explicitly delegated. On delegation it points to the technician; on recall it reverts to the Owner.</td><td>Preserves today's Restore pre-assignment calling. Customer needs to reach <em>someone</em> at the CSP from the moment the ticket exists — not wait for delegation.</td></tr>
+    <tr><td>BR-04</td><td>A PIN is recognised only if it matches an active Table 2 row. PINs in cooldown (post ticket-close) never bridge.</td><td>Protects against stale-PIN cross-pollination — a technician remembering an old PIN must not bridge to a new ticket that happens to be reissued the same value.</td></tr>
+    <tr><td>BR-05</td><td>When a recognised CSP enters a PIN, the PIN lookup is scoped to that CSP's organisation only. Cross-CSP PIN guesses are rejected as invalid.</td><td>Prevents one CSP from accidentally or maliciously reaching another CSP's customer via a forwarded PIN.</td></tr>
+    <tr><td>BR-06</td><td>PIN possession equals authorisation. The system does not verify identity beyond PIN possession — a colleague holding a forwarded PIN is treated as authorised.</td><td>UC 13 (colleague forwarding) is a real CSP operational workflow that the design explicitly supports.</td></tr>
+    <tr><td>BR-07</td><td>Every call session terminates with one of three outcomes: bridged (both parties spoke), DNP (recipient didn't pick), or dead-end (caller unauthorised / unrecognised). No call may end silently.</td><td>Trust contract — caller always knows why a call did or didn't connect.</td></tr>
+    <tr><td>BR-08</td><td>Missed-call notifications carry the missed party's own PIN as a callback credential. Notification routing (PN / SMS / WA) is owned by <code>csp-notification-service</code>; IVR's job ends at emitting the domain event.</td><td>Enables callbacks from any SIM. Single multi-channel routing engine in Wiom.</td></tr>
+    <tr><td>BR-09</td><td>The IVR backend always returns HTTP 200 to Exotel webhooks, regardless of internal state. Errors are conveyed via empty destination or via a safe-default Switch Case value.</td><td>Exotel's behaviour on 5xx is undocumented; returning 200 with a safe fallback keeps the flow predictable.</td></tr>
+  </table>
+
+  <h3>A6.2 Invariants (must always hold true)</h3>
+  <ul class="criteria">
+    <li><strong>INV-01:</strong> PIN immutability — a PIN value, once assigned to a Table 2 row, is never modified for the lifetime of that row.</li>
+    <li><strong>INV-02:</strong> PIN global uniqueness — at any moment, a PIN value exists in at most one Table 2 row across both active and cooldown sets.</li>
+    <li><strong>INV-03:</strong> One active row per (ticket, side) — for any ticket, at most one row with side=customer and at most one row with side=csp are in the active state.</li>
+    <li><strong>INV-04:</strong> Allocation tied to candidate existence — Table 2 rows exist for a ticket if and only if the underlying execution candidate is in a non-terminal state.</li>
+    <li><strong>INV-05:</strong> Routing target follows executor — the customer-side row's bridge target equals the registered mobile of the candidate's current executor (Owner pre-delegation, Technician post-delegation, Owner after recall).</li>
+    <li><strong>INV-06:</strong> Identity tables read-only — IVR never writes to <code>customers</code>, <code>csp_users</code>, or any OS-owned identity table.</li>
+    <li><strong>INV-07:</strong> Cooldown PIN never bridges — a PIN whose row is in cooldown is never returned by PIN lookup; entering it produces "invalid".</li>
+    <li><strong>INV-08:</strong> Masking contract — at no point in any flow does either party see the other party's real registered mobile number on their dialer / call log.</li>
+    <li><strong>INV-09:</strong> IVR always returns 200 — every Exotel-facing endpoint returns HTTP 200 regardless of internal state.</li>
+    <li><strong>INV-10:</strong> Missed-call event at-most-once — per CallSid, at most one missed-call domain event is published to the bus, regardless of how many DNP signals fire.</li>
+    <li><strong>INV-11:</strong> One Owner per CSP — each CSP organisation has exactly one user with role=owner whose registered_mobile is used as the default routing target.</li>
+  </ul>
+
+  <h3>A6.3 Entity relationships (business-load-bearing only)</h3>
+  <table>
+    <tr><th>#</th><th>Relationship rule</th><th>Why it matters</th></tr>
+    <tr><td>REL-01</td><td>A PIN belongs to exactly one (ticket, side) pair and is invalidated when the ticket reaches a terminal state.</td><td>Aligns with INV-01, INV-03; prevents orphan PINs.</td></tr>
+    <tr><td>REL-02</td><td>A Table 1 active mapping is short-lived (≤ 5 min) and tied to one in-app CTA tap session.</td><td>Bounds the happy-path bridging surface so cached state cannot bridge a stale session.</td></tr>
+    <tr><td>REL-03</td><td>A SIM in <code>sim_inventory</code> belongs to exactly one CSP user; removal soft-deletes (audit retained) and immediately stops being matched for future calls.</td><td>Audit trail for who could have called from which SIM; removal must not retroactively affect calls already mid-session.</td></tr>
+    <tr><td>REL-04</td><td>A masked DID is a Wiom-wide resource provisioned by Exotel; there is exactly one bidirectional DID for v1.</td><td>Truecaller / VLT verification applies to one number; no pool-picking logic.</td></tr>
+  </table>
+
+  <h3>A6.4 Threshold / tier decisions (principles only)</h3>
+  <table>
+    <tr><th>Decision area</th><th>Principle</th></tr>
+    <tr><td>PIN length</td><td>Must give enough keyspace that at expected ticket volume × 2 PINs × cooldown reservation, the active pool stays comfortably below 70% of the keyspace. Escalation to 6 digits is a configurable change, not a rebuild.</td></tr>
+    <tr><td>PIN attempts per call</td><td>Enough to absorb typos (2). Not so many that brute-force is feasible. Structurally enforced by App Bazaar applet count, not by backend counter.</td></tr>
+    <tr><td>PIN cooldown after ticket close</td><td>Long enough that a technician's mental cache of an old PIN is stale by the time the value could be reissued. 90 days is the v1 calibration.</td></tr>
+    <tr><td>Default executor on allocation</td><td>The Owner of the owning CSP — never null. If no Owner exists, allocation fails and the CTA is hidden.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A7 Business edges & decisions -->
+<!-- ====================================================================== -->
+<section class="spec" id="s7">
+  <h2><span class="num">A7.</span> Business Edge Cases &amp; Decisions <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Major business scenarios where default behaviour is non-obvious + PM's decision + rationale.</div>
+  <table>
+    <tr><th>#</th><th>Business scenario</th><th>PM's decision</th><th>Rationale</th><th>Linked rule / invariant</th></tr>
+    <tr><td>BEC-01</td><td>UC 13 — CSP forwards masked number + PIN to a colleague who isn't on the Wiom app. Colleague dials and uses the PIN.</td><td>Allowed. Bridge through. PIN possession = authorisation.</td><td>Real CSP operational workflow. Blocking it forces personal-number sharing — defeats the platform.</td><td>BR-06</td></tr>
+    <tr><td>BEC-02</td><td>Customer has 2 active tickets (e.g., Restore + Pickup) and dials the masked number.</td><td>Prompt for PIN. PIN identifies which ticket. Don't auto-pick the most recent.</td><td>Auto-picking would silently route to the wrong CSP; the customer wouldn't know it happened. PIN is one extra step but it's correct.</td><td>BR-01, INV-03</td></tr>
+    <tr><td>BEC-03</td><td>Customer dials a masked number months after the ticket is closed (e.g., remembers Wiom called from this number).</td><td>Skip PIN entirely. Play "no active ticket — call customer care" greeting + send SMS with the helpline.</td><td>Asking a recognised customer for a PIN they no longer have is friction with no payoff. The dead-end is also the recovery path — call the helpline.</td><td>BR-02</td></tr>
+    <tr><td>BEC-04</td><td>Technician reassignment mid-cycle (Owner delegates A → Owner recalls → Owner re-delegates to B).</td><td>PIN is preserved across every reassignment. Customer-side bridge target updates silently — no new SMS, no new PIN.</td><td>The PIN belongs to the ticket × side, not to a specific person. Re-issuing on reassignment would require recalling-and-re-distributing PINs every time.</td><td>BR-01, INV-01, INV-05</td></tr>
+    <tr><td>BEC-05</td><td>Cross-CSP reassignment in Restore (TASK_AUTO_REASSIGNED moves the ticket to a different CSP organisation).</td><td>PIN preserved. Customer-side row's other_party_mobile updated to new technician. CSP-side row's csp_id updated to the new org. The PIN remains valid for the customer; CSP-side scoping switches to the new CSP.</td><td>The customer hasn't changed; their PIN should still work. The new CSP needs scope isolation from the old.</td><td>BR-05, INV-05</td></tr>
+    <tr><td>BEC-06</td><td>Caller dials, ticket terminates between dial and webhook arrival (race).</td><td>Treat as "no active ticket" — dead-end greeting. Never bridge on a closed ticket even by a microsecond.</td><td>BR-02 is absolute. Caller hears a clear closed message; the alternative is a bridge to confusion.</td><td>BR-02, INV-04</td></tr>
+    <tr><td>BEC-07</td><td>CSP forwards their SMS to multiple colleagues; multiple colleagues attempt to dial in parallel.</td><td>Whoever bridges first connects. Subsequent dials within the same call window hit a Table 1 entry from the first bridge — but a SECOND caller's FROM won't match Table 1, so it goes through Table 2 by-FROM → 0 rows → PIN prompt. The first call is unaffected.</td><td>Concurrent bridging behaviour is well-defined: each call session is independent. PINs aren't single-use.</td><td>INV-08</td></tr>
+    <tr><td>BEC-08</td><td>Listener lag — ES_*_TECHNICIAN_ASSIGNED has been emitted but not yet consumed by IVR. Customer dials in the lag window.</td><td>Brief window (typically &lt; 30s) where the call may bridge to the previous executor. Acceptable for v1. Outbox guarantees the update will be applied eventually.</td><td>Trade-off between consistency and latency. The wrong-person bridge is recoverable (CSP just hands the phone over); a stalled flow waiting for consistency is not.</td><td>—</td></tr>
+    <tr><td>BEC-09</td><td>Customer keeps the Wiom SMS for months, dials the masked number again much later when a new ticket is open.</td><td>If the new ticket's customer-side PIN happens to be a different value (likely, 100K keyspace), the old PIN is invalid → dead-end. If it happens to match (rare), it bridges normally — the PIN is associated with whichever active ticket holds it now.</td><td>PIN is a credential for the current state of Table 2, not a memory of past tickets.</td><td>BR-04, INV-02</td></tr>
+    <tr><td>BEC-10</td><td>Owner role is missing for a CSP at the moment a candidate is created (data-quality issue).</td><td>Allocation fails for that ticket. <code>maskedCallAvailable</code> = false → CSP App hides the Call CTA. Ops alerted to fix the Owner assignment.</td><td>Better to hide the CTA than to bridge to nothing. Fixes the data-quality issue, not the symptom.</td><td>INV-11</td></tr>
+    <tr><td>BEC-11</td><td>Customer-side PIN delivery SMS fails (e.g., DND, invalid number).</td><td>The ticket lifecycle continues. The CSP-initiated CTA path still works (uses Table 1, not Table 2). Customer-initiated calling will land on PIN prompt for any non-recognised SIM and fail. Surface in the customer-care dashboard so ops can call the customer with the PIN.</td><td>SMS delivery is best-effort; don't block the whole ticket on it. WA fallback may help. Ops manual outreach is the safety net.</td><td>BR-07</td></tr>
+    <tr><td>BEC-12</td><td>Caller dials, missed the recipient, and the recipient also misses the notification (offline phone, app uninstalled).</td><td>Caller's next attempt repeats the same flow. No retry of the notification by IVR; Notification service may decide its own retry policy.</td><td>IVR's job is event emission; multi-channel retry is the Notification service's concern.</td><td>BR-08</td></tr>
+    <tr><td>BEC-13</td><td>A leaked / stolen PIN is used by a third party.</td><td>The third party bridges to whoever the legitimate counterparty was. Considered a CSP-side operational concern — the CSP should not share PINs outside the intended recipient. Audit log captures the FROM number for forensic review.</td><td>"PIN possession = authorisation" is by design (UC 13). The trade-off is documented; mitigation is operational (limit forwarding to trusted colleagues), not technical.</td><td>BR-06</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A8 Design guidance -->
+<!-- ====================================================================== -->
+<section class="spec" id="s8">
+  <h2><span class="num">A8.</span> Design Guidance <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> 3-4 sentences of design intent + experience principles.</div>
+  <div class="design-note"><strong>For the PM:</strong> intent at the level of "what experience must this create" — not surface patterns or copy.</div>
+
+  <h3>A8.1 Design intent</h3>
+  <p>A CSP or customer making a Wiom-mediated call should feel that it just works — the masking is invisible when they're in the happy path, and helpful (not punishing) when they're in a fallback. The PIN should never feel like a security gate they're failing; it should feel like a credential they have. When a call cannot connect, the caller must always know why and have a clear next step, even if that step is "call this helpline." Privacy must be felt in the absence of friction — at no point should either party need to think about why their real number isn't visible.</p>
+
+  <h3>A8.2 Experience principles</h3>
+  <table>
+    <tr><th>Must-do</th><th>Must-not-do</th></tr>
+    <tr><td>Show the customer-side PIN prominently in the SMS / WA, alongside the masked number and a single dial instruction. The PIN is a useful credential, not a chore.</td><td>Never expose either party's real mobile number on the counterparty's dialer, call log, or notification — under any flow.</td></tr>
+    <tr><td>Show the CSP-side PIN on the ticket card in the CSP App, prominently enough that a screenshot of the card includes the PIN cleanly (UC 13 colleague-forwarding depends on this).</td><td>Never ask a caller for a PIN they have no way to find (e.g., asking a customer with no SMS history for a PIN they never received).</td></tr>
+    <tr><td>On every dead-end, give the caller a number to call AND send that number as an SMS — voice is ephemeral.</td><td>Never drop a call silently. Every termination is either a bridge, an explicit DNP, or a dead-end greeting with a clear next step.</td></tr>
+    <tr><td>On every DNP, deliver a missed-call alert through the recipient's preferred channel (PN if app installed, SMS/WA otherwise) and include their own PIN as a callback credential.</td><td>Never block a call with a PIN prompt on the in-app CTA happy path. The CTA is the no-friction path.</td></tr>
+    <tr><td>On every reassignment, the bridge target flips silently. The customer feels continuity even though the technician changed under the hood.</td><td>Never send the customer a new PIN on reassignment. They already have one; it still works.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A9 Cross-OS impact -->
+<!-- ====================================================================== -->
+<section class="spec" id="s9">
+  <h2><span class="num">A9.</span> Cross-OS Impact Decisions <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Every OS gets an explicit Yes/No with one line on what changes if Yes.</div>
+  <div class="hint"><strong>Framing:</strong> csp-ivr-service consumes <em>ES events</em> from execution-layer services (es-installation, es-restore, es-netbox-recovery), not OS events. It READ_ONLY accesses Connection Lifecycle OS identity tables. <strong>No OS amendment is required.</strong> All OSes below are declared "No."</div>
+  <table>
+    <tr><th>OS</th><th>Impact</th><th>What changes (1 line)</th><th>Amendment owner</th></tr>
+    <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Financial &amp; Compensation</td></tr>
+    <tr><td>Compensation OS</td><td>No</td><td>No financial impact.</td><td>—</td></tr>
+    <tr><td>Payment &amp; Settlement OS</td><td>No</td><td>No money flow change.</td><td>—</td></tr>
+    <tr><td>Asset Custody OS</td><td>No</td><td>IVR consumes ES_NBREC_* events from es-netbox-recovery; Asset Custody OS itself unchanged.</td><td>—</td></tr>
+    <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Quality &amp; Enforcement</td></tr>
+    <tr><td>Quality OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td>Enforcement OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td>Service Resolution OS (SR OS)</td><td>No</td><td>IVR consumes ES_RESTORE_* events from es-restore (downstream of SR OS); SR OS itself unchanged.</td><td>—</td></tr>
+    <tr><td>Exit OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Lifecycle &amp; Operations</td></tr>
+    <tr><td>Connection Lifecycle OS</td><td>No</td><td>READ_ONLY access to <code>customers.registered_mobile</code> and <code>csp_users.registered_mobile</code> via existing gateway endpoints. No CL OS state, transitions, events, or parameters modified.</td><td>—</td></tr>
+    <tr><td>Onboarding flow</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td>Capacity &amp; Coverage OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td>TAS (Task Assignment)</td><td>No</td><td>csp-ivr-service is NOT a TAS source service (TAS v2.2 §4 lists only 5: Restore, Install, Recharge Validator, Asset Custody, Coverage Service). IVR is a capability alongside tasks, not a task producer.</td><td>—</td></tr>
+    <tr><td>Demand &amp; Allocation OS</td><td>No</td><td>IVR consumes ES_INSTALL_* events from es-installation; D&amp;A OS itself unchanged.</td><td>—</td></tr>
+    <tr><td>Customer Access Entitlement OS</td><td>No</td><td>Calling eligibility is gated by Table 2 row existence (driven by ES candidate state), not by CAEO state.</td><td>—</td></tr>
+    <tr><td>Capability Intervention OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Data &amp; Analytics</td></tr>
+    <tr><td>D&amp;A OS</td><td>No</td><td>IVR emits its own ES_CSPIVR_* events for observability; D&amp;A consumes those events as standard ingestion (no schema PRD).</td><td>—</td></tr>
+    <tr><td>Visibility OS</td><td>No</td><td>No dependency.</td><td>—</td></tr>
+    <tr><td>SPR (Service Parameter Registry)</td><td>No</td><td>All IVR parameters use the <code>ES_CSPIVR_*</code> namespace; no SPR canonical parameters added or modified.</td><td>—</td></tr>
+    <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Frontends</td></tr>
+    <tr><td>CSP App</td><td>Yes (minor)</td><td>Ticket card displays the CSP-side PIN; Call CTA visibility becomes backend-driven (<code>maskedCallAvailable</code> boolean on the drilldown DTO).</td><td>CSP App team</td></tr>
+    <tr><td>Customer App</td><td>Yes (minor)</td><td>Ticket card may display the customer-side PIN (TBD with Design); Call CTA visibility becomes backend-driven.</td><td>Customer App team</td></tr>
+  </table>
+
+  <h3>A9.1 Cross-service dependencies (not OS amendments, but worth flagging)</h3>
+  <table>
+    <tr><th>Service</th><th>Dependency</th><th>Owner</th></tr>
+    <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to existing emissions: ES_INSTALL_CANDIDATE_CREATED, ES_INSTALL_TECHNICIAN_ASSIGNED, 6 terminal events. No schema changes requested.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>es-restore</code></td><td>New subscriber to ES_RESTORE_CANDIDATE_CREATED, ES_RESTORE_TECHNICIAN_ASSIGNED, ES_RESTORE_TASK_RECALLED, 2 terminal events.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to ES_NBREC_RECOVERY_TASK_ASSIGNED, ES_NBREC_TASK_ASSIGNED, 3 terminal events.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>csp-gateway-service</code></td><td>Existing endpoints used: <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code> (Owner resolution at allocation), <code>GET /api/internal/csp-users/{id}</code> (executor mobile resolution on technician assignment). Target latency: p95 &lt; 50 ms.</td><td>csp-platform</td></tr>
+    <tr><td><code>csp-notification-service</code></td><td>New consumer of <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> (bus topic <code>csp.ivr.missed-call</code>). Owns channel routing for PN / SMS / WA.</td><td>csp-platform</td></tr>
+    <tr><td>Exotel</td><td>App Bazaar flow rebuild: Connect (×3), Gather (×2), Passthru Sync (×2), Passthru Async (×6), Switch Case (×2 with 5 branches each), Greeting (×9).</td><td>Vendor liaison + Eng</td></tr>
+    <tr><td>Gupshup / WhatsApp BSP</td><td>DLT-registered SMS templates + approved WA templates. "Wiom" sender ID.</td><td>Comms / Ops</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A10 Assumptions, risks, dependencies -->
+<!-- ====================================================================== -->
+<section class="spec" id="s10">
+  <h2><span class="num">A10.</span> Assumptions, Risks &amp; Dependencies <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Testable assumptions, strategic risks with mitigations, cross-feature dependencies.</div>
+
+  <h3>A10.1 Assumptions</h3>
+  <table>
+    <tr><th>#</th><th>Assumption (testable)</th><th>Confidence</th><th>What breaks if wrong</th></tr>
+    <tr><td>A-01</td><td>Customer SMS / WA delivery for PIN-at-ticket-open is reliable enough that the customer has the PIN before the first call is needed (estimated &gt; 95% delivery).</td><td>High</td><td>Customers without PIN can't initiate from a different SIM, can't disambiguate multi-ticket, can't call back from notification. Ops outreach becomes the fallback for the &lt; 5%.</td></tr>
+    <tr><td>A-02</td><td>Each CSP organisation has exactly one user with <code>role=owner</code> whose registered_mobile is the canonical pre-assignment routing target.</td><td>High</td><td>Multiple Owners or missing Owner → ambiguous routing. Edge case BEC-11 documents the missing-Owner failure mode.</td></tr>
+    <tr><td>A-03</td><td>Exotel's Connect applet supports <code>action: "playback"</code> in dynamic-URL responses (Skip-Gather mechanism for 0-tickets dead-end).</td><td>Medium</td><td>If unsupported, add a branching Passthru applet between Connect-1 and Gather. One extra hop. Open TBD with Exotel.</td></tr>
+    <tr><td>A-04</td><td>Exotel's egress IP range is published and stable enough to serve as v1 authentication (until HMAC is supported / confirmed).</td><td>Medium</td><td>If IPs change, calls fail until allowlist updated. Documented as TBD.</td></tr>
+    <tr><td>A-05</td><td>Truecaller + VLT verification carries forward from one of today's MN1/MN2 onto the chosen retained DID without fresh whitelisting.</td><td>High</td><td>Fresh verification needed → pickup rate dips during the verification window. Manageable.</td></tr>
+    <tr><td>A-06</td><td>The three execution services deliver events via at-least-once outbox to the event bus. IVR's idempotent upsert on <code>(ticket_id, side)</code> handles redelivery cleanly.</td><td>High</td><td>If at-most-once delivery, Table 2 could miss state updates and bridge to stale executors. Monitor outbox health.</td></tr>
+    <tr><td>A-07</td><td>Customers calling from registered mobile is the dominant pattern (~99%). Multi-ticket and unregistered-SIM cases are minority.</td><td>High</td><td>If multi-ticket is more common, PIN-prompt friction matters more — but the spec already supports it, so this is a marketing / volume concern, not a functional one.</td></tr>
+    <tr><td>A-08</td><td>The Owner-mobile is the right routing target during pre-technician-assignment for Install and Pickup too — not just Restore.</td><td>Medium</td><td>If Install / Pickup have different operational owners pre-assignment, the design needs per-family executor resolution. v1 assumes Owner is the universal default.</td></tr>
+    <tr><td>A-09</td><td><code>csp-notification-service</code> can consume the <code>csp.ivr.missed-call</code> topic by launch.</td><td>Medium</td><td>If not, IVR will drop missed-call events on the floor (no fallback firing). Mitigate by phasing the notification handoff — IVR Phase 1 ships without missed-call alerts; Phase 2 adds them.</td></tr>
+  </table>
+
+  <h3>A10.2 Risks &amp; mitigations</h3>
+  <table>
+    <tr><th>#</th><th>Risk</th><th>Likelihood</th><th>Impact</th><th>Mitigation</th><th>Owner</th></tr>
+    <tr><td>R-01</td><td>PIN pool exhaustion at growth (active + cooldown approaches 70% of 100K keyspace).</td><td>Low (current vol) / Medium (3× vol)</td><td>Medium — generation retries grow; latency rises.</td><td>Generation retry-count alert at threshold; escalate to 6-digit PIN (1M keyspace) via parameter change.</td><td>Eng</td></tr>
+    <tr><td>R-02</td><td>Listener lag &gt; expected (e.g., 5 min outage) → calls bridge to stale executors.</td><td>Low</td><td>Medium — customer reaches old technician.</td><td>Outbox + idempotent upsert + monitoring on listener lag. CSP can hand the phone over if wrong-person bridge happens.</td><td>Eng</td></tr>
+    <tr><td>R-03</td><td>PIN leak (customer shares PIN publicly; third party bridges to CSP).</td><td>Low (per-ticket scope limits blast)</td><td>Low — single ticket × single direction.</td><td>By design (BR-06); audit log captures FROM; ops monitoring for unusual PIN-use patterns.</td><td>Ops</td></tr>
+    <tr><td>R-04</td><td>Exotel applet config drift between staging and prod (Switch Case branches mis-labelled, Greeting URLs different).</td><td>Medium</td><td>High — calls route incorrectly in prod.</td><td>Pre-launch config audit checklist; smoke-test all 13 UCs in staging; replay in prod day-of-cutover.</td><td>PM + Eng</td></tr>
+    <tr><td>R-05</td><td>DLT template rejection or delay for "Wiom" sender ID on new SMS variants (PIN delivery, dead-end SMS, missed-call alert).</td><td>Medium</td><td>High — outbound SMS falls back to default sender ID, customers see "11444XXXX" not "Wiom".</td><td>File DLT templates 3 weeks before cutover. Have backup approval path. Track approval status weekly.</td><td>Comms / Ops</td></tr>
+    <tr><td>R-06</td><td>Notification service can't consume the bus event by launch.</td><td>Medium</td><td>Medium — no missed-call alerts; callers don't know they missed.</td><td>Phase 2 deferral plan documented in B13. IVR ships with the event emission; consumer comes online incrementally.</td><td>csp-platform</td></tr>
+    <tr><td>R-07</td><td>App teams ship the <code>maskedCallAvailable</code> wiring late, so Call CTA visibility regresses on existing flows.</td><td>Medium</td><td>High — happy path breaks.</td><td>Co-ship gate. App PR must merge in the same release as the backend. Validate in staging end-to-end.</td><td>CSP App + Customer App teams</td></tr>
+    <tr><td>R-08</td><td>Exotel egress IP range changes mid-flight; IVR backend rejects legitimate webhooks.</td><td>Low</td><td>High — calls fail.</td><td>HMAC auth as primary if Exotel confirms support. IP allowlist as v1 fallback. Monitoring on 401/403 rate.</td><td>Eng</td></tr>
+  </table>
+
+  <h3>A10.3 Cross-feature dependencies</h3>
+  <table>
+    <tr><th>#</th><th>Dependency</th><th>Type</th><th>Why required</th><th>Owner</th><th>Target ship</th><th>Status</th></tr>
+    <tr><td>D-01</td><td>csp-gateway-service Owner-lookup endpoint <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code></td><td>Hard prerequisite</td><td>Owner resolution at allocation.</td><td>csp-platform</td><td>Pre-cutover</td><td>Confirm existence</td></tr>
+    <tr><td>D-02</td><td>csp-notification-service consumer for <code>csp.ivr.missed-call</code></td><td>Co-ship (Phase 2)</td><td>Channel routing for missed-call alerts.</td><td>csp-platform</td><td>Phase 2</td><td>Spec needed</td></tr>
+    <tr><td>D-03</td><td>CSP App + Customer App <code>maskedCallAvailable</code> wiring on ticket drilldown DTOs</td><td>Co-ship</td><td>Call CTA visibility gating switches from app-side state parsing to backend boolean.</td><td>App teams</td><td>Co-launch</td><td>Spec ready</td></tr>
+    <tr><td>D-04</td><td>DLT template approvals for PIN-delivery SMS, dead-end SMS</td><td>Hard prerequisite</td><td>"Wiom" sender ID required.</td><td>Comms / Ops</td><td>3 weeks pre-launch</td><td>To file</td></tr>
+    <tr><td>D-05</td><td>WhatsApp BSP template approvals</td><td>Soft prerequisite (Phase 2 deferrable)</td><td>WA channel for PIN delivery + missed-call.</td><td>Comms</td><td>Phase 2</td><td>To file</td></tr>
+    <tr><td>D-06</td><td>Truecaller / VLT carry-forward verification on the retained masked DID</td><td>Hard prerequisite</td><td>Pickup-rate protection.</td><td>Ops</td><td>Pre-cutover</td><td>To confirm with vendor</td></tr>
+    <tr><td>D-07</td><td>Exotel App Bazaar flow build (Connect ×3 + Gather ×2 + Passthru Sync ×2 + Passthru Async ×6 + Switch Case ×2 + Greeting ×9)</td><td>Hard prerequisite</td><td>The IVR flow surface itself.</td><td>Eng + Vendor liaison</td><td>Pre-cutover</td><td>To build</td></tr>
+    <tr><td>D-08</td><td>10 Hindi audio files (see B3.3)</td><td>Hard prerequisite</td><td>Voice content for greetings, gather, fallback.</td><td>Solutions team</td><td>Pre-cutover</td><td>To commission</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- A11 Open questions -->
+<!-- ====================================================================== -->
+<section class="spec" id="s11">
+  <h2><span class="num">A11.</span> Open Questions / Decisions Needed <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Unresolved decisions, named decider, BLOCK flag.</div>
+  <table>
+    <tr><th>#</th><th>Decision needed</th><th>Decided by</th><th>Impact if unresolved</th><th>BLOCKS build?</th></tr>
+    <tr><td>Q-01</td><td>Does Exotel support <code>action: "playback"</code> in Connect-applet dynamic-URL responses?</td><td>Exotel + Eng</td><td>Skip-Gather flow may need extra Passthru hop.</td><td>No (fallback designed)</td></tr>
+    <tr><td>Q-02</td><td>Does Exotel support HMAC signed-payload on Passthru/Connect webhooks?</td><td>Exotel + Eng</td><td>Determines v1 auth (HMAC vs IP allowlist).</td><td>No (IP allowlist v1 fallback)</td></tr>
+    <tr><td>Q-03</td><td>Should dead-end greetings actively transfer the caller ("press 1 to connect") or just read out the helpline number?</td><td>Solutions team</td><td>Affects audio copy and applet wiring.</td><td>No (read-out is the v1 default; transfer is deferred)</td></tr>
+    <tr><td>Q-04</td><td>Should the customer-side PIN be surfaced on the Customer App ticket card too (in addition to SMS/WA)?</td><td>PM + Design</td><td>Customer App design effort + Experience–Data Spec.</td><td>No (SMS/WA is the v1 channel)</td></tr>
+    <tr><td>Q-05</td><td>For multi-Owner CSPs (if any exist), which Owner mobile is canonical?</td><td>csp-platform + CSP user mgmt</td><td>Pre-assignment routing ambiguity.</td><td>Pending data audit — likely "No" (one-Owner-per-CSP appears to hold)</td></tr>
+    <tr><td>Q-06</td><td>Should Install have a recall event analogous to ES_RESTORE_TASK_RECALLED, or is re-firing ES_INSTALL_TECHNICIAN_ASSIGNED with is_self_assigned=true the canonical recall path?</td><td>Verified — re-fire is canonical (csp-tas-service InstallationStateMachine line 182)</td><td>—</td><td>Resolved</td></tr>
+    <tr><td>Q-07</td><td>Should dead-end SMS migrate to <code>csp-notification-service</code> in v2 (currently inline from IVR)?</td><td>csp-platform + IVR PM</td><td>Notification service v2 scope.</td><td>No (v2 concern)</td></tr>
+    <tr><td>Q-08</td><td>Audit retention for closed Table 2 rows post-cooldown — 90 days? 365 days?</td><td>Compliance + Tech</td><td>Hard-delete cadence.</td><td>No (default 365 days; revisit in compliance review)</td></tr>
+    <tr><td>Q-09</td><td>What is the SLA on Owner-mobile change propagation? If an Owner updates their registered_mobile, do existing active Table 2 rows get retroactively updated?</td><td>PM + Eng</td><td>Edge case — Owner changes phone mid-ticket.</td><td>No (v1: no retroactive update; document for ops)</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<div class="part-divider how">
+  <div class="label">Part B</div>
+  <h2>HOW — Detailing</h2>
+  <p>What gets built, in enough detail for engineering and design to act. PM stays in business-behaviour; engineering owns implementation (schemas, APIs, concurrency, monitoring).</p>
+  <div class="author-note">Authored by the PM with engineering input.</div>
+</div>
+
+<!-- ====================================================================== -->
+<!-- B1 Data requirements -->
+<!-- ====================================================================== -->
+<section class="spec" id="s12">
+  <h2><span class="num">B1.</span> Data Requirements <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Conceptual entities and business-meaningful key attributes. Not a schema.</div>
+  <table>
+    <tr><th>Entity</th><th>Description</th><th>Key attributes (conceptual)</th></tr>
+    <tr><td>Active call mapping (Table 1)</td><td>Short-lived record of an in-app CTA tap. Maps the calling party's FROM number(s) to the counterparty's mobile, scoped to a ticket and direction. Bridges seamless calls within the TTL.</td><td>Unique identifier; list of FROM numbers (for CSPs: all inventoried SIMs + registered mobile); counterparty TO mobile; ticket reference; direction (csp_to_customer / customer_to_csp); created time; TTL expiry time.</td></tr>
+    <tr><td>PIN registry (Table 2)</td><td>Per-ticket per-side authorisation credential and current bridge target. Two rows per active ticket. Used for off-CTA calling and for multi-ticket disambiguation.</td><td>Unique identifier; 5-digit PIN (immutable for row lifetime); ticket reference; side (customer / csp); current bridge-target mobile (mutable on reassignment); CSP org id (csp-side rows, for scoping); CSP user id (csp-side rows, current executor); customer mobile (customer-side rows, for lookup); created time; soft-delete time (set on ticket close); cooldown-until time (PIN reserved against re-issue).</td></tr>
+    <tr><td>SIM inventory</td><td>Set of mobile numbers a CSP user has registered as SIMs they may dial from, in addition to their primary registered_mobile.</td><td>Unique identifier; mobile number; CSP user reference; CSP org reference; added-time; added-by user; removed-time (nullable; soft-delete); removed-by user; verification status (pending / verified / failed).</td></tr>
+    <tr><td>Call audit log</td><td>Append-only record of every applet hop in every call session. Drives observability, ops reconciliation, and security review.</td><td>Unique identifier; Exotel CallSid (correlation key); event type (one of ~30 typed categories); FROM number; TO number; ticket reference; payload envelope (typed fields per event); created time.</td></tr>
+    <tr><td>PIN attempt log</td><td>Append-only record of every PIN entry attempt. Captures outcome and reason for security review; <strong>never</strong> the raw PIN digits.</td><td>Unique identifier; CallSid; attempt number (1 or 2); outcome (valid / invalid_format / no_match / multi_match / scoping_rejected); user_type at time of attempt; created time.</td></tr>
+    <tr><td>Missed-call domain event</td><td>One bus event per DNP. Carries everything <code>csp-notification-service</code> needs to choose a channel and render copy.</td><td>CallSid; missed party identity and mobile; missed party's own PIN; caller identity and display name; ticket reference and type; direction; call initiation time; disposition; masked number; callback deep-link.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B2 State machine -->
+<!-- ====================================================================== -->
+<section class="spec" id="s13">
+  <h2><span class="num">B2.</span> State Machine <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Required when 3+ distinct lifecycle states + externally observable + business-consequential transitions. The PIN registry row meets all three criteria.</div>
+
+  <h3>B2.1 States — PIN registry row</h3>
+  <table>
+    <tr><th>State</th><th>Description</th><th>Terminal?</th><th>Timeout / expiry</th></tr>
+    <tr><td>ACTIVE</td><td>Row is live; PIN valid; bridge target current; CTA visible on the app.</td><td>No</td><td>Until ticket reaches terminal state.</td></tr>
+    <tr><td>EXPIRED (soft-deleted)</td><td>Ticket closed; row excluded from active lookups; PIN value still reserved.</td><td>No</td><td>cooldown_until = expires_at + ES_CSPIVR_PIN_COOLDOWN_DAYS (default 90)</td></tr>
+    <tr><td>COOLDOWN</td><td>PIN value reserved against re-issue; row not lookup-able; entering PIN → "invalid".</td><td>No</td><td>Until cooldown_until + audit retention.</td></tr>
+    <tr><td>HARD_DELETED</td><td>Row physically removed by background retention job; PIN value freely available to generation again.</td><td>Yes</td><td>—</td></tr>
+  </table>
+
+  <h3>B2.2 Transition matrix</h3>
+  <table>
+    <tr><th>From</th><th>Event</th><th>Guard</th><th>To</th><th>What happens (semantic)</th></tr>
+    <tr><td>(none)</td><td>ES_*_CANDIDATE_CREATED (or ES_NBREC_RECOVERY_TASK_ASSIGNED for Pickup)</td><td>Owner resolvable for the candidate's csp_id</td><td>ACTIVE</td><td>INSERT 2 rows (customer-side + csp-side); generate 2 unique PINs; resolve Owner mobile and persist; dispatch customer SMS.</td></tr>
+    <tr><td>ACTIVE</td><td>ES_*_TECHNICIAN_ASSIGNED (any executor_id, any is_self_assigned)</td><td>—</td><td>ACTIVE</td><td>Universal mobile-update path: resolve executor mobile via gateway; UPDATE customer-side row.other_party_mobile; UPDATE csp-side row.csp_user_id. PIN preserved.</td></tr>
+    <tr><td>ACTIVE</td><td>ES_RESTORE_TASK_RECALLED</td><td>—</td><td>ACTIVE</td><td>Revert customer-side row.other_party_mobile to Owner mobile; revert csp-side row.csp_user_id to Owner. PIN preserved.</td></tr>
+    <tr><td>ACTIVE</td><td>ES_*_terminal event</td><td>—</td><td>EXPIRED</td><td>Soft-delete: set expires_at = now(); set cooldown_until = now() + 90 days.</td></tr>
+    <tr><td>EXPIRED</td><td>(time)</td><td>now() &gt; expires_at AND now() &lt;= cooldown_until</td><td>COOLDOWN</td><td>PIN value reserved against re-issue; lookups exclude.</td></tr>
+    <tr><td>COOLDOWN</td><td>(retention job)</td><td>cooldown_until + audit_retention_window &lt; now()</td><td>HARD_DELETED</td><td>Row physically removed.</td></tr>
+  </table>
+
+  <h3>B2.3 State diagram</h3>
+  <div class="mermaid">
+stateDiagram-v2
+    [*] --> ACTIVE: ES_*_CANDIDATE_CREATED (Owner = default executor)
+    ACTIVE --> ACTIVE: ES_*_TECHNICIAN_ASSIGNED (mobile-only update)
+    ACTIVE --> ACTIVE: ES_RESTORE_TASK_RECALLED (revert to Owner)
+    ACTIVE --> EXPIRED: ES_*_terminal event
+    EXPIRED --> COOLDOWN: time (expires_at + 0)
+    COOLDOWN --> HARD_DELETED: time (cooldown_until + retention)
+    HARD_DELETED --> [*]
+  </div>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B3 Parameters -->
+<!-- ====================================================================== -->
+<section class="spec" id="s14">
+  <h2><span class="num">B3.</span> Configurable Parameters <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Every threshold / limit / toggle with default, valid range, scope.</div>
+
+  <h3>B3.1 New parameters</h3>
+  <table>
+    <tr><th>Key</th><th>Type</th><th>Default</th><th>Valid range</th><th>Scope</th><th>Description</th></tr>
+    <tr><td>ES_CSPIVR_TABLE_1_TTL_SECONDS</td><td>Integer</td><td>300 (5 min)</td><td>60–600</td><td>Global</td><td>Active-call mapping TTL after in-app CTA tap.</td></tr>
+    <tr><td>ES_CSPIVR_PIN_COOLDOWN_DAYS</td><td>Integer</td><td>90</td><td>30–365</td><td>Global</td><td>Days a closed-ticket PIN is reserved against re-issue.</td></tr>
+    <tr><td>ES_CSPIVR_PIN_DIGITS</td><td>Integer</td><td>5</td><td>5 or 6</td><td>Global</td><td>PIN length. Escalate to 6 if generation retry rate spikes or pool reservation approaches 70%.</td></tr>
+    <tr><td>ES_CSPIVR_PIN_ATTEMPTS_PER_CALL</td><td>Integer</td><td>2</td><td>2 only</td><td>Global</td><td>Maximum PIN attempts per call. Enforced structurally by App Bazaar applet count.</td></tr>
+    <tr><td>ES_CSPIVR_PIN_AUDIT_RETENTION_DAYS</td><td>Integer</td><td>365</td><td>90–730</td><td>Global</td><td>Hard-delete threshold after cooldown ends.</td></tr>
+    <tr><td>ES_CSPIVR_CALL_BRIDGE_MAX_RING_SECONDS</td><td>Integer</td><td>30</td><td>15–60</td><td>Global</td><td>Maximum ring duration returned to Exotel.</td></tr>
+    <tr><td>ES_CSPIVR_USER_IDENTIFICATION_CACHE_TTL_SECONDS</td><td>Integer</td><td>600 (10 min)</td><td>60–1800</td><td>Global</td><td>Cache TTL on the CallSid → user_type stash.</td></tr>
+  </table>
+
+  <h3>B3.2 SPR amendment</h3>
+  <p style="font-size:13px;color:var(--muted);">Not applicable. csp-ivr-service is a capability service, not OS-specific. All parameters use the <code>ES_CSPIVR_*</code> namespace, registered in the platform parameter registry (not in any OS's SPR).</p>
+
+  <h3>B3.3 Audio assets (commissioned by Solutions team)</h3>
+  <p>All Hindi-first. Exotel specs: <code>.wav</code> or <code>.mp3</code>, &lt; 2 MB, 8-bit, 8000 Hz, mono.</p>
+  <table>
+    <tr><th>#</th><th>File</th><th>When played</th></tr>
+    <tr><td>1</td><td><code>pin-gather-prompt.mp3</code></td><td>Every Gather applet fires</td></tr>
+    <tr><td>2</td><td><code>pin-gather-repeat.mp3</code></td><td>Repeat within Gather window on invalid / empty input</td></tr>
+    <tr><td>3</td><td><code>customer-no-active-ticket.mp3</code></td><td>First Switch Case = <code>customer_no_pin</code></td></tr>
+    <tr><td>4</td><td><code>csp-no-active-ticket.mp3</code></td><td>First Switch Case = <code>csp_no_pin</code></td></tr>
+    <tr><td>5</td><td><code>pin-no-entry.mp3</code></td><td>Gather → "no entry" path</td></tr>
+    <tr><td>6</td><td><code>customer-pin-exhausted.mp3</code></td><td>Final Switch Case = <code>customer_*</code></td></tr>
+    <tr><td>7</td><td><code>csp-pin-exhausted.mp3</code></td><td>Final Switch Case = <code>csp_*</code></td></tr>
+    <tr><td>8</td><td><code>unknown-pin-exhausted.mp3</code></td><td>Final Switch Case = <code>unknown</code></td></tr>
+    <tr><td>9</td><td><code>service-unavailable.mp3</code></td><td>Connect applet Fallback URL (backend error / timeout)</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B4 System Logical Flow -->
+<!-- ====================================================================== -->
+<section class="spec" id="s15">
+  <h2><span class="num">B4.</span> System Logical Flow <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> One Mermaid flow per workflow introduced. Show every decision point and every error branch.</div>
+
+  <p style="font-size:13px;color:var(--muted);margin-top:14px;margin-bottom:4px;font-weight:600;">Workflow 1: <span style="color:var(--ink);">Inbound call routing (the full Exotel App Bazaar flow)</span></p>
+  <div class="mermaid">
+flowchart TD
+    Start([Caller dials masked DID]) --> C1["Connect — API 1: GET /ivr/resolve-caller<br/>Table 1 lookup → Table 2 by-FROM"]
+    C1 -- "Connected (bridged)" --> PA1[Passthru Async: log bridge_connected]
+    C1 -- "DNP (didn't pick)" --> PA2[Passthru Async: log + emit ES_CSPIVR_MISSED_CALL_DETECTED]
+    C1 -- "Did not Dial (empty destination)" --> PS1["Passthru Sync — API 2: GET /ivr/identify-caller<br/>returns 5-value composite discriminator"]
+    PA1 --> Bridged([Bridged · disposition webhook · END])
+    PA2 --> Missed([Missed · notification handoff · END])
+    PS1 --> SC1{Switch Case 5 branches}
+    SC1 -- customer_no_pin --> GC[Greeting: customer-no-active-ticket.mp3 → call centre]
+    SC1 -- csp_no_pin --> GS[Greeting: csp-no-active-ticket.mp3 → trust line]
+    GC --> DeadSMS1[Dead-end SMS inline · Gupshup]
+    GS --> DeadSMS1
+    DeadSMS1 --> H1([Hangup])
+    SC1 -- customer_with_pin --> G1["Gather attempt 1<br/>5 digits, # finish"]
+    SC1 -- csp_with_pin --> G1
+    SC1 -- unknown --> G1
+    G1 -- No entry --> GNoEntry[Greeting: pin-no-entry.mp3]
+    GNoEntry --> H1
+    G1 -- Entered --> C2["Connect — API 3: GET /ivr/resolve-pin<br/>Table 2 by PIN with scoping"]
+    C2 -- Connected --> PA3[Passthru Async: log]
+    C2 -- DNP --> PA4[Passthru Async: log + emit MISSED_CALL_DETECTED]
+    C2 -- Did not Dial --> G2[Gather attempt 2]
+    PA3 --> Bridged
+    PA4 --> Missed
+    G2 -- No entry --> H1
+    G2 -- Entered --> C3[Connect — API 3 retry]
+    C3 -- Connected --> PA5[Passthru Async: log]
+    C3 -- DNP --> PA6[Passthru Async: log + emit MISSED_CALL_DETECTED]
+    C3 -- Did not Dial --> PS2[Passthru Sync — API 2 again]
+    PA5 --> Bridged
+    PA6 --> Missed
+    PS2 --> SC2{Switch Case 5 branches · final}
+    SC2 -- customer_no_pin --> GEX1[Greeting: customer-pin-exhausted.mp3]
+    SC2 -- customer_with_pin --> GEX1
+    SC2 -- csp_no_pin --> GEX2[Greeting: csp-pin-exhausted.mp3]
+    SC2 -- csp_with_pin --> GEX2
+    SC2 -- unknown --> GEX3[Greeting: unknown-pin-exhausted.mp3]
+    GEX1 --> DeadSMS2[Dead-end SMS inline]
+    GEX2 --> DeadSMS2
+    GEX3 --> DeadSMS2
+    DeadSMS2 --> H1
+  </div>
+
+  <p style="font-size:13px;color:var(--muted);margin-top:14px;margin-bottom:4px;font-weight:600;">Workflow 2: <span style="color:var(--ink);">In-app Call CTA (initiateCall flow)</span></p>
+  <div class="mermaid">
+flowchart TD
+    A([User taps Call CTA on ticket card]) --> Av{Auth + CTA visible?}
+    Av -- No --> Err1[Reject: NOT_AUTHORISED or NOT_AVAILABLE]
+    Av -- Yes --> Resolve[Backend: resolve FROM list and TO from Table 2]
+    Resolve --> Found{Table 2 row exists?}
+    Found -- No --> Err2[Reject: TICKET_NOT_ACTIVE — ops alert if maskedCallAvailable was true]
+    Found -- Yes --> InsT1[INSERT Table 1 row with TTL]
+    InsT1 --> RetMN[Return masked number to app]
+    RetMN --> Dial([User dials masked number])
+    Dial --> Workflow1[Enters Workflow 1: Inbound call routing]
+  </div>
+
+  <p style="font-size:13px;color:var(--muted);margin-top:14px;margin-bottom:4px;font-weight:600;">Workflow 3: <span style="color:var(--ink);">PIN registry lifecycle (event-driven)</span></p>
+  <div class="mermaid">
+flowchart TD
+    EV1[ES_*_CANDIDATE_CREATED fires] --> Res[Resolve Owner via gateway]
+    Res --> ResOK{Owner found?}
+    ResOK -- No --> ErrAlloc[Allocation fails · maskedCallAvailable=false · ops alert]
+    ResOK -- Yes --> Gen[Generate 2 unique 5-digit PINs]
+    Gen --> Ins[INSERT 2 Table 2 rows]
+    Ins --> SMS[Dispatch customer SMS+WA inline]
+    SMS --> Live([ACTIVE — calls now bridge to Owner])
+    Live --> Tech{ES_*_TECHNICIAN_ASSIGNED fires?}
+    Tech -- Yes --> Upd[Resolve executor mobile · UPDATE customer-side]
+    Upd --> Live
+    Tech -- No --> Live
+    Live --> Rec{ES_RESTORE_TASK_RECALLED fires?}
+    Rec -- Yes --> Rev[Revert customer-side to Owner mobile]
+    Rev --> Live
+    Rec -- No --> Live
+    Live --> Term{ES_*_terminal event fires?}
+    Term -- Yes --> Del[Soft-delete · expires_at=now · cooldown_until=now+90d]
+    Del --> Cd([COOLDOWN — PIN reserved 90 days])
+    Cd --> HD([HARD_DELETED after retention])
+  </div>
+
+  <p style="font-size:13px;color:var(--muted);margin-top:14px;margin-bottom:4px;font-weight:600;">Workflow 4: <span style="color:var(--ink);">Missed-call notification handoff</span></p>
+  <div class="mermaid">
+flowchart TD
+    Miss([Exotel DNP detected on bridge attempt]) --> PA[Passthru-Async-on-DNP fires]
+    PA --> Tx[DB transaction: INSERT call_audit_logs + INSERT outbox row]
+    Tx --> TxOK{Transaction succeeded?}
+    TxOK -- No --> Retry[Backend retry; if exhausted, ops alert]
+    TxOK -- Yes --> Worker[Outbox worker drains to bus topic csp.ivr.missed-call]
+    Worker --> NS[csp-notification-service consumes ES_CSPIVR_MISSED_CALL_DETECTED]
+    NS --> Choose{App installed?}
+    Choose -- Yes --> PN[Send Push Notification with PIN + deep-link]
+    Choose -- No --> SMSWA[Send SMS + WA with PIN + masked number]
+    PN --> End([Recipient sees alert])
+    SMSWA --> End
+  </div>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B5 Sequence diagram -->
+<!-- ====================================================================== -->
+<section class="spec" id="s16">
+  <h2><span class="num">B5.</span> System Sequence Diagram <span class="tier cond">Multiple services interact</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Behavioural-statement sequences — not event names or payload schemas. Mechanism is engineering's choice.</div>
+
+  <h3>B5.1 Inbound call — happy path (in-app CTA → bridge)</h3>
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as CSP App / Customer App
+    participant IVR as csp-ivr-service
+    participant Exo as Exotel
+    participant Gpsh as Gupshup
+    participant Recip as Recipient phone
+    App->>IVR: "Initiate call for ticket X"
+    Note over IVR: Resolve from Table 2 · INSERT Table 1
+    IVR-->>App: Masked number issued
+    App->>Exo: User dials masked number
+    Exo->>IVR: Webhook: caller resolution requested
+    Note over IVR: Table 1 hit
+    IVR-->>Exo: Bridge to TO mobile
+    Exo->>Recip: Ring
+    Recip-->>Exo: Picks up
+    Note over Exo: Call recorded · disposition webhook on end-of-call
+  </div>
+
+  <h3>B5.2 Inbound call — PIN gather + bridge</h3>
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Caller as Caller (unknown SIM)
+    participant Exo as Exotel
+    participant IVR as csp-ivr-service
+    participant GW as csp-gateway
+    Caller->>Exo: Dials masked number
+    Exo->>IVR: Resolve caller
+    Note over IVR: Table 1 miss · Table 2 by-FROM = 0 rows
+    IVR->>GW: Look up identity for FROM
+    GW-->>IVR: user_type = unknown
+    IVR-->>Exo: Empty destination
+    Note over Exo: Did not Dial → Passthru Sync → Switch Case
+    Exo->>IVR: Identify caller
+    IVR-->>Exo: "unknown" branch
+    Exo->>Caller: PIN gather prompt plays
+    Caller->>Exo: Enters PIN
+    Exo->>IVR: Resolve PIN
+    Note over IVR: Table 2 by-PIN match
+    IVR-->>Exo: Bridge to other_party_mobile
+    Exo->>Caller: Call bridges
+  </div>
+
+  <h3>B5.3 Ticket lifecycle — allocate → assign → recall → close</h3>
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant ES as es-restore
+    participant Bus as Event bus
+    participant IVR as csp-ivr-service
+    participant GW as csp-gateway
+    participant Gpsh as Gupshup
+    ES->>Bus: Restore candidate created
+    Bus->>IVR: ES_RESTORE_CANDIDATE_CREATED
+    IVR->>GW: Resolve Owner for csp_id
+    GW-->>IVR: Owner csp_user_id + mobile
+    Note over IVR: INSERT 2 PIN rows · Owner = default executor
+    IVR->>Gpsh: Send PIN SMS+WA to customer
+    Note over IVR: Customer can now call Owner
+    ES->>Bus: Technician assigned (Rohit)
+    Bus->>IVR: ES_RESTORE_TECHNICIAN_ASSIGNED
+    IVR->>GW: Resolve technician mobile
+    GW-->>IVR: Rohit's mobile
+    Note over IVR: UPDATE customer-side row · PIN preserved
+    Note over IVR: Customer calls now bridge to Rohit
+    ES->>Bus: CSP recalls task
+    Bus->>IVR: ES_RESTORE_TASK_RECALLED
+    Note over IVR: REVERT customer-side row to Owner mobile
+    Note over IVR: Customer calls now bridge to Owner again
+    ES->>Bus: Restore completed
+    Bus->>IVR: ES_RESTORE_COMPLETED
+    Note over IVR: Soft-delete both rows · 90d cooldown begins
+  </div>
+
+  <h3>B5.4 Missed-call notification</h3>
+  <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Caller as CSP
+    participant Exo as Exotel
+    participant IVR as csp-ivr-service
+    participant Bus as Event bus
+    participant NS as csp-notification-service
+    participant Recip as Customer
+    Caller->>Exo: Dials masked number
+    Exo->>IVR: Resolve caller · bridge requested
+    IVR-->>Exo: Bridge to customer mobile
+    Exo->>Recip: Ring
+    Recip-->>Exo: No pickup (DNP)
+    Exo->>IVR: Passthru-Async-on-DNP
+    Note over IVR: INSERT call_audit_logs + outbox row in one transaction
+    IVR->>Bus: ES_CSPIVR_MISSED_CALL_DETECTED (with PIN + deep-link)
+    Bus->>NS: Event consumed
+    Note over NS: Choose channel · render copy
+    NS->>Recip: PN / SMS / WA with caller name + PIN + masked number
+    Note over Recip: Customer can call back from any phone using PIN
+  </div>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B6 UI -->
+<!-- ====================================================================== -->
+<section class="spec" id="s17">
+  <h2><span class="num">B6.</span> Front-End UI Requirements <span class="tier cond">UI changes</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Information per surface, edge content states, notification triggers. No copy or pixels.</div>
+
+  <h3>B6.1 Affected surfaces</h3>
+  <table>
+    <tr><th>App</th><th>Screens</th><th>Change type</th></tr>
+    <tr><td>CSP App</td><td>Install drilldown · Restore drilldown · NetBox Recovery drilldown</td><td>Modify (CTA visibility + PIN display)</td></tr>
+    <tr><td>Technician App</td><td>Task detail · Call CTA</td><td>Modify (backend-driven <code>maskedCallAvailable</code>)</td></tr>
+    <tr><td>Customer App</td><td>Ticket detail (optional PIN display — TBD with Design via Experience–Data Spec)</td><td>Modify (CTA visibility)</td></tr>
+    <tr><td>SMS / WhatsApp inbox</td><td>Customer's SMS/WA app (not a Wiom surface, but copy is owned by us)</td><td>New + Modify (PIN delivery, dead-end SMS, missed-call alert)</td></tr>
+    <tr><td>Voice IVR</td><td>The voice flow itself</td><td>New (10 audio assets)</td></tr>
+  </table>
+
+  <h3>B6.2 Information &amp; actions per screen</h3>
+  <table>
+    <tr><th>Screen</th><th>Primary information</th><th>Required actions</th></tr>
+    <tr><td>CSP App ticket drilldown</td><td>Existing fields (status, executor, address, devices) PLUS the CSP-side PIN displayed prominently enough that a screenshot of the card includes the PIN cleanly.</td><td>Call CTA (primary; visibility tied to <code>maskedCallAvailable</code>); existing actions.</td></tr>
+    <tr><td>Customer App ticket detail</td><td>Existing fields PLUS optionally the customer-side PIN (TBD).</td><td>Call CTA (primary; visibility tied to <code>maskedCallAvailable</code>).</td></tr>
+    <tr><td>Customer SMS at ticket open</td><td>Masked number + customer-side PIN + dial instruction. Hindi-first.</td><td>None (passive — read).</td></tr>
+    <tr><td>Missed-call notification (PN / SMS / WA)</td><td>Caller display name; ticket type; masked number; the recipient's own PIN; tap-target for callback.</td><td>Tap to call back (deep-link).</td></tr>
+    <tr><td>Dead-end SMS</td><td>Helpline number (call centre or trust line, per user_type).</td><td>None (passive).</td></tr>
+  </table>
+
+  <h3>B6.3 Edge content states</h3>
+  <table>
+    <tr><th>Screen / scenario</th><th>Content required</th></tr>
+    <tr><td>CSP App — ticket card · Call CTA not yet available (allocation in flight)</td><td>CTA disabled / hidden until backend flips <code>maskedCallAvailable=true</code>.</td></tr>
+    <tr><td>CSP App — ticket card · Call CTA available but Owner role missing (BEC-11)</td><td>CTA hidden; ops alerted via dashboard. User sees no error (they shouldn't have to know).</td></tr>
+    <tr><td>Voice IVR — caller enters invalid PIN format (less than 5 digits, alpha, etc.)</td><td>Treated as wrong attempt; pin-gather-repeat plays; counts against the 2-attempt limit.</td></tr>
+    <tr><td>Voice IVR — caller hangs up during Gather prompt</td><td>pin-no-entry greeting plays before Hangup. No PIN audit log entry; no missed-call event.</td></tr>
+    <tr><td>Voice IVR — backend timeout / error</td><td>Fallback greeting plays: "service unavailable, please try again later." Call ends. Caller may retry.</td></tr>
+    <tr><td>Customer SMS at ticket open — failed delivery</td><td>Surfaced in customer-care dashboard so ops can manually outreach the PIN.</td></tr>
+  </table>
+
+  <h3>B6.4 Notification requirements</h3>
+  <table>
+    <tr><th>Trigger event</th><th>Information to convey</th><th>Channel</th><th>Languages</th></tr>
+    <tr><td>Customer ticket creation (PIN delivery)</td><td>Masked number + customer-side PIN + dial instruction.</td><td>SMS (primary) + WhatsApp</td><td>Hindi-first</td></tr>
+    <tr><td>CSP ticket creation</td><td>PIN visible on CSP App ticket card (no separate notification).</td><td>In-app surface</td><td>Hindi-first</td></tr>
+    <tr><td>DNP on a CSP-initiated call to customer</td><td>Caller (technician) name + ticket type + masked number + customer's own PIN + deep-link.</td><td>Push to Customer App (primary) → SMS / WA fallback. Owned by csp-notification-service.</td><td>Hindi-first</td></tr>
+    <tr><td>DNP on a customer-initiated call to CSP</td><td>Caller (customer) name + ticket type + masked number + CSP's own PIN + deep-link.</td><td>Push to CSP App (primary) → SMS / WA fallback.</td><td>Hindi-first</td></tr>
+    <tr><td>Dead-end (call did not bridge)</td><td>Relevant helpline number (call centre 88803 22222 / trust line 78368 11111).</td><td>SMS inline from IVR (Gupshup direct)</td><td>Hindi-first</td></tr>
+    <tr><td>Technician reassignment</td><td>New technician sees the existing CSP-side PIN on the ticket card (no fresh credential).</td><td>Push to new technician (no new customer SMS)</td><td>Hindi-first</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B7 Money flow -->
+<!-- ====================================================================== -->
+<section class="spec" id="s18">
+  <h2><span class="num">B7.</span> Settlement &amp; Money Flow <span class="tier cond">N/A — no money</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Every money-touching dimension declared. Each Yes/No must be intentional.</div>
+  <table>
+    <tr><th>Question</th><th>Answer</th><th>Detail</th></tr>
+    <tr><td>Changes the payout pipeline?</td><td>No</td><td>—</td></tr>
+    <tr><td>Changes the settlement waterfall?</td><td>No</td><td>—</td></tr>
+    <tr><td>Affects SD?</td><td>No</td><td>—</td></tr>
+    <tr><td>Affects wallet balance / feed?</td><td>No</td><td>—</td></tr>
+    <tr><td>Creates a new money flow?</td><td>No</td><td>—</td></tr>
+    <tr><td>Reconciliation cycle impact?</td><td>No</td><td>—</td></tr>
+    <tr><td>Tax / TDS implications?</td><td>No</td><td>—</td></tr>
+  </table>
+  <p style="font-size:13px;color:var(--muted);">IVR is a routing capability; no money changes hands. Exotel telephony costs are paid via existing vendor contracts unrelated to per-call settlement.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B8 Failure modes -->
+<!-- ====================================================================== -->
+<section class="spec" id="s19">
+  <h2><span class="num">B8.</span> Failure Modes <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> System failure scenarios with user-visible response, impact, recovery intent.</div>
+  <table>
+    <tr><th>#</th><th>System failure scenario</th><th>User-visible response</th><th>User impact while failing</th><th>Recovery intent</th></tr>
+    <tr><td>FM-01</td><td>Backend timeout / non-200 on /ivr/resolve-caller</td><td>Exotel falls to Fallback URL → "service unavailable, please try again later" greeting → Hangup.</td><td>Caller cannot complete this call attempt.</td><td>Auto-recover at backend level within seconds. If sustained, ops alerts on Exotel-side 5xx rate. Never an open mic.</td></tr>
+    <tr><td>FM-02</td><td>csp-gateway-service lookup timeout (Owner resolution at allocation OR executor resolution on technician-assigned)</td><td>Allocation fails for that ticket → <code>maskedCallAvailable=false</code> → CSP App hides Call CTA. Existing rows continue to function.</td><td>Affected ticket cannot use IVR until lookup succeeds; CSP-initiated calls via CTA blocked.</td><td>Retry with exponential backoff. If still failing after threshold, queue for manual reconciliation. Ops alerted.</td></tr>
+    <tr><td>FM-03</td><td>ES event listener lag (technician-assignment processed but Table 2 not yet updated)</td><td>Calls during the lag window bridge to the previous executor.</td><td>Customer reaches old technician briefly (typically &lt; 30s); CSP can hand the phone over.</td><td>At-least-once outbox + idempotent upsert ensure eventual consistency. No special user-facing recovery; document as acceptable.</td></tr>
+    <tr><td>FM-04</td><td>Outbox worker fails (missed-call domain event not published)</td><td>No missed-call notification fires for affected calls.</td><td>Recipient doesn't know they missed; manual callback only.</td><td>Worker retry; if exhausted, ops alert. Notification service is not retried by IVR — IVR's contract is event publication.</td></tr>
+    <tr><td>FM-05</td><td>csp-notification-service unavailable when consuming events</td><td>Events accumulate in bus / queue; not delivered to recipients.</td><td>Missed-call alerts delayed.</td><td>Notification service retry policy (outside IVR scope). Bus retains events per its own retention. Ops alerted on consumer lag.</td></tr>
+    <tr><td>FM-06</td><td>Gupshup SMS delivery fails for PIN-at-ticket-open</td><td>Customer doesn't receive PIN; CSP-initiated calls still work (Table 1 path) but customer-initiated calls from unknown SIM fail.</td><td>Customer cannot use PIN-authorised paths; in-CTA happy path still works if customer is in-app.</td><td>Retry; if exhausted, surface in customer-care dashboard for manual outreach with the PIN.</td></tr>
+    <tr><td>FM-07</td><td>Exotel applet flow misconfigured in production (e.g., Switch Case branch name typo)</td><td>Calls follow the wrong branch — e.g., customer with PIN gets dead-end greeting instead of Gather.</td><td>Affected callers can't bridge.</td><td>Pre-launch config audit; post-launch end-to-end smoke test of 13 UCs; rollback config to known-good state.</td></tr>
+    <tr><td>FM-08</td><td>Truecaller / VLT whitelisting expires or is revoked on the masked DID</td><td>Calls show as "Unknown" or "Spam" in caller ID; pickup rates drop.</td><td>DNP rate spikes.</td><td>Monitoring on pickup-rate vs baseline; renew whitelisting; communicate with Truecaller / telcos.</td></tr>
+    <tr><td>FM-09</td><td>Audio file URL unreachable (Greeting applet)</td><td>Exotel plays default silence / tone; call proceeds to Hangup without configured copy.</td><td>Caller hears confusing silence rather than the intended greeting.</td><td>CDN-availability monitoring; pre-launch URL-reachability check on every audio asset; ops alert on miss.</td></tr>
+    <tr><td>FM-10</td><td>PIN generation collision rate spikes (pool exhaustion)</td><td>None directly to users; allocation latency rises.</td><td>New ticket allocations delayed.</td><td>Alert at retry-count threshold; promote ES_CSPIVR_PIN_DIGITS to 6 (1M keyspace) via parameter change.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B9 Acceptance criteria -->
+<!-- ====================================================================== -->
+<section class="spec" id="s20">
+  <h2><span class="num">B9.</span> Acceptance Criteria — Gherkin <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Given / When / Then covering happy paths, negatives, edges, failure modes, cross-OS integration. Target ratio 1 happy : 3 negative.</div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_01 (happy · in-app CTA):</strong> Seamless in-app CTA bridge<br>
+    <span class="kw">Given</span> a CSP has tapped the Call CTA on an active ticket and dials within TTL on registered SIM<br>
+    <span class="kw">When</span> Exotel's initial Connect applet fires<br>
+    <span class="kw">Then</span> Table 1 returns the active mapping and the call bridges to the customer<br>
+    <span class="kw">And</span> the call is recorded (dual channel)<br>
+    <span class="kw">And</span> no PIN prompt is played
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_02 (happy · Path 2):</strong> Recognised single-ticket caller bridges via Table 2 by-FROM<br>
+    <span class="kw">Given</span> a customer with exactly 1 active ticket and no Table 1 entry<br>
+    <span class="kw">When</span> they dial the masked number from their registered mobile<br>
+    <span class="kw">Then</span> Table 2 by-FROM returns 1 row and the call bridges to the row's current executor<br>
+    <span class="kw">And</span> no PIN is requested
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_03 (happy · Path 3):</strong> Multi-ticket disambiguation via PIN<br>
+    <span class="kw">Given</span> a customer with 2 active tickets (Restore + Pickup)<br>
+    <span class="kw">When</span> they dial the masked number and enter the customer-side PIN of the Restore ticket<br>
+    <span class="kw">Then</span> the call bridges to the Restore ticket's current executor<br>
+    <span class="kw">And</span> the Pickup ticket's flow is unaffected
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_04 (happy · Path 4 / UC 13):</strong> Forwarded PIN bridges from unknown SIM<br>
+    <span class="kw">Given</span> a CSP forwarded the SMS containing masked number + PIN to a colleague (unregistered SIM)<br>
+    <span class="kw">When</span> the colleague dials and enters the PIN<br>
+    <span class="kw">Then</span> user_identification returns unknown<br>
+    <span class="kw">And</span> the PIN lookup is unscoped (allows colleague-forwarding) and bridges
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_05 (happy · pre-assignment Restore):</strong> Customer reaches Owner before technician is assigned<br>
+    <span class="kw">Given</span> a Restore candidate just created at PENDING_ACCEPTANCE with no technician<br>
+    <span class="kw">When</span> the customer dials the masked number from their registered mobile<br>
+    <span class="kw">Then</span> the call bridges to the Owner's registered mobile<br>
+    <span class="kw">And</span> no PIN prompt fires
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_06 (happy · post-assignment):</strong> Customer reaches Technician after delegation<br>
+    <span class="kw">Given</span> the same Restore ticket has been delegated to Rohit<br>
+    <span class="kw">When</span> the customer dials again<br>
+    <span class="kw">Then</span> the call bridges to Rohit (not the Owner)
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_07 (happy · recall):</strong> Bridge reverts to Owner on RECALL_TASK<br>
+    <span class="kw">Given</span> the same Restore ticket recalled from Rohit via RECALL_TASK<br>
+    <span class="kw">When</span> ES_RESTORE_TASK_RECALLED is consumed and the customer dials<br>
+    <span class="kw">Then</span> the call bridges to the Owner again<br>
+    <span class="kw">And</span> the customer-side PIN is unchanged
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_08 (happy · Install recall via re-fire):</strong> Install reassign to Owner uses universal mobile-update<br>
+    <span class="kw">Given</span> an Install ticket previously assigned to Rohit (is_self_assigned=false)<br>
+    <span class="kw">When</span> ES_INSTALL_TECHNICIAN_ASSIGNED re-fires with executor_id=Owner, is_self_assigned=true<br>
+    <span class="kw">Then</span> customer-side row.other_party_mobile updates to Owner's registered_mobile via the universal path<br>
+    <span class="kw">And</span> the next customer-initiated call bridges to Owner
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_09 (negative):</strong> Recognised user with 0 active tickets routes to dead-end<br>
+    <span class="kw">Given</span> a former customer (all tickets closed)<br>
+    <span class="kw">When</span> they dial the masked number<br>
+    <span class="kw">Then</span> API 2 returns <code>customer_no_pin</code><br>
+    <span class="kw">And</span> the dead-end greeting plays with call-centre number<br>
+    <span class="kw">And</span> an SMS with the call-centre number is sent inline to their FROM<br>
+    <span class="kw">And</span> the caller is never asked for a PIN
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_10 (negative):</strong> Cooldown PIN never bridges<br>
+    <span class="kw">Given</span> a ticket closed 60 days ago whose customer-side PIN was 47291<br>
+    <span class="kw">When</span> the former technician dials and enters 47291<br>
+    <span class="kw">Then</span> the PIN lookup excludes cooldown rows and treats 47291 as invalid<br>
+    <span class="kw">And</span> after 2 attempts → dead-end greeting<br>
+    <span class="kw">And</span> the call NEVER bridges to any other ticket holding 47291
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_11 (negative):</strong> CSP scoping blocks cross-CSP PIN guess<br>
+    <span class="kw">Given</span> CSP A holds a PIN for one of their customers<br>
+    <span class="kw">When</span> a user from CSP B dials and happens to enter that exact PIN<br>
+    <span class="kw">Then</span> the PIN lookup is scoped to side=csp AND csp_id=B's_csp_id<br>
+    <span class="kw">And</span> the PIN is treated as invalid
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_12 (negative):</strong> Two wrong PIN attempts route to dead-end + dead-end SMS<br>
+    <span class="kw">Given</span> a caller with no valid PIN<br>
+    <span class="kw">When</span> they enter two wrong PINs<br>
+    <span class="kw">Then</span> the final Switch Case routes to the user_type-aware exhausted-greeting<br>
+    <span class="kw">And</span> a dead-end SMS is sent inline with the relevant helpline
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_13 (negative · INV-09):</strong> Backend errors return 200, not 5xx<br>
+    <span class="kw">Given</span> a backend fault (DB down, gateway timeout) on /ivr/identify-caller<br>
+    <span class="kw">When</span> Exotel calls the endpoint<br>
+    <span class="kw">Then</span> HTTP status is 200<br>
+    <span class="kw">And</span> the body is <code>{"select": "unknown"}</code><br>
+    <span class="kw">And</span> the caller routes to the safest dead-end
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_14 (computation · boundary):</strong> Cooldown expires at exactly 90 days<br>
+    <span class="kw">Given</span> a ticket terminated at time T with ES_CSPIVR_PIN_COOLDOWN_DAYS=90<br>
+    <span class="kw">When</span> the clock reaches T + 89 days, 23 hours<br>
+    <span class="kw">Then</span> a PIN-lookup using that ticket's PIN still returns invalid<br>
+    <span class="kw">When</span> the clock reaches T + 90 days<br>
+    <span class="kw">Then</span> the row becomes eligible for hard-delete by the retention job
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_15 (computation · boundary):</strong> PIN attempts capped at 2 structurally<br>
+    <span class="kw">Given</span> a caller in the PIN gather flow<br>
+    <span class="kw">When</span> they enter wrong PINs at both Gather attempts<br>
+    <span class="kw">Then</span> the App Bazaar flow routes directly to dead-end<br>
+    <span class="kw">And</span> no third Gather applet exists
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_16 (invariant · INV-01):</strong> PIN immutability across lifecycle<br>
+    <span class="kw">Given</span> a Table 2 row across its full lifecycle (allocation → multiple reassignments → recall → terminal → cooldown)<br>
+    <span class="kw">Then</span> the row's PIN value is identical to the value at INSERT<br>
+    <span class="kw">And</span> no UPDATE on the row touches the PIN column
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_17 (invariant · INV-08):</strong> Masking contract never breached<br>
+    <span class="kw">Given</span> any bridged call across any flow<br>
+    <span class="kw">Then</span> the recipient's dialer / call log shows only the masked DID<br>
+    <span class="kw">And</span> the counterparty's real registered_mobile is never visible
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_18 (edge · BEC-06):</strong> Race between dial and terminal<br>
+    <span class="kw">Given</span> a customer dialling at the moment their ticket transitions to terminal<br>
+    <span class="kw">When</span> Table 2 has been soft-deleted by the time API 1 reads<br>
+    <span class="kw">Then</span> the dead-end greeting plays<br>
+    <span class="kw">And</span> the call is never bridged to the now-closed ticket
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_19 (edge · BEC-10):</strong> Owner missing → graceful failure<br>
+    <span class="kw">Given</span> a candidate whose csp_id has no user with role=owner<br>
+    <span class="kw">When</span> the candidate-creation event fires<br>
+    <span class="kw">Then</span> allocation fails and <code>maskedCallAvailable=false</code><br>
+    <span class="kw">And</span> the CSP App hides the Call CTA<br>
+    <span class="kw">And</span> ops alerting fires
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_20 (failure · FM-04):</strong> Missed-call event published reliably<br>
+    <span class="kw">Given</span> a CSP-initiated bridge attempt where the customer doesn't pick up<br>
+    <span class="kw">When</span> Passthru-Async-on-DNP fires<br>
+    <span class="kw">Then</span> call_audit_logs and outbox rows commit in one transaction<br>
+    <span class="kw">And</span> the outbox worker publishes the event to <code>csp.ivr.missed-call</code><br>
+    <span class="kw">And</span> IVR does NOT call CleverTap / FCM / Gupshup directly for the alert
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_21 (regression):</strong> Existing in-app CTA latency does not regress<br>
+    <span class="kw">Given</span> an in-app CTA tap with valid Table 1 entry<br>
+    <span class="kw">When</span> the user dials within TTL<br>
+    <span class="kw">Then</span> the backend resolves and returns destination within p95 200ms<br>
+    <span class="kw">And</span> no additional applet hops have been introduced into the happy path
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_22 (regression):</strong> Truecaller / VLT verification preserved<br>
+    <span class="kw">Given</span> the chosen masked DID inherits verification from one of MN1/MN2<br>
+    <span class="kw">When</span> a Truecaller-installed phone rings on the new flow<br>
+    <span class="kw">Then</span> the Wiom verified banner shows<br>
+    <span class="kw">And</span> no fresh whitelisting work was required
+  </div>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B10 Migration -->
+<!-- ====================================================================== -->
+<section class="spec" id="s21">
+  <h2><span class="num">B10.</span> Migration Impact &amp; Data Treatment <span class="tier cond">Existing data affected</span></h2>
+  <div class="expected"><strong>What is expected:</strong> User-side and data-side impact; per-category data treatment.</div>
+
+  <h3>B10.1 Affected scope</h3>
+  <table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Affects existing CSPs / customers / data?</td><td>Yes — every active CSP↔customer ticket across Install / Restore / Pickup at cutover (~all live tickets at the moment).</td></tr>
+    <tr><td>What will users experience during the change?</td><td>Cutover is DNS-level on the masked DID. The in-app CTA happy path continues to work uninterrupted. New routing paths (callbacks, PIN gather, etc.) become available immediately. Customers may receive a one-time SMS at cutover with the new masked number + PIN if their ticket is active.</td></tr>
+    <tr><td>Worst case if migration goes wrong</td><td>All masked calls drop during the cutover window. Rollback re-points Exotel App Bazaar flow to legacy <code>es-ivr-calling-service</code> within minutes (DNS-level). Legacy data retained for 30 days post-cutover for rollback safety.</td></tr>
+  </table>
+
+  <h3>B10.2 Data treatment</h3>
+  <table>
+    <tr><th>Data category</th><th>Treatment</th><th>Rationale</th></tr>
+    <tr><td>Existing active Install / Restore / Pickup tickets at cutover</td><td>Backfill 2 Table 2 rows per active ticket. Resolve Owner via gateway; current executor (if delegated) becomes the customer-side bridge target. Generate new PINs.</td><td>Required so the new IVR can serve existing tickets from second 1 of cutover.</td></tr>
+    <tr><td>Customer-side PIN delivery for backfilled tickets</td><td>One-time SMS at cutover with the new masked number + customer-side PIN.</td><td>Existing customers don't have a PIN yet; need one to use the new fallback flows.</td></tr>
+    <tr><td>Existing legacy Redis call-mapping cache</td><td>Discarded at cutover. Active in-app CTA sessions in-flight may drop; users re-tap.</td><td>Short TTL means at most ~5 min of impact. Acceptable.</td></tr>
+    <tr><td>SIM inventory data</td><td>Built fresh. Existing CSP SIM data in legacy <code>es-ivr-calling-service</code> is discarded. CSPs re-register SIMs (self-service or admin tool) post-cutover.</td><td>Legacy data had no audit trail and quality is unknown. Starting fresh ensures clean audit history.</td></tr>
+    <tr><td>Closed tickets (within last 90 days)</td><td>Not backfilled — no PIN needed for closed tickets.</td><td>Calls on closed tickets go to dead-end IVR regardless.</td></tr>
+    <tr><td>Legacy <code>es-ivr-calling-service</code> data</td><td>Retained for 30 days post-cutover (read-only), then archived.</td><td>Rollback safety window. If a critical issue surfaces, we can re-point to legacy and have the data available.</td></tr>
+    <tr><td>Call audit logs (pre-cutover)</td><td>Remain in legacy storage. New audit logs start fresh in csp-ivr-service. Cross-reference by ticket_id where needed.</td><td>No business need to merge histories; analytics can join when needed.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B11 Compliance -->
+<!-- ====================================================================== -->
+<section class="spec" id="s22">
+  <h2><span class="num">B11.</span> Compliance: Legal, Privacy &amp; Finance <span class="tier cond">PII + regulatory</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Three cross-cutting concerns surfaced. Each sub-section independently conditional.</div>
+
+  <h3>B11.1 Legal &amp; regulatory</h3>
+  <table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Legal confirmation needed before build?</td><td>Yes — DPDP review for PIN-in-SMS reminder design (PIN is a credential; embedding in SMS may have implications). DLT review for the new SMS template variants.</td></tr>
+    <tr><td>Regulatory requirements</td><td>DLT (Indian SMS regulation): all outbound SMS must use registered templates with the "Wiom" sender ID. DPDP (Digital Personal Data Protection Act): customer mobile numbers and PINs are personal data; retention + access controls apply. TRAI: masked number provisioning compliance via Exotel.</td></tr>
+    <tr><td>Compliance reporting obligations</td><td>None new. Existing telephony / call-record reporting via Exotel continues.</td></tr>
+    <tr><td>Audit trail requirements</td><td>Every PIN attempt logged (without raw digits). Every applet hop logged. Every SIM inventory add/remove logged. Retained per ops policy (suggest 1 year post hard-delete).</td></tr>
+  </table>
+
+  <h3>B11.2 Privacy &amp; PII</h3>
+  <table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Collects / processes PII?</td><td>Yes — but no new class of PII is introduced. Mobile numbers (customer + CSP) are already classified PII; PINs are a new credential class.</td></tr>
+    <tr><td>If yes, which PII fields?</td><td>Mobile numbers (customer + CSP users + CSP SIMs); PIN values (5-digit credentials); call audit logs (CallSid, FROM, TO, ticket reference).</td></tr>
+    <tr><td>Retention period</td><td>Active Table 2 rows: lifetime of ticket. Cooldown: 90 days post-close. Hard-delete: cooldown + retention (default 365 days). Call audit logs: per ops policy. PIN attempt logs: per security policy.</td></tr>
+    <tr><td>Encryption (at rest / in transit)?</td><td>At rest: per existing Wiom data-platform standards (engineering owns). In transit: HTTPS everywhere; Exotel webhooks over HTTPS.</td></tr>
+    <tr><td>Data residency</td><td>India (existing Wiom data-residency posture).</td></tr>
+    <tr><td>Right-to-deletion path</td><td>Customer right-to-deletion request: hard-delete Table 2 rows + audit logs for that customer's tickets earlier than retention window. Owned by existing data-platform team.</td></tr>
+    <tr><td>Consent mechanism</td><td>Existing Wiom customer consent at signup covers mobile-number processing for service-delivery purposes. PIN-in-SMS treatment falls under service-delivery; review with DPDP team to confirm.</td></tr>
+  </table>
+
+  <h3>B11.3 Finance reporting &amp; inputs</h3>
+  <p style="font-size:13px;color:var(--muted);">Not applicable. csp-ivr-service has no money flow. Exotel telephony costs are paid via existing vendor contracts unrelated to per-call settlement.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B12 Metrics -->
+<!-- ====================================================================== -->
+<section class="spec" id="s23">
+  <h2><span class="num">B12.</span> Metrics &amp; Measurement <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Thresholds for A3 success + guardrails; reporting / dashboard outputs.</div>
+
+  <h3>B12.1 Success metrics</h3>
+  <table>
+    <tr><th>Metric</th><th>Linked principle (A3)</th><th>Target / threshold</th><th>Instrumentation source</th></tr>
+    <tr><td>Call connect rate by initiation pattern</td><td>"Any authorised initiation pattern connects"</td><td>≥ 90% on each of: in-app CTA, registered-mobile dial, callback from saved contact, multi-ticket disambiguation, PIN-from-unregistered-SIM</td><td>Exotel disposition + call_audit_logs cross-joined; weekly dashboard</td></tr>
+    <tr><td>Silent-drop rate</td><td>"No call ends silently"</td><td>≤ 0.1% of total calls (down from current measurable today's-system rate)</td><td>Exotel "We didn't dial anyone" + dead-end-greeting-played; weekly dashboard</td></tr>
+    <tr><td>Personal-number leakage incidents</td><td>"Masking contract is absolute"</td><td>0 verified incidents; ops survey of CSPs quarterly</td><td>Qualitative — CSP feedback survey + support-ticket analysis</td></tr>
+    <tr><td>Pickup rate on bridged calls</td><td>"Trust layer (Truecaller / VLT) holds"</td><td>≥ 60% picked up within first ring sequence (Truecaller / VLT baseline)</td><td>Exotel DialCallStatus = completed vs no-answer; weekly dashboard</td></tr>
+  </table>
+
+  <h3>B12.2 Guardrail metrics</h3>
+  <table>
+    <tr><th>Guardrail (A3)</th><th>Specific threshold</th><th>Instrumentation source</th></tr>
+    <tr><td>"In-app CTA happy path must not regress"</td><td>p95 in-app-CTA bridge latency ≤ 200 ms backend; ≤ 3s total Exotel ringing-to-pickup</td><td>Existing Exotel latency dashboard + new call_audit_logs timestamps</td></tr>
+    <tr><td>"No call bridged on closed / pre-booking tickets"</td><td>0 verified incidents per week</td><td>call_audit_logs cross-joined with ES candidate state at bridge time</td></tr>
+    <tr><td>"PIN never bridges to wrong ticket"</td><td>0 verified incidents ever</td><td>pin_audit_logs + call_audit_logs forensic review on any complaint</td></tr>
+    <tr><td>Exotel Fallback URL hit rate</td><td>≤ 1% of total calls</td><td>Exotel + backend 5xx logs</td></tr>
+  </table>
+
+  <h3>B12.3 Reporting / Dashboard requirements</h3>
+
+  <p style="font-size:13px;color:var(--muted);margin:10px 0 4px;font-weight:600;">Backend metric requirements:</p>
+  <table>
+    <tr><th>Metric needed</th><th>How to compute</th><th>Refresh / trigger</th><th>Where it appears</th></tr>
+    <tr><td>Connect rate by Path (1/2/3/4)</td><td>Count(bridged) / Count(call attempts), grouped by which Path resolved the call.</td><td>Daily refresh</td><td>IVR ops dashboard</td></tr>
+    <tr><td>Dead-end distribution by user_type</td><td>Count of dead-end-greeting-played events grouped by Switch Case branch.</td><td>Daily refresh</td><td>IVR ops dashboard</td></tr>
+    <tr><td>PIN attempt success rate</td><td>Count(pin_attempt_valid) / Count(pin_entered).</td><td>Daily refresh</td><td>IVR ops dashboard</td></tr>
+    <tr><td>PIN pool reservation %</td><td>(Count of active rows + Count of cooldown rows) / total keyspace.</td><td>Daily refresh</td><td>Eng dashboard; alert at 70%</td></tr>
+    <tr><td>Allocation failures (Owner missing)</td><td>Count of allocation_failed events grouped by csp_id.</td><td>Real-time</td><td>Ops dashboard; alert immediately on each</td></tr>
+    <tr><td>Outbox lag</td><td>Time between outbox INSERT and bus publish.</td><td>Real-time</td><td>Eng dashboard; alert at threshold</td></tr>
+    <tr><td>Cross-CSP scoping-rejection rate</td><td>Count of pin_scoping_rejected events.</td><td>Daily refresh</td><td>Security dashboard; alert on spike</td></tr>
+  </table>
+
+  <p style="font-size:13px;color:var(--muted);margin:14px 0 4px;font-weight:600;">Front-end event requirements (Clevertap):</p>
+  <table>
+    <tr><th>Event name</th><th>Attributes</th><th>Trigger</th><th>Linked metric</th></tr>
+    <tr><td><code>call_cta_tapped</code></td><td><code>app</code> : enum [csp_app, customer_app, technician_app] · <code>ticket_id</code> : UUID · <code>ticket_type</code> : enum [Install, Restore, Pickup] · <code>side</code> : enum [csp, customer]</td><td>User taps Call CTA on ticket card</td><td>In-app CTA funnel; per-app adoption</td></tr>
+    <tr><td><code>masked_number_received</code></td><td><code>app</code> · <code>ticket_id</code> · <code>response_latency_ms</code> : integer</td><td>Backend returns masked number to app</td><td>In-app CTA latency p95</td></tr>
+    <tr><td><code>pin_displayed_on_ticket_card</code></td><td><code>app</code> · <code>ticket_id</code> · <code>side</code></td><td>Ticket drilldown renders with PIN visible (CSP app; Customer app TBD)</td><td>PIN visibility coverage</td></tr>
+    <tr><td><code>missed_call_notification_tapped</code></td><td><code>app</code> · <code>ticket_id</code> · <code>channel</code> : enum [push, sms, wa] · <code>time_since_miss_seconds</code> : integer</td><td>Recipient taps the missed-call notification</td><td>Callback funnel</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B13 Build phases -->
+<!-- ====================================================================== -->
+<section class="spec" id="s24">
+  <h2><span class="num">B13.</span> Build Phases <span class="tier cond">Multiple separable parts</span></h2>
+  <div class="expected"><strong>What is expected:</strong> What ships in Phase 1 (riskiest assumption); what is deferred and why.</div>
+  <table>
+    <tr><th>Phase</th><th>Scope</th><th>What ships</th><th>What is deferred (and why)</th></tr>
+    <tr><td>Phase 1 (MVP)</td><td>Core routing + PIN flow + dead-end IVR. The riskiest assumption is that Exotel's 5-branch Switch Case + Connect-applet behaviours actually work end-to-end; ship that first.</td><td>Single masked DID. Tables 1 + 2 + sim_inventory. 3 APIs (resolve-caller, identify-caller, resolve-pin). Per-family allocation lifecycle for all 3 families. 5-branch Switch Case. 9 audio assets. Dead-end SMS inline. PIN delivery SMS inline. CSP App + Customer App + Technician App <code>maskedCallAvailable</code> wiring.</td><td>Missed-call notification via csp-notification-service (Phase 2 — dependency on consumer service). Truecaller / VLT carry-forward (Phase 1 prerequisite — must land at cutover).</td></tr>
+    <tr><td>Phase 2</td><td>Missed-call notifications + WhatsApp channel.</td><td><code>ES_CSPIVR_MISSED_CALL_DETECTED</code> event emission + outbox + csp-notification-service consumer. WhatsApp BSP templates approved and integrated for PIN delivery + missed-call alerts.</td><td>OTP-based authentication for unknown callers (deferred to v2; design rejected for v1 on UX-friction grounds).</td></tr>
+    <tr><td>Phase 3</td><td>Operational refinements based on Phase 1 + 2 production data.</td><td>6-digit PIN escalation if pool pressure observed. Regional-language IVR (post-Hindi). Active-transfer dead-end ("press 1 to connect to support"). PIN reminder on prompt abandonment.</td><td>Per-FROM rate limiting (deferred indefinitely; brute-force economics make it unnecessary for v1+v2).</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<footer class="checklist" id="checklist">
+  <h2>Completeness Checklist</h2>
+  <p style="font-size:13px;color:var(--muted);margin-top:0;">Sendable when: Quick Check filled; every Part A section filled; Conditional sections either filled or N/A with reason; required Part B sections filled. No blanks.</p>
+  <table>
+    <tr><th>#</th><th>Section</th><th class="part-cell">Part</th><th class="tier-cell">Tier</th><th class="check">Filled</th><th class="check">N/A</th></tr>
+    <tr><td>QC</td><td>Quick Check</td><td>Header</td><td><span class="tier core">QC</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A1</td><td>Document Metadata</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A2</td><td>Context &amp; Problem</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A3</td><td>Objective &amp; Definition of Success</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A4</td><td>OS Ownership</td><td>WHAT</td><td><span class="tier cond">Cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A5</td><td>Key Workflows (User Journey)</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A6</td><td>Business Logic, Invariants &amp; Relationships</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A7</td><td>Business Edge Cases &amp; Decisions</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A8</td><td>Design Guidance</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A9</td><td>Cross-OS Impact Decisions</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A10</td><td>Assumptions, Risks &amp; Dependencies</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>A11</td><td>Open Questions / Decisions Needed</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B1</td><td>Data Requirements</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B2</td><td>State Machine</td><td>HOW</td><td><span class="tier cond">Strict cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B3</td><td>Configurable Parameters</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B4</td><td>System Logical Flow</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B5</td><td>System Sequence Diagram</td><td>HOW</td><td><span class="tier cond">Cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B6</td><td>Front-End UI Requirements</td><td>HOW</td><td><span class="tier cond">Cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B7</td><td>Settlement &amp; Money Flow</td><td>HOW</td><td><span class="tier cond">Cond.</span></td><td class="check">—</td><td class="check">[x] N/A — no money flow</td></tr>
+    <tr><td>B8</td><td>Failure Modes</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B9</td><td>Acceptance Criteria (Gherkin)</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B10</td><td>Migration Impact &amp; Data Treatment</td><td>HOW</td><td><span class="tier cond">Cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B11</td><td>Compliance: Legal, Privacy &amp; Finance</td><td>HOW</td><td><span class="tier cond">Cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B12</td><td>Metrics &amp; Measurement</td><td>HOW</td><td><span class="tier how">HOW</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+    <tr><td>B13</td><td>Build Phases</td><td>HOW</td><td><span class="tier cond">Strict cond.</span></td><td class="check">[x]</td><td class="check">—</td></tr>
+  </table>
+
+  <div class="footer note">
+    <strong>Author rule:</strong> Required sections all filled. Conditional sections either filled or marked N/A with one-line reason. B7 (money) is N/A.<br><br>
+    <strong>Reviewer rule:</strong> Read Quick Check, then Part A in full. If A2, A6, A7, A9, or A11 are weak, reject.<br><br>
+    <strong>Out-of-scope for this spec:</strong> API request/response schemas, ESR event payload schemas, service dependencies with SLAs, concurrency / locking, retry / backoff mechanics, monitoring thresholds, alert routing / runbooks, design pixel-level treatment and copy, accessibility standards, project management execution tracking, internal system-edge mechanisms (duplicate detection, dedup keys). Engineering, design, or operations own these.<br><br>
+    <strong>What this spec is — and isn't:</strong> The canonical articulation of business behaviour for csp-ivr-service. Not a code-generation contract; engineering produces its own downstream artefacts and decides architecture from this spec.
+  </div>
+</footer>
+
+<section class="spec" id="changelog" style="margin-top: 56px;">
+  <h2>Changelog</h2>
+  <table>
+    <tr><th style="width:80px">Version</th><th style="width:110px">Date</th><th style="width:140px">Author</th><th style="width:90px">Section(s)</th><th>Change &amp; rationale</th><th style="width:120px">Approver</th></tr>
+    <tr><td>v1.0</td><td>2026-06-03</td><td>Ashis Raj</td><td>All</td><td>Initial Product Solution Spec for csp-ivr-service. Capability service replacing MN1/MN2 + legacy es-ivr-calling-service with single bidirectional masked DID, per-ticket PIN registry, 5-branch Switch Case routing, allocation-at-candidate-creation with Owner-as-default-executor, missed-call handoff to csp-notification-service with PIN-in-reminder. 13 use cases, 11 invariants, 13 business edge cases, 10 failure modes, 22 acceptance criteria, 3 build phases.</td><td>Pending</td></tr>
+  </table>
+</section>
+
+<section class="spec" id="glossary" style="margin-top: 56px;">
+  <h2>Glossary</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td>CSP</td><td>Connection Service Provider — Wiom's field partner organisation</td></tr>
+    <tr><td>Owner</td><td>The CSP user with role=owner — partner account holder; default executor on every new ticket</td></tr>
+    <tr><td>Technician</td><td>A CSP user delegated by the Owner to perform the field work on a ticket (Rohit)</td></tr>
+    <tr><td>Masked DID</td><td>A virtual phone number provisioned by Exotel that bridges callers without exposing real mobiles</td></tr>
+    <tr><td>MN1 / MN2</td><td>Today's two-masked-number scheme (Customer→CSP and CSP→Customer). Being retired.</td></tr>
+    <tr><td>Table 1</td><td>Active call mapping (FROM → TO), short TTL; hit = recognised + seamless bridge</td></tr>
+    <tr><td>Table 2</td><td>Per-ticket PIN registry (PIN → bridge target), per-side, per-ticket; the new authorisation surface</td></tr>
+    <tr><td>PIN</td><td>5-digit numeric credential, issued per ticket per side; immutable for the ticket's lifetime</td></tr>
+    <tr><td>sim_inventory</td><td>CSP SIM → CSP user map; lets a CSP be recognised when calling from any of their inventoried SIMs</td></tr>
+    <tr><td>user_identification</td><td>API called when Table 2 by-FROM returns 0 rows; resolves caller identity from registered tables</td></tr>
+    <tr><td>5-branch Switch Case</td><td>Exotel applet that branches on a 5-value composite discriminator: customer_no_pin / csp_no_pin / customer_with_pin / csp_with_pin / unknown</td></tr>
+    <tr><td>Path 1 / 2 / 3 / 4</td><td>The four resolution paths the IVR design supports: Table 1 hit, Table 2 by-FROM = 1, PIN gather for ≥ 2, PIN gather for unknown</td></tr>
+    <tr><td>UC 01 — UC 13</td><td>The 13 enumerated use cases covering every initiation pattern (in-app CTA, dial from log, multi-ticket, unregistered SIM, colleague forwarding)</td></tr>
+    <tr><td>DNP</td><td>Did Not Pick — recipient sees the call but doesn't answer</td></tr>
+    <tr><td>maskedCallAvailable</td><td>Backend-driven boolean exposed on each ES candidate's drilldown DTO; gates the in-app Call CTA visibility</td></tr>
+    <tr><td>Dead-end IVR</td><td>Terminal voice message + SMS when call cannot be authorised; routes to call centre or trust line per user_type</td></tr>
+    <tr><td>SPR</td><td>Standard Parameter Registry (per-OS configurable parameter store)</td></tr>
+    <tr><td>OS</td><td>Operating System (Wiom architectural unit)</td></tr>
+    <tr><td>TAS</td><td>Task Assignment System</td></tr>
+    <tr><td>ESR</td><td>Event Schema Registry (engineering-owned)</td></tr>
+    <tr><td>DLT</td><td>Indian regulation for transactional SMS — templates must be pre-registered</td></tr>
+    <tr><td>DPDP</td><td>Digital Personal Data Protection Act, 2023 (India)</td></tr>
+    <tr><td>VLT</td><td>Verified Logo Trustmark — telco-level verified-business-caller flag</td></tr>
+    <tr><td>BSP</td><td>Business Solution Provider — for WhatsApp Business API</td></tr>
+  </table>
+</section>
+
+<p style="margin-top:30px;font-size:12px;color:var(--muted);text-align:center;">
+  Wiom Product Solution Spec v2.0 template · csp-ivr-service v1.0 · Authored by Ashis Raj · csp-execution-platform
+</p>
+
+</main>
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { curve: 'basis' } });
+</script>
+</body>
+</html>
