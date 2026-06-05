@@ -472,7 +472,7 @@ flowchart LR
     <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to ES_NBREC_RECOVERY_TASK_ASSIGNED, ES_NBREC_TASK_ASSIGNED, 3 terminal events.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>csp-gateway-service</code></td><td>Existing endpoints used: <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code> (Owner resolution at allocation), <code>GET /api/internal/csp-users/{id}</code> (executor mobile resolution on technician assignment). Target latency: p95 &lt; 50 ms.</td><td>csp-platform</td></tr>
     <tr><td><code>csp-notification-service</code></td><td>New consumer of <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> (bus topic <code>csp.ivr.missed-call</code>). Owns channel routing for PN / SMS / WA.</td><td>csp-platform</td></tr>
-    <tr><td>Exotel</td><td>App Bazaar flow rebuild: Connect (×3), Gather (×2), Passthru Sync (×2), Passthru Async (×6), Switch Case (×2 with 5 branches each), Greeting (×9).</td><td>Vendor liaison + Eng</td></tr>
+    <tr><td>Exotel</td><td>App Bazaar flow rebuild: Connect (×3), Gather (×2), Passthru Sync (×2), Passthru Async (×3 — all DNP-transition wired to one backend endpoint), Switch Case (×2 with 5 branches each), Greeting (×9).</td><td>Vendor liaison + Eng</td></tr>
     <tr><td>Gupshup / WhatsApp BSP</td><td>DLT-registered SMS templates + approved WA templates. "Wiom" sender ID.</td><td>Comms / Ops</td></tr>
   </table>
   <hr class="sect-end">
@@ -520,7 +520,7 @@ flowchart LR
     <tr><td>D-04</td><td>DLT template approvals for PIN-delivery SMS, dead-end SMS</td><td>Hard prerequisite</td><td>"Wiom" sender ID required.</td><td>Comms / Ops</td><td>3 weeks pre-launch</td><td>To file</td></tr>
     <tr><td>D-05</td><td>WhatsApp BSP template approvals</td><td>Soft prerequisite (Phase 2 deferrable)</td><td>WA channel for PIN delivery + missed-call.</td><td>Comms</td><td>Phase 2</td><td>To file</td></tr>
     <tr><td>D-06</td><td>Truecaller / VLT carry-forward verification on the retained masked DID</td><td>Hard prerequisite</td><td>Pickup-rate protection.</td><td>Ops</td><td>Pre-cutover</td><td>To confirm with vendor</td></tr>
-    <tr><td>D-07</td><td>Exotel App Bazaar flow build (Connect ×3 + Gather ×2 + Passthru Sync ×2 + Passthru Async ×6 + Switch Case ×2 + Greeting ×9)</td><td>Hard prerequisite</td><td>The IVR flow surface itself.</td><td>Eng + Vendor liaison</td><td>Pre-cutover</td><td>To build</td></tr>
+    <tr><td>D-07</td><td>Exotel App Bazaar flow build (Connect ×3 + Gather ×2 + Passthru Sync ×2 + Passthru Async ×3 + Switch Case ×2 + Greeting ×9)</td><td>Hard prerequisite</td><td>The IVR flow surface itself.</td><td>Eng + Vendor liaison</td><td>Pre-cutover</td><td>To build</td></tr>
     <tr><td>D-08</td><td>10 Hindi audio files (see B3.3)</td><td>Hard prerequisite</td><td>Voice content for greetings, gather, fallback.</td><td>Solutions team</td><td>Pre-cutover</td><td>To commission</td></tr>
   </table>
   <hr class="sect-end">
@@ -662,11 +662,10 @@ stateDiagram-v2
   <div class="mermaid">
 flowchart TD
     Start([Caller dials masked DID]) --> C1["Connect — API 1: GET /ivr/resolve-caller<br/>Table 1 lookup → Table 2 by-FROM"]
-    C1 -- "Connected (bridged)" --> PA1[Passthru Async: log bridge_connected]
-    C1 -- "DNP (didn't pick)" --> PA2[Passthru Async: log + emit ES_CSPIVR_MISSED_CALL_DETECTED]
+    C1 -- "Connected (bridged)" --> Bridged([Bridged · StatusCallback at end-of-call · END])
+    C1 -- "DNP (didn't pick)" --> DNP[Passthru-Async on DNP: GET /log/bridge_dnp · emits ES_CSPIVR_MISSED_CALL_DETECTED to bus]
     C1 -- "Did not Dial (empty destination)" --> PS1["Passthru Sync — API 2: GET /ivr/identify-caller<br/>returns 5-value composite discriminator"]
-    PA1 --> Bridged([Bridged · disposition webhook · END])
-    PA2 --> Missed([Missed · notification handoff · END])
+    DNP --> Missed([Missed · notification-service consumes · END])
     PS1 --> SC1{Switch Case 5 branches}
     SC1 -- customer_no_pin --> GC[Greeting: customer-no-active-ticket.mp3 → call centre]
     SC1 -- csp_no_pin --> GS[Greeting: csp-no-active-ticket.mp3 → trust line]
@@ -679,18 +678,14 @@ flowchart TD
     G1 -- No entry --> GNoEntry[Greeting: pin-no-entry.mp3]
     GNoEntry --> H1
     G1 -- Entered --> C2["Connect — API 3: GET /ivr/resolve-pin<br/>Table 2 by PIN with scoping"]
-    C2 -- Connected --> PA3[Passthru Async: log]
-    C2 -- DNP --> PA4[Passthru Async: log + emit MISSED_CALL_DETECTED]
+    C2 -- Connected --> Bridged
+    C2 -- DNP --> DNP
     C2 -- Did not Dial --> G2[Gather attempt 2]
-    PA3 --> Bridged
-    PA4 --> Missed
     G2 -- No entry --> H1
     G2 -- Entered --> C3[Connect — API 3 retry]
-    C3 -- Connected --> PA5[Passthru Async: log]
-    C3 -- DNP --> PA6[Passthru Async: log + emit MISSED_CALL_DETECTED]
+    C3 -- Connected --> Bridged
+    C3 -- DNP --> DNP
     C3 -- Did not Dial --> PS2[Passthru Sync — API 2 again]
-    PA5 --> Bridged
-    PA6 --> Missed
     PS2 --> SC2{Switch Case 5 branches · final}
     SC2 -- customer_no_pin --> GEX1[Greeting: customer-pin-exhausted.mp3]
     SC2 -- customer_with_pin --> GEX1
@@ -1425,47 +1420,50 @@ sequenceDiagram
 
   <h3>B14.4 Supporting endpoints</h3>
 
-  <h4>Dynamic audio for dead-end Playback</h4>
-  <table>
-    <tr><th>Endpoint</th><th>Called by</th><th>Behaviour</th><th>Response</th></tr>
-    <tr><td><code>GET /audio/deadend?call_id=&lt;CallSid&gt;</code></td><td>Exotel Playback applet (if dynamic-URL audio is supported)</td><td>Read cached <code>user_type</code> from Redis. Stream or 302-redirect to the appropriate dead-end audio file: customer → <code>customer-deadend.mp3</code> (88803 22222); csp / unknown → <code>non-customer-deadend.mp3</code> (78368 11111). Log <code>deadend_call_centre_played</code> or <code>deadend_trust_line_played</code>.</td><td>Audio stream (MP3 / WAV) OR HTTP 302 to a CDN URL holding the audio asset.</td></tr>
-  </table>
-  <p style="font-size:13px;color:var(--muted);">If Exotel's Playback applet does not support dynamic audio URLs, the v1 fallback is a single universal "open the app or call X / Y" greeting. Backend still logs which branch would have fired for analytics.</p>
+  <p style="font-size:13px;color:var(--muted);">Dead-end audio uses <strong>static CDN URLs configured on per-branch Greeting applets</strong> in App Bazaar — one Greeting applet per Switch Case branch, each pointing to a static MP3. No dynamic-audio backend endpoint is needed; the 5-branch Switch Case already routes to the correct Greeting.</p>
 
-  <h4>End-of-call disposition webhook</h4>
+  <h4>End-of-call disposition webhook (Exotel's account-level StatusCallback)</h4>
   <table>
     <tr><th>Endpoint</th><th>Called by</th><th>Behaviour</th><th>Body Exotel sends</th></tr>
-    <tr><td><code>POST /log/disposition</code></td><td>Exotel's standard account-level disposition webhook (fires at end-of-call regardless of how the flow ended)</td><td>INSERT <code>call_audit_logs</code> with full disposition payload. <strong>Does NOT fire missed-call alerts</strong> — those fire from Passthru-Async-on-DNP inside the App Bazaar flow (faster and avoids duplicates).</td><td>
+    <tr><td><code>POST /log/disposition</code></td><td>Exotel's standard account-level <strong>StatusCallback</strong> webhook. Fires at end-of-call regardless of how the flow ended. Single source of truth for end-of-call analytics — bridged duration, recording URL, per-leg outcomes.</td><td>INSERT <code>call_audit_logs</code> with the full callback payload. <strong>Does NOT fire missed-call alerts</strong> — those fire from the in-flow Passthru-Async-on-DNP (see below) which is sub-second and avoids duplicates.</td><td>
       <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;overflow-x:auto;">{
-  "CallSid": "abc123...",
-  "From": "+91XXXXXXXXXX",
-  "To": "+91&lt;masked_did&gt;",
-  "DialCallStatus": "completed | no-answer | busy | failed | canceled",
-  "DialCallDuration": 42,
-  "RecordingUrl": "https://...",
-  "StartTime": "ISO-8601",
-  "EndTime": "ISO-8601",
-  "BridgedTo": "+91XXXXXXXXXX"
+  "CallSid":              "abc123...",
+  "Status":               "completed | failed | busy | no-answer",
+  "DateUpdated":          "ISO-8601",
+  "DateCreated":          "ISO-8601",
+  "StartTime":            "ISO-8601",
+  "EndTime":              "ISO-8601",
+  "ConversationDuration": 87,
+  "Direction":            "incoming",
+  "From":                 "+91XXXXXXXXXX",
+  "To":                   "+91XXXXXXXXXX",
+  "PhoneNumberSid":       "...",
+  "RecordingUrl":         "https://...",
+  "EventType":            "...",
+  "CustomField":          "...",
+  "Legs": [
+    { "OnCallDuration": 87, "Status": "completed", "AnsweredBy": "..." }
+  ]
 }</pre>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0 0;">Verified against Exotel's <a href="https://developer.exotel.com/docs/voice-v1/api-reference/status-callback">StatusCallback documentation</a>. Note: this is the account-level webhook — it uses <code>Status</code> + <code>ConversationDuration</code>, NOT <code>DialCallStatus</code> + <code>DialCallDuration</code> (those are Passthru-Async query params, see below). The dialled number is in <code>To</code> — there is no <code>BridgedTo</code> field.</p>
     </td></tr>
   </table>
 
-  <h4>Passthru-Async logging endpoints</h4>
-  <p style="font-size:13px;color:var(--muted);">All are HTTP GET (Exotel Passthru-Async uses GET). All are fire-and-forget — backend returns 200 immediately and writes async to <code>call_audit_logs</code>. DNP endpoints also emit <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> to the bus (atomic with the DB write via transactional outbox).</p>
+  <h4>In-flow Passthru-Async — DNP event firing (load-bearing)</h4>
+  <p style="font-size:13px;color:var(--muted);">Only ONE Passthru-Async endpoint is load-bearing in the IVR design: the DNP hop. It's wired as the <strong>"If nobody answers"</strong> transition on each of the 3 Connect applets in the flow (initial Connect API 1, plus both PIN-validating Connects). All three Passthru-Async positions point to the same backend URL — the backend doesn't need to distinguish which Connect emitted the DNP. Fires sub-second, vs the StatusCallback's variable end-of-call lag.</p>
   <table>
-    <tr><th>Endpoint</th><th>When fired</th><th>What gets written</th></tr>
-    <tr><td><code>GET /log/dial_received</code></td><td>Exotel registered the call on the masked DID</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/pin_prompted</code></td><td>Gather applet fired</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/pin_entered</code></td><td>Caller entered digits on Gather (length + attempt #, never the digits)</td><td>call_audit_logs row + pin_audit_logs row</td></tr>
-    <tr><td><code>GET /log/pin_lockout</code></td><td>PIN attempts exhausted (both attempts failed)</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/deadend_played</code></td><td>Greeting playback completed</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/bridge_connected</code></td><td>API 1 bridge connected (Path 1 / Path 2)</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/bridge_dnp_initial</code></td><td>API 1 bridge DNP</td><td>call_audit_logs row + outbox row → ES_CSPIVR_MISSED_CALL_DETECTED</td></tr>
-    <tr><td><code>GET /log/bridge_connected_pin</code></td><td>API 3 attempt 1 bridge connected</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/bridge_dnp_pin</code></td><td>API 3 attempt 1 bridge DNP</td><td>call_audit_logs row + outbox row</td></tr>
-    <tr><td><code>GET /log/bridge_connected_pin_retry</code></td><td>API 3 attempt 2 bridge connected</td><td>call_audit_logs row</td></tr>
-    <tr><td><code>GET /log/bridge_dnp_pin_retry</code></td><td>API 3 attempt 2 bridge DNP</td><td>call_audit_logs row + outbox row</td></tr>
+    <tr><th>Endpoint</th><th>When fired</th><th>What it does</th></tr>
+    <tr><td><code>GET /log/bridge_dnp</code></td><td>Connect applet's "If nobody answers" transition (any of the 3 Connect positions in the flow)</td><td>Backend returns 200 immediately. Same DB transaction inserts a <code>call_audit_logs</code> row + an outbox row carrying the <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> payload. An outbox worker drains the row to the bus (topic <code>csp.ivr.missed-call</code>). <code>csp-notification-service</code> consumes and fans out PN / SMS / WhatsApp with the missed party's own PIN.</td></tr>
   </table>
+  <p style="font-size:13px;color:var(--muted);">Exotel sends the standard Passthru query params (<code>CallSid</code>, <code>From</code>, <code>To</code>, <code>DialCallStatus</code>, <code>DialCallDuration</code>, etc. per Rule 9). The backend uses <code>CallSid</code> to look up cached state (ticket_id, missed party, etc.) and assemble the event payload.</p>
+
+  <h4>Optional: in-flow dial-received timestamp</h4>
+  <p style="font-size:13px;color:var(--muted);">Optional Passthru-Async at the very top of the flow to capture an upfront timestamp before API 1 fires. Keeps the call_audit_logs join key cheap for analytics. Not load-bearing — can be added later or dropped entirely; the end-of-call StatusCallback covers the analytics need.</p>
+  <table>
+    <tr><th>Endpoint</th><th>When fired</th><th>What it does</th></tr>
+    <tr><td><code>GET /log/dial_received</code> (optional)</td><td>First applet hop at the very top of the flow, before the initial Connect (API 1)</td><td>Inserts a <code>call_audit_logs</code> row with CallSid + timestamp. Fire-and-forget.</td></tr>
+  </table>
+  <p style="font-size:13px;color:var(--muted);"><strong>What about all the other applet-hop logs (pin prompted, pin entered, bridge connected, deadend played, etc.)?</strong> Not needed as separate Passthru endpoints — they're all derivable from our backend's own internal logs (API 1 / API 2 / API 3 are already invoked at the relevant hops and log internally) joined with Exotel's StatusCallback for end-of-call detail. Adding in-flow Passthru hops for these just duplicates Exotel's data without adding domain context.</p>
 
   <h3>B14.5 Exotel data-flow rules (10 constraints)</h3>
   <p>These rules are non-negotiable constraints derived from Exotel's published applet documentation. Every API contract above is shaped by them.</p>
@@ -1557,19 +1555,20 @@ sequenceDiagram
 &lt;   "fetch_after_attempt": false }
 
 ─── Step 3: Exotel rings CSP; CSP picks up; call bridges ─────────────
-─── Step 4: Conversation ends; Exotel fires Passthru-Async ───────────
-&gt; GET /log/bridge_connected
-&gt;     ?CallSid=exo-call-001&amp;From=%2B919812345678&amp;...
-
-&lt; HTTP/1.1 200 OK  (fire-and-forget; body empty)
-
-─── Step 5: End-of-call disposition webhook ──────────────────────────
+─── Step 4: End-of-call StatusCallback ───────────────────────────────
 &gt; POST /log/disposition
-&gt; { "CallSid": "exo-call-001",
-&gt;   "DialCallStatus": "completed",
-&gt;   "DialCallDuration": 87,
-&gt;   "RecordingUrl": "https://...",
-&gt;   "BridgedTo": "+91&lt;csp_mobile&gt;", ... }
+&gt; { "CallSid":              "exo-call-001",
+&gt;   "Status":               "completed",
+&gt;   "ConversationDuration": 87,
+&gt;   "RecordingUrl":         "https://...",
+&gt;   "From":                 "+919812345678",
+&gt;   "To":                   "+91&lt;csp_mobile&gt;",
+&gt;   "Direction":            "incoming",
+&gt;   "StartTime":            "...",
+&gt;   "EndTime":              "...",
+&gt;   "Legs": [
+&gt;     { "OnCallDuration": 87, "Status": "completed", ... }
+&gt;   ], ... }
 
 &lt; HTTP/1.1 200 OK
 </pre>
@@ -1657,11 +1656,15 @@ sequenceDiagram
 # Backend → Gupshup (direct API call):
 # "To reach Wiom customer care, please call 8 8 8 0 3 2 2 2 2 2." (Hindi)
 
-─── Step 5: End-of-call disposition webhook ──────────────────────────
+─── Step 5: End-of-call StatusCallback ───────────────────────────────
 &gt; POST /log/disposition
-&gt; { "CallSid": "exo-call-003",
-&gt;   "DialCallStatus": "completed",  (greeting completed)
-&gt;   "DialCallDuration": 12, ... }
+&gt; { "CallSid":              "exo-call-003",
+&gt;   "Status":               "completed",   (greeting played, then hangup)
+&gt;   "ConversationDuration": 12,
+&gt;   "From":                 "+919812345678",
+&gt;   "To":                   "+91&lt;masked_did&gt;",
+&gt;   "Direction":            "incoming",
+&gt;   "Legs":                 [ ... ], ... }
 
 &lt; HTTP/1.1 200 OK
 </pre>
