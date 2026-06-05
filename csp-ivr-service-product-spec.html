@@ -1285,6 +1285,12 @@ sequenceDiagram
   <h3>B14.1 Overview</h3>
   <p>Exotel is the telephony provider. They provision the single bidirectional masked DID, host the App Bazaar applet flow, and place HTTP webhooks to our IVR backend at every applet hop. Our backend never initiates a call to Exotel — all communication is webhook-driven from Exotel's side; we only return responses. Authentication for v1 is IP allowlist (Exotel publishes their egress IP range); HMAC signed-payload is the longer-term target pending Exotel's confirmation of support.</p>
 
+  <div class="hint" style="border-left-color:#b91c1c;background:#fee2e2;color:#7f1d1d;">
+    <strong>⚠ Endpoint paths shown in this section are PM-side placeholders.</strong> All Wiom-owned endpoint paths in B14 — <code>/ivr/resolve-caller</code>, <code>/ivr/identify-caller</code>, <code>/ivr/resolve-pin</code>, <code>/log/disposition</code>, <code>/log/bridge_dnp</code>, <code>/log/dial_received</code>, <code>/api/calls/initiate</code> — are placeholder names used for clarity in this spec. <strong>Engineering owns the actual endpoint naming.</strong> Wiom's URL conventions, versioning scheme, and route structure are not the PM's call to prescribe.
+    <br><br>
+    What IS load-bearing and must be respected exactly: <strong>HTTP method, query parameter names (Exotel-supplied), response body shape, status code conventions, and behavioural contracts</strong> (PIN scoping, 200-always, empty-destination semantics, Switch Case body format, etc.). The path strings can change without affecting any of these.
+  </div>
+
   <h3>B14.2 Communication map</h3>
   <table>
     <tr><th>Direction</th><th>Initiator</th><th>Surface</th></tr>
