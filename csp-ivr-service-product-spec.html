@@ -467,7 +467,7 @@ flowchart LR
     <tr><td>SPR (Service Parameter Registry)</td><td>No</td><td>All IVR parameters use the <code>ES_CSPIVR_*</code> namespace; no SPR canonical parameters added or modified.</td><td>—</td></tr>
     <tr><td colspan="4" style="background:#f4f4f2;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);padding:6px 10px;">Frontends</td></tr>
     <tr><td>CSP App</td><td>Yes (minor)</td><td>Ticket card displays the CSP-side PIN; Call CTA visibility becomes backend-driven (<code>maskedCallAvailable</code> boolean on the drilldown DTO).</td><td>CSP App team</td></tr>
-    <tr><td>Customer App</td><td>Yes (minor)</td><td>Ticket card may display the customer-side PIN (TBD with Design); Call CTA visibility becomes backend-driven.</td><td>Customer App team</td></tr>
+    <tr><td>Customer App</td><td>Yes</td><td>Ticket card displays the customer-side PIN whenever the Call CTA is visible. Call CTA visibility becomes backend-driven.</td><td>Customer App team</td></tr>
   </table>
 
   <h3>A9.1 Cross-service dependencies (not OS amendments, but worth flagging)</h3>
@@ -680,9 +680,7 @@ stateDiagram-v2
     <tr><td>ES_CSPIVR_TABLE_1_TTL_SECONDS</td><td>Integer</td><td>300 (5 min)</td><td>60–600</td><td>Global</td><td>Active-call mapping TTL after in-app CTA tap.</td></tr>
     <tr><td>ES_CSPIVR_PIN_COOLDOWN_DAYS</td><td>Integer</td><td>90</td><td>30–365</td><td>Global</td><td>Days a closed-ticket PIN is reserved against re-issue.</td></tr>
     <tr><td>ES_CSPIVR_PIN_DIGITS</td><td>Integer</td><td>5</td><td>5 or 6</td><td>Global</td><td>PIN length. Escalate to 6 if generation retry rate spikes or pool reservation approaches 70%.</td></tr>
-    <tr><td>ES_CSPIVR_PIN_ATTEMPTS_PER_CALL</td><td>Integer</td><td>2</td><td>2 only</td><td>Global</td><td>Maximum PIN attempts per call. Enforced structurally by App Bazaar applet count.</td></tr>
     <tr><td>ES_CSPIVR_PIN_AUDIT_RETENTION_DAYS</td><td>Integer</td><td>365</td><td>90–730</td><td>Global</td><td>Hard-delete threshold after cooldown ends.</td></tr>
-    <tr><td>ES_CSPIVR_CALL_BRIDGE_MAX_RING_SECONDS</td><td>Integer</td><td>30</td><td>15–60</td><td>Global</td><td>Maximum ring duration returned to Exotel.</td></tr>
     <tr><td>ES_CSPIVR_USER_IDENTIFICATION_CACHE_TTL_SECONDS</td><td>Integer</td><td>600 (10 min)</td><td>60–1800</td><td>Global</td><td>Cache TTL on the CallSid → user_type stash.</td></tr>
   </table>
 
@@ -931,7 +929,7 @@ sequenceDiagram
     <tr><th>App</th><th>Screens</th><th>Change type</th></tr>
     <tr><td>CSP App</td><td>Install drilldown · Restore drilldown · NetBox Recovery drilldown</td><td>Modify (CTA visibility + PIN display)</td></tr>
     <tr><td>Technician App</td><td>Task detail · Call CTA</td><td>Modify (backend-driven <code>maskedCallAvailable</code>)</td></tr>
-    <tr><td>Customer App</td><td>Ticket detail (optional PIN display — TBD with Design via Experience–Data Spec)</td><td>Modify (CTA visibility)</td></tr>
+    <tr><td>Customer App</td><td>Ticket detail — PIN display always-on whenever the Call CTA is visible</td><td>Modify (CTA visibility + PIN display)</td></tr>
     <tr><td>SMS / WhatsApp inbox</td><td>Customer's SMS/WA app (not a Wiom surface, but copy is owned by us)</td><td>New + Modify (PIN delivery, dead-end SMS, missed-call alert)</td></tr>
     <tr><td>Voice IVR</td><td>The voice flow itself</td><td>New (10 audio assets)</td></tr>
   </table>
