@@ -201,7 +201,7 @@
     <dt>Primary owner OS?</dt><dd>Cross-cutting (capability service). Coordination owner: <code>csp-execution-platform</code>.</dd>
     <dt>Cross-OS impact?</dt><dd>No — IVR consumes existing ES events from es-installation, es-restore, es-netbox-recovery; no OS state is amended. See A9.</dd>
     <dt>Money flow change?</dt><dd>No.</dd>
-    <dt>Migration needed?</dt><dd>Yes — Table 2 backfilled for all active tickets at cutover; <code>sim_inventory</code> built fresh; legacy <code>es-ivr-calling-service</code> decommissioned 30 days post-cutover.</dd>
+    <dt>Migration needed?</dt><dd>No — purely additive. Today's app calls a legacy endpoint that returns the actual mobile number of the other party (no masked-number routing is active in the customer / CSP / technician apps today). The new IVR is enabled at the app level: new app versions call a new App API that returns the masked DID; old app versions continue on the legacy endpoint and behave exactly as today. PINs are allocated lazily on first App API call for any active ticket that doesn't have one. <code>sim_inventory</code> is genuinely new (no legacy to migrate). See B10.</dd>
     <dt>PII processed?</dt><dd>Yes — customer + CSP registered mobiles, PIN values. No new class of PII; existing classification applies.</dd>
     <dt>Legal sign-off required?</dt><dd>Yes — DLT template registration for outbound SMS; DPDP review for the PIN-in-SMS reminder design.</dd>
   </dl>
@@ -479,7 +479,7 @@ flowchart LR
     <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to: <code>ES_NBREC_CANDIDATE_CREATED</code> (allocation), <code>ES_NBREC_TASK_ASSIGNED</code> (delegation / un-delegation), and the 3 terminal events <code>ES_NBREC_CANDIDATE_COMPLETED</code>, <code>ES_NBREC_CANDIDATE_CANCELLED</code>, <code>ES_NBREC_CANDIDATE_FAILED</code>.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>csp-gateway-service</code></td><td>Existing endpoints used: <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code> (Owner resolution at allocation), <code>GET /api/internal/csp-users/{id}</code> (executor mobile resolution on technician assignment). Target latency: p95 &lt; 50 ms.</td><td>csp-platform</td></tr>
     <tr><td><code>csp-notification-service</code></td><td>New consumer of <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> (bus topic <code>csp.ivr.missed-call</code>). Owns channel routing for PN / SMS / WA.</td><td>csp-platform</td></tr>
-    <tr><td>Exotel</td><td>App Bazaar flow rebuild: Connect (×3), Gather (×2), Passthru Sync (×2), Passthru Async (×3 — all DNP-transition wired to one backend endpoint), Switch Case (×2 with 5 branches each), Greeting (×9).</td><td>Vendor liaison + Eng</td></tr>
+    <tr><td>Exotel</td><td>App Bazaar flow build: Connect (×3), Gather (×2), Passthru Sync (×2), Switch Case (×2 with 5 branches each), Greeting (×9). DNP is detected at end-of-call from the call-log webhook payload — no in-flow Passthru-Async applets needed.</td><td>Vendor liaison + Eng</td></tr>
     <tr><td>Gupshup / WhatsApp BSP</td><td>DLT-registered SMS templates + approved WA templates. "Wiom" sender ID.</td><td>Comms / Ops</td></tr>
   </table>
   <hr class="sect-end">
@@ -511,8 +511,8 @@ flowchart LR
     <tr><td>R-01</td><td>PIN pool exhaustion at growth (active + cooldown approaches 70% of 100K keyspace).</td><td>Low (current vol) / Medium (3× vol)</td><td>Medium — generation retries grow; latency rises.</td><td>Generation retry-count alert at threshold; escalate to 6-digit PIN (1M keyspace) via parameter change.</td><td>Eng</td></tr>
     <tr><td>R-02</td><td>Listener lag &gt; expected (e.g., 5 min outage) → calls bridge to stale executors.</td><td>Low</td><td>Medium — customer reaches old technician.</td><td>Outbox + idempotent upsert + monitoring on listener lag. CSP can hand the phone over if wrong-person bridge happens.</td><td>Eng</td></tr>
     <tr><td>R-03</td><td>PIN leak (customer shares PIN publicly; third party bridges to CSP).</td><td>Low (per-ticket scope limits blast)</td><td>Low — single ticket × single direction.</td><td>By design (BR-06); audit log captures FROM; ops monitoring for unusual PIN-use patterns.</td><td>Ops</td></tr>
-    <tr><td>R-04</td><td>Exotel applet config drift between staging and prod (Switch Case branches mis-labelled, Greeting URLs different).</td><td>Medium</td><td>High — calls route incorrectly in prod.</td><td>Pre-launch config audit checklist; smoke-test all 13 UCs in staging; replay in prod day-of-cutover.</td><td>PM + Eng</td></tr>
-    <tr><td>R-05</td><td>DLT template rejection or delay for "Wiom" sender ID on new SMS variants (PIN delivery, dead-end SMS, missed-call alert).</td><td>Medium</td><td>High — outbound SMS falls back to default sender ID, customers see "11444XXXX" not "Wiom".</td><td>File DLT templates 3 weeks before cutover. Have backup approval path. Track approval status weekly.</td><td>Comms / Ops</td></tr>
+    <tr><td>R-04</td><td>Exotel applet config drift between staging and prod (Switch Case branches mis-labelled, Greeting URLs different).</td><td>Medium</td><td>High — calls route incorrectly in prod.</td><td>Pre-launch config audit checklist; smoke-test all 13 UCs in staging; replay in prod on rollout day.</td><td>PM + Eng</td></tr>
+    <tr><td>R-05</td><td>DLT template rejection or delay for "Wiom" sender ID on new SMS variants (PIN delivery, dead-end SMS, missed-call alert).</td><td>Medium</td><td>High — outbound SMS falls back to default sender ID, customers see "11444XXXX" not "Wiom".</td><td>File DLT templates 3 weeks before rollout. Have backup approval path. Track approval status weekly.</td><td>Comms / Ops</td></tr>
     <tr><td>R-06</td><td>Notification service can't consume the bus event by launch.</td><td>Medium</td><td>Medium — no missed-call alerts; callers don't know they missed.</td><td>Phase 2 deferral plan documented in B13. IVR ships with the event emission; consumer comes online incrementally.</td><td>csp-platform</td></tr>
     <tr><td>R-07</td><td>App teams ship the <code>maskedCallAvailable</code> wiring late, so Call CTA visibility regresses on existing flows.</td><td>Medium</td><td>High — happy path breaks.</td><td>Co-ship gate. App PR must merge in the same release as the backend. Validate in staging end-to-end.</td><td>CSP App + Customer App teams</td></tr>
     <tr><td>R-08</td><td>Exotel egress IP range changes mid-flight; IVR backend rejects legitimate webhooks.</td><td>Low</td><td>High — calls fail.</td><td>HMAC auth as primary if Exotel confirms support. IP allowlist as v1 fallback. Monitoring on 401/403 rate.</td><td>Eng</td></tr>
@@ -521,14 +521,14 @@ flowchart LR
   <h3>A10.3 Cross-feature dependencies</h3>
   <table>
     <tr><th>#</th><th>Dependency</th><th>Type</th><th>Why required</th><th>Owner</th><th>Target ship</th><th>Status</th></tr>
-    <tr><td>D-01</td><td>csp-gateway-service Owner-lookup endpoint <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code></td><td>Hard prerequisite</td><td>Owner resolution at allocation.</td><td>csp-platform</td><td>Pre-cutover</td><td>Confirm existence</td></tr>
+    <tr><td>D-01</td><td>csp-gateway-service Owner-lookup endpoint <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code></td><td>Hard prerequisite</td><td>Owner resolution at allocation.</td><td>csp-platform</td><td>Pre-rollout</td><td>Confirm existence</td></tr>
     <tr><td>D-02</td><td>csp-notification-service consumer for <code>csp.ivr.missed-call</code></td><td>Co-ship (Phase 2)</td><td>Channel routing for missed-call alerts.</td><td>csp-platform</td><td>Phase 2</td><td>Spec needed</td></tr>
     <tr><td>D-03</td><td>CSP App + Customer App <code>maskedCallAvailable</code> wiring on ticket drilldown DTOs</td><td>Co-ship</td><td>Call CTA visibility gating switches from app-side state parsing to backend boolean.</td><td>App teams</td><td>Co-launch</td><td>Spec ready</td></tr>
     <tr><td>D-04</td><td>DLT template approvals for PIN-delivery SMS, dead-end SMS</td><td>Hard prerequisite</td><td>"Wiom" sender ID required.</td><td>Comms / Ops</td><td>3 weeks pre-launch</td><td>To file</td></tr>
     <tr><td>D-05</td><td>WhatsApp BSP template approvals</td><td>Soft prerequisite (Phase 2 deferrable)</td><td>WA channel for PIN delivery + missed-call.</td><td>Comms</td><td>Phase 2</td><td>To file</td></tr>
-    <tr><td>D-06</td><td>Truecaller / VLT carry-forward verification on the retained masked DID</td><td>Hard prerequisite</td><td>Pickup-rate protection.</td><td>Ops</td><td>Pre-cutover</td><td>To confirm with vendor</td></tr>
-    <tr><td>D-07</td><td>Exotel App Bazaar flow build (Connect ×3 + Gather ×2 + Passthru Sync ×2 + Passthru Async ×3 + Switch Case ×2 + Greeting ×9)</td><td>Hard prerequisite</td><td>The IVR flow surface itself.</td><td>Eng + Vendor liaison</td><td>Pre-cutover</td><td>To build</td></tr>
-    <tr><td>D-08</td><td>10 Hindi audio files (see B3.3)</td><td>Hard prerequisite</td><td>Voice content for greetings, gather, fallback.</td><td>Solutions team</td><td>Pre-cutover</td><td>To commission</td></tr>
+    <tr><td>D-06</td><td>Truecaller / VLT carry-forward verification on the retained masked DID</td><td>Hard prerequisite</td><td>Pickup-rate protection.</td><td>Ops</td><td>Pre-rollout</td><td>To confirm with vendor</td></tr>
+    <tr><td>D-07</td><td>Exotel App Bazaar flow build (Connect ×3 + Gather ×2 + Passthru Sync ×2 + Switch Case ×2 + Greeting ×9)</td><td>Hard prerequisite</td><td>The IVR flow surface itself.</td><td>Eng + Vendor liaison</td><td>Pre-rollout</td><td>To build</td></tr>
+    <tr><td>D-08</td><td>10 Hindi audio files (see B3.3)</td><td>Hard prerequisite</td><td>Voice content for greetings, gather, fallback.</td><td>Solutions team</td><td>Pre-rollout</td><td>To commission</td></tr>
   </table>
   <hr class="sect-end">
 </section>
@@ -1416,12 +1416,12 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_22 (regression):</strong> Truecaller / VLT verification on the masked DID is preserved across the cutover<br>
-    <span class="scenario">Scenario: Truecaller marks unknown business numbers as "Spam Likely" — that's the #1 cause of customers not picking up. The retained masked DID (from MN1/MN2) already has Truecaller and VLT verification. After cutover to the new IVR, that verification must continue to display on calls.</span>
-    <span class="kw">Given</span> The chosen masked DID inherits Truecaller + VLT verification from one of MN1/MN2<br>
+    <strong>CRITERIA_22:</strong> Truecaller / VLT verification displays on the masked DID at rollout<br>
+    <span class="scenario">Scenario: Truecaller marks unknown business numbers as "Spam Likely" — that's the #1 cause of customers not picking up. The masked DID provisioned for the IVR must carry Truecaller and VLT verification before rollout so the "Wiom" verified banner shows on customer phones from the first masked call onwards.</span>
+    <span class="kw">Given</span> The chosen masked DID has been registered with Truecaller (business profile) and submitted for VLT verification with the carrier<br>
     <span class="kw">When</span> A Truecaller-installed phone receives a ringing call from the masked DID<br>
     <span class="kw">Then</span> The "Wiom" verified green banner shows on the caller-ID screen<br>
-    <span class="kw">And</span> No fresh whitelisting work was required for the cutover
+    <span class="kw">And</span> The masked DID is whitelisted (not flagged as "Spam Likely" or "Unknown") before any user-facing rollout
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
@@ -1783,28 +1783,29 @@ sequenceDiagram
 <!-- B10 Migration -->
 <!-- ====================================================================== -->
 <section class="spec" id="s21">
-  <h2><span class="num">B10.</span> Migration Impact &amp; Data Treatment <span class="tier cond">Existing data affected</span></h2>
+  <h2><span class="num">B10.</span> Initial State Setup &amp; Data Treatment <span class="tier cond">Existing data affected</span></h2>
   <div class="expected"><strong>What is expected:</strong> User-side and data-side impact; per-category data treatment.</div>
 
-  <h3>B10.1 Affected scope</h3>
+  <h3>B10.1 No migration cutover — IVR is purely additive</h3>
   <table>
     <tr><th>Question</th><th>Answer</th></tr>
-    <tr><td>Affects existing CSPs / customers / data?</td><td>Yes — every active CSP↔customer ticket across Install / Restore / Pickup at cutover (~all live tickets at the moment).</td></tr>
-    <tr><td>What will users experience during the change?</td><td>Cutover is DNS-level on the masked DID. The in-app CTA happy path continues to work uninterrupted. New routing paths (callbacks, PIN gather, etc.) become available immediately. Customers may receive a one-time SMS at cutover with the new masked number + PIN if their ticket is active.</td></tr>
-    <tr><td>Worst case if migration goes wrong</td><td>All masked calls drop during the cutover window. Rollback re-points Exotel App Bazaar flow to legacy <code>es-ivr-calling-service</code> within minutes (DNS-level). Legacy data retained for 30 days post-cutover for rollback safety.</td></tr>
+    <tr><td>Affects existing CSPs / customers / data?</td><td>Backend-only. No customer-facing event. Today's apps call a legacy endpoint that returns the actual mobile number of the other party — no masked-number routing is active in any app today. The new IVR is enabled at the app level: new app versions call a new App API that returns the masked DID; old app versions continue on the legacy endpoint and behave exactly as today. The user experience changes the moment they update the app — not on any specific calendar date.</td></tr>
+    <tr><td>What will users experience during the change?</td><td>Nothing scheduled. No DNS-level cutover. No "your number is changing" SMS — the masked DID is a new number; existing customers never had it saved. Users with the new app version start seeing the masked DID + their per-ticket PIN in the Call CTA flow; users still on the old version continue dialling the actual number as today.</td></tr>
+    <tr><td>Rollback story</td><td>App rollout is controlled per-version. If the new App API misbehaves, halt the app version rollout and the issue is contained to whatever cohort already updated. No legacy IVR to "re-point to" because there is no live legacy IVR today.</td></tr>
   </table>
 
-  <h3>B10.2 Data treatment</h3>
+  <h3>B10.2 Data treatment — one-time initial state setup</h3>
+  <p>This is not a migration. It's the initial state setup for the new <code>csp-ivr-service</code> database tables. A backend script runs once at IVR backend launch. No customer-facing event, no SMS, no scheduled downtime.</p>
   <table>
     <tr><th>Data category</th><th>Treatment</th><th>Rationale</th></tr>
-    <tr><td>Existing active Install / Restore / Pickup tickets at cutover</td><td>Backfill 2 Table 2 rows per active ticket. Resolve Owner via gateway; current executor (if delegated) becomes the customer-side bridge target. Generate new PINs.</td><td>Required so the new IVR can serve existing tickets from second 1 of cutover.</td></tr>
-    <tr><td>Customer-side PIN delivery for backfilled tickets</td><td>One-time SMS at cutover with the new masked number + customer-side PIN.</td><td>Existing customers don't have a PIN yet; need one to use the new fallback flows.</td></tr>
-    <tr><td>Existing legacy Redis call-mapping cache</td><td>Discarded at cutover. Active in-app CTA sessions in-flight may drop; users re-tap.</td><td>Short TTL means at most ~5 min of impact. Acceptable.</td></tr>
-    <tr><td>SIM inventory data</td><td>Built fresh. Existing CSP SIM data in legacy <code>es-ivr-calling-service</code> is discarded. CSPs re-register SIMs (self-service or admin tool) post-cutover.</td><td>Legacy data had no audit trail and quality is unknown. Starting fresh ensures clean audit history.</td></tr>
-    <tr><td>Closed tickets (within last 90 days)</td><td>Not backfilled — no PIN needed for closed tickets.</td><td>Calls on closed tickets go to dead-end IVR regardless.</td></tr>
-    <tr><td>Legacy <code>es-ivr-calling-service</code> data</td><td>Retained for 30 days post-cutover (read-only), then archived.</td><td>Rollback safety window. If a critical issue surfaces, we can re-point to legacy and have the data available.</td></tr>
-    <tr><td>Call audit logs (pre-cutover)</td><td>Remain in legacy storage. New audit logs start fresh in csp-ivr-service. Cross-reference by ticket_id where needed.</td><td>No business need to merge histories; analytics can join when needed.</td></tr>
+    <tr><td>Existing active Install / Restore / Pickup tickets at IVR backend launch</td><td><strong>One-time backfill.</strong> A backend script reads all currently-active tickets across Install / Restore / NBREC ESs, resolves Owner / current executor via csp-gateway-service, generates per-ticket PINs, writes 2 Table 2 rows per ticket (customer-side + CSP-side).</td><td>Without backfill, in-flight tickets only support Path 1 (in-app CTA → Table 1 short-TTL). Path 2 (recognised caller from their registered SIM) and Path 3 (PIN gate from a different SIM, UC 11) both fail because Table 2 row / PIN don't exist. Backfill closes that gap for in-flight tickets from day 1 of the user's app update.</td></tr>
+    <tr><td>Customer-side PIN delivery for backfilled tickets</td><td>No SMS blast. PIN is visible in-app whenever the Call CTA is visible (per B6).</td><td>Customers see the PIN the first time they open the new app on the active ticket. No separate notification step needed.</td></tr>
+    <tr><td>Tickets created after IVR backend goes live</td><td>Standard flow — PIN allocated at <code>*_CANDIDATE_CREATED</code> event by the IVR event consumer.</td><td>Steady-state behaviour per spec. The event consumer is running from IVR backend launch, so there is no gap between backfill and steady-state.</td></tr>
+    <tr><td>Closed tickets (within last 90 days)</td><td>Not backfilled.</td><td>No active calls expected on closed tickets. Calls land on the dead-end IVR regardless of PIN existence.</td></tr>
+    <tr><td>SIM inventory</td><td>Built fresh. CSPs register SIMs via self-service or admin tool from IVR backend launch onward.</td><td>No legacy SIM dataset exists today (the legacy IVR code does not route live customer-CSP calls). Starting fresh ensures clean audit history.</td></tr>
+    <tr><td>Call audit logs</td><td>New <code>call_audit_logs</code> + <code>call_event_log</code> tables start fresh in <code>csp-ivr-service</code> at IVR backend launch.</td><td>No legacy call-history dataset to migrate or cross-reference.</td></tr>
   </table>
+  <p style="font-size:13px;color:var(--muted);margin-top:8px;"><strong>Operational note:</strong> If event-consumer lag or a dropped event causes a steady-state PIN-less ticket to surface, ops can run a single-ticket allocation script. This is an operational exception, not a designed-in lazy-fallback pathway — the spec assumes the event consumer is the sole steady-state PIN-allocator.</p>
   <hr class="sect-end">
 </section>
 
@@ -1899,7 +1900,7 @@ sequenceDiagram
   <div class="expected"><strong>What is expected:</strong> What ships in Phase 1 (riskiest assumption); what is deferred and why.</div>
   <table>
     <tr><th>Phase</th><th>Scope</th><th>What ships</th><th>What is deferred (and why)</th></tr>
-    <tr><td>Phase 1 (MVP)</td><td>Core routing + PIN flow + dead-end IVR. The riskiest assumption is that Exotel's 5-branch Switch Case + Connect-applet behaviours actually work end-to-end; ship that first.</td><td>Single masked DID. Tables 1 + 2 + sim_inventory. 3 APIs (resolve-caller, identify-caller, resolve-pin). Per-family allocation lifecycle for all 3 families. 5-branch Switch Case. 9 audio assets. Dead-end SMS inline. PIN delivery SMS inline. CSP App + Customer App + Technician App <code>maskedCallAvailable</code> wiring.</td><td>Missed-call notification via csp-notification-service (Phase 2 — dependency on consumer service). Truecaller / VLT carry-forward (Phase 1 prerequisite — must land at cutover).</td></tr>
+    <tr><td>Phase 1 (MVP)</td><td>Core routing + PIN flow + dead-end IVR. The riskiest assumption is that Exotel's 5-branch Switch Case + Connect-applet behaviours actually work end-to-end; ship that first.</td><td>Single masked DID. Tables 1 + 2 + sim_inventory. 3 APIs (resolve-caller, identify-caller, resolve-pin). Per-family allocation lifecycle for all 3 families. 5-branch Switch Case. 9 audio assets. Dead-end SMS inline. PIN delivery SMS inline. CSP App + Customer App + Technician App <code>maskedCallAvailable</code> wiring.</td><td>Missed-call notification via csp-notification-service (Phase 2 — dependency on consumer service). Truecaller / VLT verification on the chosen masked DID (Phase 1 prerequisite — must land before rollout).</td></tr>
     <tr><td>Phase 2</td><td>Missed-call notifications + WhatsApp channel.</td><td><code>ES_CSPIVR_MISSED_CALL_DETECTED</code> event emission + outbox + csp-notification-service consumer. WhatsApp BSP templates approved and integrated for PIN delivery + missed-call alerts.</td><td>OTP-based authentication for unknown callers (deferred to v2; design rejected for v1 on UX-friction grounds).</td></tr>
     <tr><td>Phase 3</td><td>Operational refinements based on Phase 1 + 2 production data.</td><td>6-digit PIN escalation if pool pressure observed. Regional-language IVR (post-Hindi). Active-transfer dead-end ("press 1 to connect to support"). PIN reminder on prompt abandonment.</td><td>Per-FROM rate limiting (deferred indefinitely; brute-force economics make it unnecessary for v1+v2).</td></tr>
   </table>
@@ -2203,7 +2204,7 @@ sequenceDiagram
     <tr><td>What % of recognised customers / CSPs reach the dead-end Greeting (no active ticket)?</td><td><code>call_audit_logs</code> WHERE <code>switch_case_discriminator IN ('customer_no_pin', 'csp_no_pin')</code> ÷ all rows for that <code>user_type</code>.</td></tr>
     <tr><td>Of missed-call notifications fired, what's the callback rate within 24h?</td><td>JOIN <code>call_audit_logs</code> (missed) → next inbound call from same FROM within 24h on the same masked DID.</td></tr>
     <tr><td>For ESs (Install, Restore, NBRec) — what's the per-state call volume and disposition split?</td><td>Stamp <code>ticket_state_at_bridge</code> on <code>call_audit_logs</code> from the resolved ticket. GROUP BY <code>(ticket_state_at_bridge, final_disposition)</code>.</td></tr>
-    <tr><td>Did the new flow regress any applet-hop latency vs the legacy IVR?</td><td><code>call_event_log.response_latency_ms</code> distributions per <code>endpoint_label</code>, compared week-over-week against legacy baseline.</td></tr>
+    <tr><td>Per-endpoint applet-hop latency — is anything degrading week-over-week?</td><td><code>call_event_log.response_latency_ms</code> p50 / p95 / p99 distributions per <code>endpoint_label</code>, tracked week-over-week against the prior 4-week baseline. Alert on p95 regression &gt; 50% or absolute breach of the per-endpoint SLO (API 1 &lt; 200 ms; API 2 / API 3 &lt; 50 ms).</td></tr>
   </table>
 
   <p style="font-size:13px;color:var(--muted);margin-top:8px;"><strong>PII handling.</strong> Phone numbers, ticket IDs, and recording URLs all qualify as PII. Apply existing platform PII policy — encryption at rest, restricted analytics-warehouse role for un-hashed access, hashed FROM/TO in standard dashboards. The raw payload JSONB columns must inherit the same row-level encryption as the typed columns; do not assume "raw" means "less sensitive."</p>
