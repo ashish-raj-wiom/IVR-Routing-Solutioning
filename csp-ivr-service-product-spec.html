@@ -473,9 +473,10 @@ flowchart LR
   <h3>A9.1 Cross-service dependencies (not OS amendments, but worth flagging)</h3>
   <table>
     <tr><th>Service</th><th>Dependency</th><th>Owner</th></tr>
-    <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to existing emissions: ES_INSTALL_CANDIDATE_CREATED, ES_INSTALL_TECHNICIAN_ASSIGNED, 6 terminal events. No schema changes requested.</td><td>csp-execution-platform</td></tr>
-    <tr><td><code>es-restore</code></td><td>New subscriber to ES_RESTORE_CANDIDATE_CREATED, ES_RESTORE_TECHNICIAN_ASSIGNED, ES_RESTORE_TASK_RECALLED, 2 terminal events.</td><td>csp-execution-platform</td></tr>
-    <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to ES_NBREC_RECOVERY_TASK_ASSIGNED, ES_NBREC_TASK_ASSIGNED, 3 terminal events.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to: <code>ES_INSTALL_CANDIDATE_CREATED</code>, <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code>, and the 4 terminal events <code>ES_INSTALL_REPORTED_FAILED</code>, <code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code>, <code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code>, <code>ES_INSTALL_CANCELLED_ONSITE</code>. No schema changes requested.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>csp-connection-lifecycle-service</code></td><td>IVR subscribes to <code>CL_CONNECTION_ACTIVATED</code> as the success-path signal for Install tickets (es-installation does not emit a completion event; CL OS event is the canonical signal that the install was completed successfully).</td><td>csp-platform</td></tr>
+    <tr><td><code>es-restore</code></td><td>New subscriber to: <code>ES_RESTORE_CANDIDATE_CREATED</code>, <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code>, <code>ES_RESTORE_TASK_RECALLED</code>, and the 2 terminal events <code>ES_RESTORE_CANDIDATE_COMPLETED</code>, <code>ES_RESTORE_CANDIDATE_CANCELLED</code>.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to: <code>ES_NBREC_CANDIDATE_CREATED</code> (allocation), <code>ES_NBREC_TASK_ASSIGNED</code> (delegation / un-delegation), and the 3 terminal events <code>ES_NBREC_CANDIDATE_COMPLETED</code>, <code>ES_NBREC_CANDIDATE_CANCELLED</code>, <code>ES_NBREC_CANDIDATE_FAILED</code>.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>csp-gateway-service</code></td><td>Existing endpoints used: <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code> (Owner resolution at allocation), <code>GET /api/internal/csp-users/{id}</code> (executor mobile resolution on technician assignment). Target latency: p95 &lt; 50 ms.</td><td>csp-platform</td></tr>
     <tr><td><code>csp-notification-service</code></td><td>New consumer of <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> (bus topic <code>csp.ivr.missed-call</code>). Owns channel routing for PN / SMS / WA.</td><td>csp-platform</td></tr>
     <tr><td>Exotel</td><td>App Bazaar flow rebuild: Connect (×3), Gather (×2), Passthru Sync (×2), Passthru Async (×3 — all DNP-transition wired to one backend endpoint), Switch Case (×2 with 5 branches each), Greeting (×9).</td><td>Vendor liaison + Eng</td></tr>
@@ -596,7 +597,7 @@ flowchart LR
   <h3>B2.2 Transition matrix</h3>
   <table>
     <tr><th>From</th><th>Event</th><th>Guard</th><th>To</th><th>What happens (semantic)</th></tr>
-    <tr><td>(none)</td><td>ES_*_CANDIDATE_CREATED (or ES_NBREC_RECOVERY_TASK_ASSIGNED for Pickup)</td><td>Owner resolvable for the candidate's csp_id</td><td>ACTIVE</td><td>INSERT 2 rows (customer-side + csp-side); generate 2 unique PINs; resolve Owner mobile and persist; dispatch customer SMS.</td></tr>
+    <tr><td>(none)</td><td>Any one of: <code>ES_INSTALL_CANDIDATE_CREATED</code> (es-installation), <code>ES_RESTORE_CANDIDATE_CREATED</code> (es-restore), <code>ES_NBREC_CANDIDATE_CREATED</code> (es-netbox-recovery)</td><td>Owner resolvable for the candidate's csp_id</td><td>ACTIVE</td><td>INSERT 2 rows (customer-side + csp-side); generate 2 unique PINs; resolve Owner mobile and persist; dispatch customer SMS.</td></tr>
     <tr><td>ACTIVE</td><td>ES_*_TECHNICIAN_ASSIGNED (any executor_id, any is_self_assigned)</td><td>—</td><td>ACTIVE</td><td>Universal mobile-update path: resolve executor mobile via gateway; UPDATE customer-side row.other_party_mobile; UPDATE csp-side row.csp_user_id. PIN preserved.</td></tr>
     <tr><td>ACTIVE</td><td>ES_RESTORE_TASK_RECALLED</td><td>—</td><td>ACTIVE</td><td>Revert customer-side row.other_party_mobile to Owner mobile; revert csp-side row.csp_user_id to Owner. PIN preserved.</td></tr>
     <tr><td>ACTIVE</td><td>ES_*_terminal event</td><td>—</td><td>EXPIRED</td><td>Soft-delete: set expires_at = now(); set cooldown_until = now() + 90 days.</td></tr>
@@ -607,14 +608,62 @@ flowchart LR
   <h3>B2.3 State diagram</h3>
   <div class="mermaid">
 stateDiagram-v2
-    [*] --> ACTIVE: ES_*_CANDIDATE_CREATED (Owner = default executor)
-    ACTIVE --> ACTIVE: ES_*_TECHNICIAN_ASSIGNED (mobile-only update)
-    ACTIVE --> ACTIVE: ES_RESTORE_TASK_RECALLED (revert to Owner)
-    ACTIVE --> EXPIRED: ES_*_terminal event
+    [*] --> ACTIVE: candidate-creation event (Owner = default executor)
+    ACTIVE --> ACTIVE: technician-assignment / recall event (mobile-only update)
+    ACTIVE --> EXPIRED: terminal event
     EXPIRED --> COOLDOWN: time (expires_at + 0)
     COOLDOWN --> HARD_DELETED: time (cooldown_until + retention)
     HARD_DELETED --> [*]
   </div>
+
+  <h3>B2.4 Events the IVR consumes — by lifecycle phase</h3>
+  <p>The canonical list of bus events the IVR listener subscribes to, organised by what the IVR does on receipt. <strong>All event names below are verified against the actual Java emission classes in <code>csp-tas-service</code> (June 2026).</strong> The "Emitted by" column names the service / OS that publishes the event.</p>
+
+  <h4>B2.4.1 Allocation — PIN created (Table 2 written, customer SMS dispatched)</h4>
+  <p>Triggered <strong>on ticket creation</strong> for each family. The Owner of the owning CSP is set as the default bridge target.</p>
+  <table>
+    <tr><th style="width:18%">Service family</th><th>Event name</th><th>Emitted by</th><th>What it represents</th></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_CANDIDATE_CREATED</code></td><td><code>es-installation-service</code></td><td>D&amp;A's <code>ALLOCATION_ACCEPTED</code> landed; a new Install candidate has been created</td></tr>
+    <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_CREATED</code></td><td><code>es-restore</code></td><td>SR OS's <code>COMPLAINT_TASK_CREATED</code> landed; Restore candidate entered <code>PENDING_ACCEPTANCE</code></td></tr>
+    <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_CREATED</code></td><td><code>es-netbox-recovery</code></td><td>NetBox recovery task created (Owner auto-self-assigned by default)</td></tr>
+  </table>
+
+  <h4>B2.4.2 Reallocation — bridge target updated (PIN preserved)</h4>
+  <p>Triggered <strong>when the technician is assigned, reassigned, or the task is recalled to the Owner</strong>. The PIN itself never changes — only <code>other_party_mobile</code> and <code>csp_user_id</code> on the customer-side row.</p>
+  <table>
+    <tr><th style="width:18%">Service family</th><th>Event name</th><th>Emitted by</th><th>What it represents</th></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_TECHNICIAN_ASSIGNED</code></td><td><code>es-installation-service</code></td><td>Universal mobile-update — fires for first delegation, A→B reassign, AND recall (re-fires with <code>executor_id = Owner, is_self_assigned = true</code>). IVR handler treats all three cases via the same path.</td></tr>
+    <tr><td>Restore</td><td><code>ES_RESTORE_TECHNICIAN_ASSIGNED</code></td><td><code>es-restore</code></td><td>Owner delegated to a technician (CSP action <code>ASSIGN_TECHNICIAN</code>)</td></tr>
+    <tr><td>Restore</td><td><code>ES_RESTORE_TASK_RECALLED</code></td><td><code>es-restore</code></td><td>Owner recalled the task from technician (CSP action <code>RECALL_TASK</code>) → IVR reverts customer-side mobile to Owner</td></tr>
+    <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_TASK_ASSIGNED</code></td><td><code>es-netbox-recovery</code></td><td>Owner delegated to a team member, OR A→B delegation transfer, OR un-delegation back to Owner (re-fires with <code>executor_id = Owner</code>). Universal update treatment.</td></tr>
+  </table>
+
+  <h4>B2.4.3 Deallocation — Table 2 rows soft-deleted, 90-day cooldown begins</h4>
+  <p>Triggered <strong>when the ticket reaches a terminal state</strong>. Both Table 2 rows for the ticket are soft-deleted (<code>expires_at = now()</code>, <code>cooldown_until = now() + 90d</code>). The PIN value is reserved against re-issue for 90 days. The Call CTA disappears on both apps.</p>
+  <table>
+    <tr><th style="width:18%">Service family</th><th>Event name</th><th>Emitted by</th><th>Terminal state it reflects</th></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_REPORTED_FAILED</code></td><td><code>es-installation-service</code></td><td>CSP voluntarily reported the installation cannot be completed</td></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code></td><td><code>es-installation-service</code></td><td>Customer cancelled the booking</td></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code></td><td><code>es-installation-service</code></td><td>D&amp;A / upstream cancelled the allocation</td></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_ONSITE</code></td><td><code>es-installation-service</code></td><td>Technician cancelled while onsite</td></tr>
+    <tr><td>Install — success path</td><td><code>CL_CONNECTION_ACTIVATED</code></td><td><code>csp-connection-lifecycle-service</code> (CL OS)</td><td>Successful install completion. <code>es-installation-service</code> does not emit a completion event — the canonical success signal is CL OS's <code>CL_CONNECTION_ACTIVATED</code> emitted when the connection transitions to ACTIVE. IVR subscribes to it from CL OS directly.</td></tr>
+    <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_COMPLETED</code></td><td><code>es-restore</code></td><td>Resolution submitted and accepted</td></tr>
+    <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_CANCELLED</code></td><td><code>es-restore</code></td><td>Cancelled / unresolvable / platform takeover</td></tr>
+    <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_COMPLETED</code></td><td><code>es-netbox-recovery</code></td><td>Pickup completed</td></tr>
+    <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_CANCELLED</code></td><td><code>es-netbox-recovery</code></td><td>Cancelled</td></tr>
+    <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_FAILED</code></td><td><code>es-netbox-recovery</code></td><td>Device declared lost</td></tr>
+  </table>
+
+  <h4>B2.4.4 Summary — total events the IVR listener subscribes to</h4>
+  <table>
+    <tr><th>Phase</th><th>Install</th><th>Restore</th><th>Pickup (NBREC)</th><th>CL OS</th><th>Phase total</th></tr>
+    <tr><td>Allocation</td><td>1</td><td>1</td><td>1</td><td>—</td><td>3</td></tr>
+    <tr><td>Reallocation</td><td>1</td><td>2</td><td>1</td><td>—</td><td>4</td></tr>
+    <tr><td>Deallocation</td><td>4</td><td>2</td><td>3</td><td>1 (CL_CONNECTION_ACTIVATED)</td><td>10</td></tr>
+    <tr><td><strong>Service total</strong></td><td><strong>6</strong></td><td><strong>5</strong></td><td><strong>5</strong></td><td><strong>1</strong></td><td><strong>17</strong></td></tr>
+  </table>
+  <p style="font-size:13px;color:var(--muted);">Verified June 2026 against Java emission classes in <code>csp-tas-service/src/main/java/io/wiom/csp/tas/{install,restore,netbox_recovery}/domain/event/outbound/</code>. The CL OS event reference is the canonical success signal — see <code>csp-connection-lifecycle-service</code>.</p>
+
   <hr class="sect-end">
 </section>
 
@@ -840,7 +889,7 @@ sequenceDiagram
     Note over IVR: REVERT customer-side row to Owner mobile
     Note over IVR: Customer calls now bridge to Owner again
     ES->>Bus: Restore completed
-    Bus->>IVR: ES_RESTORE_COMPLETED
+    Bus->>IVR: ES_RESTORE_CANDIDATE_COMPLETED
     Note over IVR: Soft-delete both rows · 90d cooldown begins
   </div>
 
@@ -1507,9 +1556,9 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_29 (lifecycle · NBREC):</strong> <code>ES_NBREC_RECOVERY_TASK_ASSIGNED</code> writes 2 Table 2 rows for NetBox recovery tickets<br>
+    <strong>CRITERIA_29 (lifecycle · NBREC):</strong> <code>ES_NBREC_CANDIDATE_CREATED</code> writes 2 Table 2 rows for NetBox recovery tickets<br>
     <span class="scenario">Scenario: NBREC (NetBox Recovery / Pickup) is the third execution-service family. The same allocation pattern must work. If NBREC was missed in implementation, every NBREC ticket's call would silently fail.</span>
-    <span class="kw">Given</span> An NBREC pickup ticket that triggers <code>ES_NBREC_RECOVERY_TASK_ASSIGNED</code><br>
+    <span class="kw">Given</span> An NBREC pickup ticket that triggers <code>ES_NBREC_CANDIDATE_CREATED</code><br>
     <span class="kw">When</span> The IVR listener consumes the event<br>
     <span class="kw">Then</span> Two rows are written to Table 2 with the Owner as default executor (same allocation pattern as Install / Restore)<br>
     <span class="kw">And</span> Customer-side PIN dispatched via SMS<br>
@@ -1517,7 +1566,7 @@ sequenceDiagram
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
-        <li><strong>Event trigger</strong> — Manually publish <code>ES_NBREC_RECOVERY_TASK_ASSIGNED</code></li>
+        <li><strong>Event trigger</strong> — Manually publish <code>ES_NBREC_CANDIDATE_CREATED</code></li>
         <li><strong>DB</strong> — Same checks as CRITERIA_28 — 2 rows, unique PINs, Owner-side mobile</li>
         <li><strong>NBREC-specific</strong> — Confirm listener handles this event type explicitly (code review of listener match-case / switch)</li>
         <li><strong>App</strong> — NBREC ticket in CSP App has Call CTA visible</li>
@@ -1530,7 +1579,7 @@ sequenceDiagram
     <strong>CRITERIA_30 (lifecycle · terminal):</strong> Terminal ES event soft-deletes both Table 2 rows and flips <code>maskedCallAvailable = false</code><br>
     <span class="scenario">Scenario: When a ticket closes (any terminal event in any family — completed / cancelled / failed / etc.), the IVR listener must soft-delete both Table 2 rows (set <code>expires_at = now()</code>, <code>cooldown_until = now() + 90d</code>) AND the app's <code>maskedCallAvailable</code> flag must flip to false immediately so the Call CTA disappears.</span>
     <span class="kw">Given</span> An active ticket with 2 Table 2 rows<br>
-    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_INSTALLATION_REPORTED_FAILED</code>, <code>ES_RESTORE_COMPLETED</code>, <code>ES_NBREC_CANCELLED</code>)<br>
+    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_REPORTED_FAILED</code> from es-installation, <code>ES_RESTORE_CANDIDATE_COMPLETED</code> from es-restore, <code>ES_NBREC_CANDIDATE_CANCELLED</code> from es-netbox-recovery, or <code>CL_CONNECTION_ACTIVATED</code> from csp-connection-lifecycle-service for the Install success path)<br>
     <span class="kw">Then</span> Both Table 2 rows have <code>expires_at = now()</code> and <code>cooldown_until = now() + 90 days</code><br>
     <span class="kw">And</span> The ticket DTO returns <code>maskedCallAvailable = false</code> within seconds<br>
     <span class="kw">And</span> Any subsequent call attempt routes to dead-end (per CRITERIA_18 race / CRITERIA_09 0-ticket)
