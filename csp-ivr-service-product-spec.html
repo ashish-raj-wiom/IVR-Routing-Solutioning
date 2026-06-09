@@ -474,7 +474,7 @@ flowchart LR
   <table>
     <tr><th>Service</th><th>Dependency</th><th>Owner</th></tr>
     <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to: <code>ES_INSTALL_CANDIDATE_CREATED</code>, <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code>, and the 4 terminal events <code>ES_INSTALL_REPORTED_FAILED</code>, <code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code>, <code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code>, <code>ES_INSTALL_CANCELLED_ONSITE</code>. No schema changes requested.</td><td>csp-execution-platform</td></tr>
-    <tr><td><code>csp-connection-lifecycle-service</code></td><td>IVR subscribes to <code>CL_CONNECTION_ACTIVATED</code> as the success-path signal for Install tickets (es-installation does not emit a completion event; CL OS event is the canonical signal that the install was completed successfully).</td><td>csp-platform</td></tr>
+    <tr><td><code>es-installation-service</code> (Install ES)</td><td>IVR subscribes to <code>ES_INSTALL_INCENTIVE_EVALUATED</code> as the success-path signal for Install tickets. Verified in <code>RatingServiceImpl.submit()</code>: fires at <code>RATING_PENDING → CONNECTION_ACTIVE</code> when the CSP submits the customer rating (the final wizard step, post-OTP-verify). Carries <code>executionCandidateId</code> + <code>connectionId</code>. Prod-verified June 2026: 100% match with OTP-verified installs in last 15 days; fires 3–15 seconds after OTP verify (p50 = 3s, p95 = 9s, max = 14.5s).</td><td>csp-platform</td></tr>
     <tr><td><code>es-restore</code></td><td>New subscriber to: <code>ES_RESTORE_CANDIDATE_CREATED</code>, <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code>, <code>ES_RESTORE_TASK_RECALLED</code>, and the 2 terminal events <code>ES_RESTORE_CANDIDATE_COMPLETED</code>, <code>ES_RESTORE_CANDIDATE_CANCELLED</code>.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to: <code>ES_NBREC_CANDIDATE_CREATED</code> (allocation), <code>ES_NBREC_TASK_ASSIGNED</code> (delegation / un-delegation), and the 3 terminal events <code>ES_NBREC_CANDIDATE_COMPLETED</code>, <code>ES_NBREC_CANDIDATE_CANCELLED</code>, <code>ES_NBREC_CANDIDATE_FAILED</code>.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>csp-gateway-service</code></td><td>Existing endpoints used: <code>GET /api/internal/csp-users?csp_id=&amp;role=owner</code> (Owner resolution at allocation), <code>GET /api/internal/csp-users/{id}</code> (executor mobile resolution on technician assignment). Target latency: p95 &lt; 50 ms.</td><td>csp-platform</td></tr>
@@ -646,7 +646,7 @@ stateDiagram-v2
     <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code></td><td><code>es-installation-service</code></td><td>Customer cancelled the booking</td></tr>
     <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code></td><td><code>es-installation-service</code></td><td>D&amp;A / upstream cancelled the allocation</td></tr>
     <tr><td>Install</td><td><code>ES_INSTALL_CANCELLED_ONSITE</code></td><td><code>es-installation-service</code></td><td>Technician cancelled while onsite</td></tr>
-    <tr><td>Install — success path</td><td><code>CL_CONNECTION_ACTIVATED</code></td><td><code>csp-connection-lifecycle-service</code> (CL OS)</td><td>Successful install completion. <code>es-installation-service</code> does not emit a completion event — the canonical success signal is CL OS's <code>CL_CONNECTION_ACTIVATED</code> emitted when the connection transitions to ACTIVE. IVR subscribes to it from CL OS directly.</td></tr>
+    <tr><td>Install — success path</td><td><code>ES_INSTALL_INCENTIVE_EVALUATED</code></td><td><code>es-installation-service</code> (Install ES)</td><td>Successful install completion. Verified in <code>RatingServiceImpl.submit()</code>: fires when the CSP submits the customer rating (final wizard step, after OTP verification). State transition: <code>RATING_PENDING → CONNECTION_ACTIVE</code>. Carries <code>executionCandidateId</code> directly — no <code>connection_id</code> join needed. Prod-verified June 2026: 100% reliability (42 of 42 OTP-verified installs in last 15 days), fires p50 = 3 seconds after OTP verify, max 14.5 seconds.</td></tr>
     <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_COMPLETED</code></td><td><code>es-restore</code></td><td>Resolution submitted and accepted</td></tr>
     <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_CANCELLED</code></td><td><code>es-restore</code></td><td>Cancelled / unresolvable / platform takeover</td></tr>
     <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_COMPLETED</code></td><td><code>es-netbox-recovery</code></td><td>Pickup completed</td></tr>
@@ -656,13 +656,13 @@ stateDiagram-v2
 
   <h4>B2.4.4 Summary — total events the IVR listener subscribes to</h4>
   <table>
-    <tr><th>Phase</th><th>Install</th><th>Restore</th><th>Pickup (NBREC)</th><th>CL OS</th><th>Phase total</th></tr>
+    <tr><th>Phase</th><th>Install</th><th>Restore</th><th>Pickup (NBREC)</th><th>—</th><th>Phase total</th></tr>
     <tr><td>Allocation</td><td>1</td><td>1</td><td>1</td><td>—</td><td>3</td></tr>
     <tr><td>Reallocation</td><td>1</td><td>2</td><td>1</td><td>—</td><td>4</td></tr>
-    <tr><td>Deallocation</td><td>4</td><td>2</td><td>3</td><td>1 (CL_CONNECTION_ACTIVATED)</td><td>10</td></tr>
+    <tr><td>Deallocation</td><td>5 (incl. <code>ES_INSTALL_INCENTIVE_EVALUATED</code>)</td><td>2</td><td>3</td><td>—</td><td>10</td></tr>
     <tr><td><strong>Service total</strong></td><td><strong>6</strong></td><td><strong>5</strong></td><td><strong>5</strong></td><td><strong>1</strong></td><td><strong>17</strong></td></tr>
   </table>
-  <p style="font-size:13px;color:var(--muted);">Verified June 2026 against Java emission classes in <code>csp-tas-service/src/main/java/io/wiom/csp/tas/{install,restore,netbox_recovery}/domain/event/outbound/</code>. The CL OS event reference is the canonical success signal — see <code>csp-connection-lifecycle-service</code>.</p>
+  <p style="font-size:13px;color:var(--muted);">Verified June 2026 against Java emission classes in <code>csp-tas-service/src/main/java/io/wiom/csp/tas/{install,restore,netbox_recovery}/domain/event/outbound/</code>. Install success uses <code>ES_INSTALL_INCENTIVE_EVALUATED</code> (emitted at rating submission per <code>RatingServiceImpl.submit()</code>), not CL OS's <code>CL_CONNECTION_ACTIVATED</code> — both fire at install completion but only the Install ES event carries <code>executionCandidateId</code> for direct PIN lookup. Prod-verified 100% reliability over last 15 days.</p>
 
   <hr class="sect-end">
 </section>
@@ -1577,7 +1577,7 @@ sequenceDiagram
     <strong>CRITERIA_30 (lifecycle · terminal):</strong> Terminal ES event soft-deletes both Table 2 rows and flips <code>maskedCallAvailable = false</code><br>
     <span class="scenario">Scenario: When a ticket closes (any terminal event in any family — completed / cancelled / failed / etc.), the IVR listener must soft-delete both Table 2 rows (set <code>expires_at = now()</code>, <code>cooldown_until = now() + 90d</code>) AND the app's <code>maskedCallAvailable</code> flag must flip to false immediately so the Call CTA disappears.</span>
     <span class="kw">Given</span> An active ticket with 2 Table 2 rows<br>
-    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_REPORTED_FAILED</code> from es-installation, <code>ES_RESTORE_CANDIDATE_COMPLETED</code> from es-restore, <code>ES_NBREC_CANDIDATE_CANCELLED</code> from es-netbox-recovery, or <code>CL_CONNECTION_ACTIVATED</code> from csp-connection-lifecycle-service for the Install success path)<br>
+    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_INCENTIVE_EVALUATED</code> for the Install success path or <code>ES_INSTALL_REPORTED_FAILED</code> for failure — both from es-installation; <code>ES_RESTORE_CANDIDATE_COMPLETED</code> from es-restore; <code>ES_NBREC_CANDIDATE_CANCELLED</code> from es-netbox-recovery)<br>
     <span class="kw">Then</span> Both Table 2 rows have <code>expires_at = now()</code> and <code>cooldown_until = now() + 90 days</code><br>
     <span class="kw">And</span> The ticket DTO returns <code>maskedCallAvailable = false</code> within seconds<br>
     <span class="kw">And</span> Any subsequent call attempt routes to dead-end (per CRITERIA_18 race / CRITERIA_09 0-ticket)
