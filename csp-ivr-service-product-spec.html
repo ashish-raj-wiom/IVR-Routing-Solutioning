@@ -2487,12 +2487,11 @@ sequenceDiagram
       <code>type_of_ticket</code> — one of <code>install</code> / <code>restore</code> / <code>nbrec</code>. Tells IVR which lookup path to take. The Customer App backend already knows this from the ticket record (mapping: <code>Ticket.ticket_type=SERVICE</code> for a complaint → <code>restore</code>; <code>ROUTER_PICKUP</code> → <code>nbrec</code>; in-install booking flow → <code>install</code>).
     </td></tr>
     <tr><td>Response — success</td><td>
-      <strong>HTTP 200</strong>:
+      <strong>HTTP 200</strong>. Body carries <strong>only the PIN</strong> — the digit string the customer dials after the masked DID to bridge to the technician / CSP. Exact JSON field name is engineering's call; PM-side placeholder shown below:
       <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{
-  "pin":           "47291",
-  "masked_number": "+91&lt;masked_did&gt;",
-  "family":        "install | restore | nbrec"
+  "pin": "47291"
 }</pre>
+      <em>Note:</em> No <code>masked_number</code> (the Customer App already shows the dial number from elsewhere). No <code>family</code> (the app sent <code>type_of_ticket</code> in the request, so it already knows).
     </td></tr>
     <tr><td>Response — no PIN found</td><td>
       <strong>HTTP 404</strong> with body:
@@ -2521,7 +2520,7 @@ sequenceDiagram
     <tr><td><code>restore</code></td><td><code>WHERE ticket_id = :ticket_id AND family = 'restore' AND side = 'customer'</code></td><td>Multiple open Restores possible; the Kapture <code>ticket_id</code> disambiguates which complaint.</td></tr>
     <tr><td><code>nbrec</code></td><td><code>WHERE customer_account_id = :customer_id AND family = 'nbrec' AND side = 'customer'</code></td><td>0-or-1 active NBREC per customer; <code>customer_account_id</code> uniquely identifies the row.</td></tr>
   </table>
-  <p>Expected rowcount per query: <strong>0 or 1</strong>. 0 → return 404 PIN_NOT_FOUND. 1 → return <code>{pin, masked_number, family}</code>. &gt;1 → AMBIGUOUS_LOOKUP (lifecycle invariant violated; ops alert).</p>
+  <p>Expected rowcount per query: <strong>0 or 1</strong>. 0 → return 404 PIN_NOT_FOUND. 1 → return <code>{pin}</code>. &gt;1 → AMBIGUOUS_LOOKUP (lifecycle invariant violated; ops alert).</p>
 
   <h3>B15.5 Table 2 column requirements</h3>
   <p>For the algorithm above to work, Table 2 must store these columns at PIN allocation time:</p>
@@ -2538,9 +2537,9 @@ sequenceDiagram
   <h3>B15.6 Worked examples — what Customer App sends, what IVR returns</h3>
   <table>
     <tr><th style="width:20%">Scenario</th><th style="width:36%">Customer App passes</th><th style="width:44%">IVR resolution + response</th></tr>
-    <tr><td><strong>Install — customer is mid-install, opens the booking screen</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 4738</code> (Customer App's internal install reference)<br><code>type_of_ticket = install</code></td><td>Single query on <code>customer_account_id + family='install'</code> → 1 row found. Returns <code>{ pin, masked_number, family: "install" }</code>. The <code>ticket_id</code> isn't used in the SQL but is logged for traceability.</td></tr>
-    <tr><td><strong>Restore — customer opens one of their open complaints</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = "1780943579155825"</code> (Customer App's <code>Ticket.kapture_ticket_id</code>)<br><code>type_of_ticket = restore</code></td><td>Single query on <code>ticket_id + family='restore'</code> → 1 row found. Returns <code>{ pin, masked_number, family: "restore" }</code>. IVR also verifies the matched row's <code>customer_account_id</code> equals the request's <code>customer_id</code> (defence-in-depth against cross-customer harvesting of Kapture IDs).</td></tr>
-    <tr><td><strong>NBREC — customer opens their pending router-pickup ticket</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 8821</code> (Customer App's internal NBREC reference)<br><code>type_of_ticket = nbrec</code></td><td>Single query on <code>customer_account_id + family='nbrec'</code> → 1 row found. Returns <code>{ pin, masked_number, family: "nbrec" }</code>.</td></tr>
+    <tr><td><strong>Install — customer is mid-install, opens the booking screen</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 4738</code> (Customer App's internal install reference)<br><code>type_of_ticket = install</code></td><td>Single query on <code>customer_account_id + family='install'</code> → 1 row found. Returns <code>{ pin }</code>. The <code>ticket_id</code> isn't used in the SQL but is logged for traceability.</td></tr>
+    <tr><td><strong>Restore — customer opens one of their open complaints</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = "1780943579155825"</code> (Customer App's <code>Ticket.kapture_ticket_id</code>)<br><code>type_of_ticket = restore</code></td><td>Single query on <code>ticket_id + family='restore'</code> → 1 row found. Returns <code>{ pin }</code>. IVR also verifies the matched row's <code>customer_account_id</code> equals the request's <code>customer_id</code> (defence-in-depth against cross-customer harvesting of Kapture IDs).</td></tr>
+    <tr><td><strong>NBREC — customer opens their pending router-pickup ticket</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 8821</code> (Customer App's internal NBREC reference)<br><code>type_of_ticket = nbrec</code></td><td>Single query on <code>customer_account_id + family='nbrec'</code> → 1 row found. Returns <code>{ pin }</code>.</td></tr>
     <tr><td><strong>Customer has 2 open Restores, opens Restore #2 card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = &lt;Kapture-ID-of-Restore-2&gt;</code><br><code>type_of_ticket = restore</code></td><td>Single Restore query disambiguates by Kapture <code>ticket_id</code>. Returns the PIN of Restore #2 specifically. Restore #1's row is untouched.</td></tr>
     <tr><td><strong>Customer has no active tickets but opens a closed-ticket card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = &lt;closed_kapture_id&gt;</code><br><code>type_of_ticket = restore</code></td><td>Single Restore query → 0 rows (row was removed on candidate-terminal per INV-04). Returns <strong>404 PIN_NOT_FOUND</strong>. Customer App hides the Call CTA.</td></tr>
     <tr><td><strong>Type mismatch — Customer App sends wrong <code>type_of_ticket</code></strong></td><td><code>customer_id = X</code><br><code>ticket_id = 4738</code><br><code>type_of_ticket = restore</code> (but no active Restore for this customer)</td><td>Single Restore query → 0 rows. Returns <strong>404 PIN_NOT_FOUND</strong>. IVR does NOT auto-fallback to other families — Customer App is the source of truth on which screen the user is looking at. If the app misclassified, fix the app, not the resolution.</td></tr>
