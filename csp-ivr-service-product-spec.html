@@ -169,6 +169,7 @@
     <li><a href="#s24"><span class="ix">B13.</span>Build Phases</a></li>
     <li><a href="#s25"><span class="ix">B14.</span>Third-Party Integration (Exotel API contract)</a></li>
     <li><a href="#s26"><span class="ix">B15.</span>Third-Party Integration (Customer App Backend PIN-fetch)</a></li>
+    <li><a href="#s27"><span class="ix">B16.</span>Third-Party Integration (CSP App Backend PIN-fetch)</a></li>
   </ol>
   <h2 class="close">Closeout</h2>
   <ol>
@@ -2494,6 +2495,42 @@ sequenceDiagram
   </ul>
   <p>Install, Restore, and NBREC do not overlap in time — they belong to different phases of the customer's lifecycle (pre-connection → active → post-connection). The only multi-active scenario is multiple open Restores for the same customer.</p>
 
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B16 Third-Party Integration: CSP App Backend -->
+<!-- ====================================================================== -->
+<section class="spec" id="s27">
+  <h2><span class="num">B16.</span> Third-Party Integration: CSP App Backend (PIN-fetch contract) <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Server-to-server API contract between IVR backend and the CSP-side backend for fetching the per-ticket PIN displayed alongside the Call CTA on the CSP App and the Technician App. Single lookup key: <code>execution_candidate_id</code>.</div>
+
+  <h3>B16.1 Overview</h3>
+  <p>The CSP App and the Technician App (forked codebase) display the per-ticket PIN alongside the Call CTA on any active ticket card. The CSP-side world is keyed on <code>execution_candidate_id</code> end-to-end — it's the same identifier the CSP ticket DTOs already carry from CSP TAS — so the lookup is a single direct match in Table 2. No disambiguation logic needed.</p>
+
+  <h3>B16.2 API contract</h3>
+  <table>
+    <tr><th style="width:24%">Field</th><th>Value</th></tr>
+    <tr><td>HTTP method</td><td><code>GET</code>. Path owned by engineering — PM-side label: <strong>CSP-App PIN-fetch API</strong>.</td></tr>
+    <tr><td>Called by</td><td>CSP App backend, on behalf of the CSP App and the Technician App when either renders a ticket card with the Call CTA. Path / auth pattern follows existing CSP-side platform conventions (engineering's call).</td></tr>
+    <tr><td>Auth</td><td>Existing platform mechanism — service-to-service if a backend is in the path, or the existing CSP App mobile JWT if called directly from the client. Engineering's call.</td></tr>
+    <tr><td>Query parameter</td><td><code>execution_candidate_id</code> — the candidate identifier the CSP ticket already carries (from CSP TAS).</td></tr>
+    <tr><td>Response — success</td><td>
+      <strong>HTTP 200</strong>. Body carries <strong>only the PIN</strong> — the digit string the CSP / technician dials after the masked DID to bridge to the customer. Exact JSON field name is engineering's call; PM-side placeholder shown below:
+      <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{
+  "pin": "38462"
+}</pre>
+    </td></tr>
+    <tr><td>Response — no PIN found</td><td>
+      <strong>HTTP 404</strong> with body:
+      <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{ "error": "PIN_NOT_FOUND" }</pre>
+      The CSP App / Technician App should hide the Call CTA in this case.
+    </td></tr>
+    <tr><td>Error cases</td><td>4xx codes: <code>NOT_AUTHENTICATED</code>, <code>INVALID_CANDIDATE_ID</code>.</td></tr>
+    <tr><td>Idempotency</td><td>Pure read. Safe to retry.</td></tr>
+    <tr><td>Latency target</td><td>Backend p95 &lt; 100 ms.</td></tr>
+  </table>
+  <p style="font-size:13px;"><strong>What IVR needs to store for this to work:</strong> <code>execution_candidate_id</code> is already the primary key on Table 2 (per existing design). No new storage is needed for this API — it's a direct primary-key lookup.</p>
   <hr class="sect-end">
 </section>
 
