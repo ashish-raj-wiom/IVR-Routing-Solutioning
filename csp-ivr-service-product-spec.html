@@ -1087,7 +1087,7 @@ sequenceDiagram
         <li><strong>API 2 response</strong> — <code>{"select": "unknown"}</code></li>
         <li><strong>API 3 SQL trace</strong> — <code>WHERE pin = '47291' AND expires_at IS NULL</code> (NO <code>csp_id</code> filter)</li>
         <li><strong>Service log</strong> — <code>"user_type=unknown resolved via PIN=47291"</code></li>
-        <li><strong>Bridge</strong> — Call connects between Vikram and the customer</li>
+        <li><strong>Bridge</strong> — Call connects between Vikram and the customer; recording present if enabled in the App Bazaar applet</li>
       </ul>
     </div>
   </div>
@@ -1459,7 +1459,7 @@ sequenceDiagram
 
   <div class="gherkin">
     <strong>CRITERIA_24 (api · contract):</strong> API 1 / API 3 response body contains <strong>only</strong> the <code>destination</code> field<br>
-    <span class="scenario">Scenario: Per Rule 6, the Connect response body must be minimal — only <code>destination</code>. Every other Programmable-Connect field is optional with Exotel defaults that already match our intended behaviour (caller ID = masked DID, max ring = 30s, fetch_after_attempt = false, recording = off in v1). Sending extra fields is unnecessary surface area.</span>
+    <span class="scenario">Scenario: Per Rule 6, the Connect response body must be minimal — only <code>destination</code>. Recording (on/off + channels), max ring duration, caller ID, and "fetch after every attempt" are configured statically in the App Bazaar Connect applet UI. The dynamic URL response is reserved for what changes per call (destination only). Sending extra fields would unintentionally override the App Bazaar config.</span>
     <span class="kw">Given</span> Any call that reaches API 1 or API 3<br>
     <span class="kw">When</span> The response is returned to Exotel<br>
     <span class="kw">Then</span> The JSON body's top-level keys are exactly <code>{"destination"}</code><br>
@@ -1960,7 +1960,7 @@ sequenceDiagram
       <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;overflow-x:auto;">{
   "destination": { "numbers": ["+919812345678"] }
 }</pre>
-      <p style="font-size:12px;color:var(--muted);margin:6px 0 0;"><strong>Minimal response — only <code>destination</code> is required by Exotel.</strong> Per the <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank">Programmable Connect docs</a>, every other field is optional with a sensible default: <code>outgoing_phone_number</code> defaults to the incoming masked DID (the value we'd want); <code>max_ringing_duration</code> defaults to 30s (what we'd want); <code>fetch_after_attempt</code> defaults to <code>false</code> (what Rule 6 mandates); <code>record</code> defaults to <code>false</code> (no recording in v1). Sending only <code>destination</code> keeps the contract minimal and matches actual desired behaviour.</p>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0 0;"><strong>Only <code>destination</code> is sent.</strong> Every other Connect-applet behaviour — record on/off, recording channels, max ringing duration, caller ID, fetch-after-attempt — is configured <strong>statically in the App Bazaar Connect applet UI</strong> (checkboxes / dropdowns in the flow editor) and applies to every call. The dynamic URL response is reserved for what actually changes per call: the destination number.</p>
     </td></tr>
     <tr><td>Response — no-bridge case</td><td>
       <strong>HTTP 200</strong>:
@@ -2016,7 +2016,7 @@ sequenceDiagram
       <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{
   "destination": { "numbers": ["+919812345678"] }
 }</pre>
-      <p style="font-size:12px;color:var(--muted);margin:6px 0 0;">Same minimal response as API 1 — only <code>destination</code> is sent; Exotel's defaults cover everything else.</p>
+      <p style="font-size:12px;color:var(--muted);margin:6px 0 0;">Same minimal response as API 1 — only <code>destination</code> is sent; record / channels / ring duration / caller ID come from the App Bazaar applet config.</p>
     </td></tr>
     <tr><td>Response — no-bridge case</td><td>
       <strong>HTTP 200</strong>:
@@ -2040,7 +2040,7 @@ sequenceDiagram
   "CallSid":          "CA1234567890abcdef1234567890abcdef",
   "CallFrom":         "+919876543210",
   "CallTo":           "+911234567890",
-  "RecordingUrl":     "",                                                          // empty in v1 — recording OFF per Rule 6
+  "RecordingUrl":     "https://...mp3 if recording enabled in App Bazaar applet, else empty",
   "DialCallStatus":   "completed | no-answer | busy | failed | canceled",
   "DialCallDuration": 120,
   "CallType":         "completed",
@@ -2147,7 +2147,7 @@ sequenceDiagram
       </td>
       <td><strong>Payload shape identical for all flow paths</strong> (Table 1 hit, Table 2 by-FROM, PIN-bridge, dead-end). The differences are in field <em>values</em>:
         <ul style="margin:4px 0 0 16px;padding:0;">
-          <li>Bridged: <code>DialCallStatus=completed</code>, <code>DialCallDuration&gt;0</code>, <code>RecordingUrl</code> empty in v1 (recording is OFF per Rule 6), both <code>Legs[]</code> rows present.</li>
+          <li>Bridged: <code>DialCallStatus=completed</code>, <code>DialCallDuration&gt;0</code>, <code>RecordingUrl</code> populated if recording is enabled in the App Bazaar applet (else empty), both <code>Legs[]</code> rows present.</li>
           <li>DNP: <code>DialCallStatus=no-answer/busy/failed</code>, <code>DialCallDuration=0</code>, no <code>RecordingUrl</code>, <code>Legs[0].OnCallDuration=0</code>.</li>
           <li>Dead-end: <code>DialWhomNumber=""</code>, <code>DialCallStatus=no-answer</code>, only the caller's leg in <code>Legs[]</code>.</li>
         </ul>
@@ -2199,7 +2199,7 @@ sequenceDiagram
     <tr><td>Per-endpoint applet-hop latency — is anything degrading week-over-week?</td><td><code>call_event_log.response_latency_ms</code> p50 / p95 / p99 distributions per <code>endpoint_label</code>, tracked week-over-week against the prior 4-week baseline. Alert on p95 regression &gt; 50% or absolute breach of the per-endpoint SLO (API 1 &lt; 200 ms; API 2 / API 3 &lt; 50 ms).</td></tr>
   </table>
 
-  <p style="font-size:13px;color:var(--muted);margin-top:8px;"><strong>PII handling.</strong> Phone numbers and ticket IDs qualify as PII. Apply existing platform PII policy — encryption at rest, restricted analytics-warehouse role for un-hashed access, hashed FROM/TO in standard dashboards. The raw payload JSONB columns must inherit the same row-level encryption as the typed columns; do not assume "raw" means "less sensitive." (Recording URLs are not in scope in v1 — recording is OFF per Rule 6.)</p>
+  <p style="font-size:13px;color:var(--muted);margin-top:8px;"><strong>PII handling.</strong> Phone numbers, ticket IDs, and recording URLs (if recording is enabled in the App Bazaar applet) qualify as PII. Apply existing platform PII policy — encryption at rest, restricted analytics-warehouse role for un-hashed access, hashed FROM/TO in standard dashboards. The raw payload JSONB columns must inherit the same row-level encryption as the typed columns; do not assume "raw" means "less sensitive."</p>
 
   <h3>B14.5 Exotel data-flow rules (10 constraints)</h3>
   <p>These rules are non-negotiable constraints derived from Exotel's published applet documentation. Every API contract above is shaped by them.</p>
@@ -2210,8 +2210,8 @@ sequenceDiagram
     <tr><td>Rule 3</td><td>Connect responses <strong>cannot redirect the flow</strong>. The response schema does not include an <code>action:</code> field. The next applet is chosen by App Bazaar transition wiring on the three Connect outcomes.</td><td>Branching between bridge / Gather / dead-end happens via Passthru Sync → Switch Case downstream — not via the Connect response.</td></tr>
     <tr><td>Rule 4</td><td>Connect has exactly three outcomes (App Bazaar transition labels): <strong>"After the call conversation ends"</strong> (Connected), <strong>"If nobody answers"</strong> (DNP), <strong>"We didn't dial anyone"</strong> (Did not Dial / empty destination / timeout / non-200).</td><td>These are the only transitions you can wire in App Bazaar from a Connect applet.</td></tr>
     <tr><td>Rule 5</td><td>Switch Case branches on the <strong>response body</strong> <code>{"select": "&lt;value&gt;"}</code> with <code>Content-Type: text/plain</code> — NOT on HTTP status code.</td><td>API 2 always returns 200; the routing signal is in the body.</td></tr>
-    <tr><td>Rule 6</td><td>Connect response body contains <strong>only</strong> <code>destination</code>. Per the <a href="https://support.exotel.com/support/solutions/articles/3000096873-programmable-connect-working-with-connect-applet-dynamic-url-" target="_blank">Programmable Connect docs</a>, every other field is optional. Exotel's defaults already give us what we want: caller ID = incoming masked DID, max ring = 30s, <code>fetch_after_attempt</code> = false, no recording (v1). We do not send those fields.</td><td>Smaller contract surface; behaviour matches Exotel defaults end-to-end. No call recording in v1 — revisit if audit / dispute resolution needs it.</td></tr>
-    <tr><td>Rule 7</td><td>Removed — superseded by Rule 6. Caller ID defaults to the incoming masked DID automatically; no need to set <code>outgoing_phone_number</code> in the response.</td><td>—</td></tr>
+    <tr><td>Rule 6</td><td>Connect response body contains <strong>only</strong> <code>destination</code>. Recording (on/off + channels), max ringing duration, "fetch after every attempt", and caller ID are all configured statically in the <strong>App Bazaar Connect applet UI</strong> (the checkboxes / dropdowns visible in the flow editor). The dynamic URL response is reserved for what changes per call: the destination number.</td><td>Two-layer control model — static config in App Bazaar UI, dynamic-per-call values in the JSON response. Keeps the response minimal and avoids re-asserting the same defaults on every call.</td></tr>
+    <tr><td>Rule 7</td><td>Recording, recording channels, max ring duration, and "fetch after every attempt" are <strong>PM / tech decisions at App Bazaar flow-build time</strong>, not per-call. PM owns the policy ("record all bridged calls? single or dual channel? ring for how long?"); tech sets the checkboxes once.</td><td>Avoids the trap of overriding the static config from the response JSON unintentionally.</td></tr>
     <tr><td>Rule 8</td><td>Greeting audio files: <code>.wav</code> or <code>.mp3</code>, &lt; 2 MB, 8-bit, 8000 Hz, mono.</td><td>Asset spec for all 9 Greeting MP3s. Different from the <code>start_call_playback.audio_url</code> spec (16-bit, 128 kbps) — we use Greeting applets, so the 8-bit spec applies.</td></tr>
     <tr><td>Rule 9</td><td>Every Exotel webhook carries these standard query params (verbatim casing): <code>CallSid</code>, <code>From</code>, <code>To</code>, <code>CallFrom</code>, <code>CallTo</code>, <code>Direction</code>, <code>Created</code>, <code>StartTime</code>, <code>EndTime</code>, <code>CurrentTime</code>, <code>CallType</code>, <code>flow_id</code>, <code>DialCallDuration</code>, <code>DialWhomNumber</code>. Conditional: <code>DialCallStatus</code>, <code>digits</code>, <code>CustomField</code>, <code>RecordingUrl</code>, <code>CallStatus</code>.</td><td>Reliable input fields to design against.</td></tr>
     <tr><td>Rule 10</td><td>No authentication header from Exotel out of the box. Only <code>Exotel-Version: 1.0</code> is documented.</td><td>v1: IP allowlist (Exotel publishes egress IP range). Target: HMAC signed-payload pending Exotel confirmation.</td></tr>
@@ -2287,7 +2287,7 @@ sequenceDiagram
 &gt; { "CallSid":          "exo-call-001",
 &gt;   "CallFrom":         "+919812345678",
 &gt;   "CallTo":           "+91&lt;masked_did&gt;",
-&gt;   "RecordingUrl":     "",                                            (recording OFF in v1 per Rule 6)
+&gt;   "RecordingUrl":     "https://...mp3",                              (if recording enabled in App Bazaar applet)
 &gt;   "DialCallStatus":   "completed",
 &gt;   "DialCallDuration": 87,
 &gt;   "CallType":         "completed",
@@ -2348,7 +2348,7 @@ sequenceDiagram
 &gt; { "CallSid":          "exo-call-002",
 &gt;   "CallFrom":         "+919900000000",                  (relative's phone)
 &gt;   "CallTo":           "+91&lt;masked_did&gt;",
-&gt;   "RecordingUrl":     "",                                            (recording OFF in v1 per Rule 6)
+&gt;   "RecordingUrl":     "https://...mp3",                              (if recording enabled in App Bazaar applet)
 &gt;   "DialCallStatus":   "completed",
 &gt;   "DialCallDuration": 142,
 &gt;   "CallType":         "completed",
@@ -2437,7 +2437,7 @@ sequenceDiagram
     <li><strong>Never</strong> call CleverTap / FCM / Gupshup directly for missed-call alerts. That's <code>csp-notification-service</code>'s job after consuming <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> from the bus.</li>
     <li><strong>Never</strong> assume Switch Case branches on HTTP status code. It branches on the <code>{"select": "..."}</code> body string (Rule 5).</li>
     <li><strong>Never</strong> forget to <code>strip('"')</code> from <code>digits</code> before validation. Exotel literally wraps the value in double-quotes (Rule 2).</li>
-    <li><strong>Never</strong> add optional fields to the Connect response (<code>outgoing_phone_number</code>, <code>record</code>, <code>recording_channels</code>, <code>max_ringing_duration</code>, <code>fetch_after_attempt</code>). Only <code>destination</code> is sent. Exotel's defaults cover everything else (Rule 6).</li>
+    <li><strong>Never</strong> add optional fields to the Connect response (<code>outgoing_phone_number</code>, <code>record</code>, <code>recording_channels</code>, <code>max_ringing_duration</code>, <code>fetch_after_attempt</code>). Only <code>destination</code> is sent. Anything else would override the App Bazaar applet config unintentionally — those settings live in the applet UI (Rule 6).</li>
     <li><strong>Never</strong> initiate an outbound call to Exotel from our backend. The App Bazaar flow drives everything; we only respond to webhooks.</li>
     <li><strong>Never</strong> bridge a call on a closed ticket. Table 2 lookup excludes <code>expires_at IS NOT NULL</code> rows; race conditions resolve to dead-end (BEC-06).</li>
     <li><strong>Never</strong> store the customer's or CSP's PIN in plaintext outside Table 2. The PIN attempt log records outcome only.</li>
