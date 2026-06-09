@@ -170,6 +170,7 @@
     <li><a href="#s25"><span class="ix">B14.</span>Third-Party Integration (Exotel API contract)</a></li>
     <li><a href="#s26"><span class="ix">B15.</span>Third-Party Integration (Customer App Backend PIN-fetch)</a></li>
     <li><a href="#s27"><span class="ix">B16.</span>Third-Party Integration (CSP App Backend PIN-fetch)</a></li>
+    <li><a href="#s28"><span class="ix">B17.</span>Third-Party Integration (Notification Service — PIN + missed-call)</a></li>
   </ol>
   <h2 class="close">Closeout</h2>
   <ol>
@@ -2532,6 +2533,63 @@ sequenceDiagram
     <tr><td>Latency target</td><td>Backend p95 &lt; 100 ms.</td></tr>
   </table>
   <p style="font-size:13px;"><strong>What IVR needs to store for this to work:</strong> <code>execution_candidate_id</code> is already the primary key on Table 2 (per existing design). No new storage is needed for this API — it's a direct primary-key lookup.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- ====================================================================== -->
+<!-- B17 Third-Party Integration: Notification Service -->
+<!-- ====================================================================== -->
+<section class="spec" id="s28">
+  <h2><span class="num">B17.</span> Third-Party Integration: Notification Service (PIN delivery + missed-call reminders) <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Contract between IVR backend and the Notification Service for all user-facing comms about PINs and missed calls. IVR emits typed events with full payloads; Notification Service routes them to the right CleverTap instance; CleverTap campaigns own channel and copy.</div>
+
+  <h3>B17.1 Overview</h3>
+  <p>The Notification Service (NS) is a thin bridge to CleverTap (CT). IVR fires events at NS; NS fires events at CT; CT campaigns translate those into PN / SMS / WhatsApp delivery to users. NS does not pick channels, render copy, or talk to FCM / SMS / WA providers directly — that all lives on CT.</p>
+  <p>Two CT instances participate in this integration:</p>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><strong>CSP CleverTap</strong> — identity = <code>csp_user_id</code></li>
+    <li><strong>Customer CleverTap</strong> — identity = <code>customer_mobile</code></li>
+  </ul>
+  <p>NS routes each incoming IVR event to one or both CT instances based on the event type and payload (see B17.3). IVR does NOT call CleverTap / FCM / Gupshup directly — all user-facing comms flow through this single integration.</p>
+
+  <h3>B17.2 Events IVR emits</h3>
+  <p>Three distinct event types. Names below are PM-side placeholders; final event names are engineering's call.</p>
+  <table>
+    <tr><th style="width:22%">Event</th><th style="width:30%">When IVR fires it</th><th>Payload IVR sends</th></tr>
+    <tr>
+      <td><strong>PIN_INITIAL_ALLOCATION</strong></td>
+      <td>When IVR consumes <code>*_CANDIDATE_CREATED</code> for a new ticket and writes the first Table 2 rows.</td>
+      <td><code>execution_candidate_id</code>, <code>ticket_type</code> (install / restore / nbrec), <code>csp_mobile</code>, <code>csp_user_id</code>, <code>customer_mobile</code>, <code>PIN_for_customer</code>, <code>PIN_for_CSP</code></td>
+    </tr>
+    <tr>
+      <td><strong>PIN_CSP_REALLOCATION</strong></td>
+      <td>When IVR consumes a <code>*_TECHNICIAN_ASSIGNED</code> event that moves the CSP-side PIN from Owner to a Technician (or between Technicians). The PIN value itself does not change — what changes is who holds it on the CSP side.</td>
+      <td>Same payload shape as PIN_INITIAL_ALLOCATION — full payload is always sent (customer-side fields are passed through unchanged for completeness, even though NS will not notify the customer).</td>
+    </tr>
+    <tr>
+      <td><strong>MISSED_CALL_DETECTED</strong></td>
+      <td>When the end-of-call call-log webhook reports <code>DialCallStatus ∈ {no-answer, busy, failed}</code> — i.e., the dialled party didn't pick up.</td>
+      <td><code>From_No</code>, <code>DialWhom</code>, <code>Call_ID</code>, <code>Call_Status</code>, <code>csp_user_id</code> (empty if the missed party is the customer), <code>Masked_Number</code></td>
+    </tr>
+  </table>
+
+  <h3>B17.3 NS routing — which CT instance receives the event</h3>
+  <table>
+    <tr><th style="width:34%">IVR event</th><th style="width:22%">NS routes to</th><th>Identity used to find the CT profile</th></tr>
+    <tr><td>PIN_INITIAL_ALLOCATION</td><td><strong>Both</strong> CSP CT and Customer CT</td><td>CSP CT uses <code>csp_user_id</code>; Customer CT uses <code>customer_mobile</code></td></tr>
+    <tr><td>PIN_CSP_REALLOCATION</td><td><strong>CSP CT only</strong></td><td><code>csp_user_id</code></td></tr>
+    <tr><td>MISSED_CALL_DETECTED — <code>csp_user_id</code> populated</td><td>CSP CT</td><td><code>csp_user_id</code> (CSP missed the call)</td></tr>
+    <tr><td>MISSED_CALL_DETECTED — <code>csp_user_id</code> empty</td><td>Customer CT</td><td><code>DialWhom</code> (the dialled number = customer's mobile in this case; customer missed the call)</td></tr>
+  </table>
+  <p style="font-size:13px;color:var(--muted);"><strong>NS forwards the full IVR payload to CT in each case</strong> — CT campaigns can use any field at render time.</p>
+  <p style="font-size:13px;color:var(--muted);"><strong>Profile-not-found on Customer CT:</strong> if the targeted Customer CT profile doesn't exist, the event fails at the CT boundary. Failure behaviour (silent drop / log only / dead-letter queue / retry) is tech's call — flagged here so the NS team owns the decision before launch.</p>
+
+  <h3>B17.4 Communication rules (the product policy NS routing implements)</h3>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><strong>Customer:</strong> notified only once per ticket — on initial allocation (PIN_INITIAL_ALLOCATION). Subsequent technician changes do NOT re-notify the customer; the customer's PIN doesn't change when the CSP-side technician changes.</li>
+    <li><strong>CSP:</strong> notified on initial allocation AND on every CSP-side reallocation. Each new technician needs to know the CSP-side PIN to use it.</li>
+    <li><strong>Missed call:</strong> notified to whoever missed the call, regardless of whether they're the CSP or the customer. The party identity is implicit in the payload — <code>csp_user_id</code> populated means the CSP missed; empty means the customer missed.</li>
+  </ul>
   <hr class="sect-end">
 </section>
 
