@@ -1932,7 +1932,7 @@ sequenceDiagram
   <h3>B14.2 Communication map</h3>
   <table>
     <tr><th>Direction</th><th>Initiator</th><th>Surface</th></tr>
-    <tr><td>App → IVR backend</td><td>CSP App / Customer App / Technician App</td><td><strong>App API</strong> (POST with mobile JWT) — see B14.6</td></tr>
+    <tr><td>App → IVR backend</td><td>CSP App / Customer App / Technician App</td><td>Two app-facing surfaces (both with mobile JWT):<br>• <strong>App API</strong> (POST, call initiation) — see B14.6<br>• <strong>Customer-App PIN-fetch API</strong> (GET, fetch PIN for ticket display) — see B14.6b</td></tr>
     <tr><td>IVR backend → Exotel</td><td><strong>None</strong></td><td>Our backend never initiates a call to Exotel. All Exotel-side actions are driven by the App Bazaar flow; our backend only responds to Exotel's webhooks.</td></tr>
     <tr><td>Exotel → IVR backend</td><td>Exotel App Bazaar applets (Connect, Gather, Passthru) and the end-of-call disposition webhook</td><td>3 Exotel-facing APIs (B14.3 — <strong>API 1</strong>, <strong>API 2</strong>, <strong>API 3</strong>) + the <strong>API_logging</strong> bucket (B14.4 — call-log webhook + DNP Passthru-Async + optional pre-flow Passthru-Async)</td></tr>
     <tr><td>Exotel → caller phone</td><td>Exotel telephony layer</td><td>Ringing, audio playback, DTMF capture — outside our control surface</td></tr>
@@ -2249,6 +2249,84 @@ sequenceDiagram
     </td></tr>
     <tr><td>Error cases</td><td>4xx with error code: <code>NOT_AUTHENTICATED</code>, <code>TICKET_NOT_ACTIVE</code> (no active Table 2 row), <code>TICKET_NOT_OWNED_BY_CALLER</code> (CSP from wrong org).</td></tr>
   </table>
+
+  <h3>B14.6b Customer App PIN-fetch API — single endpoint, family-agnostic</h3>
+  <p>The Customer App needs to display the per-ticket PIN alongside the Call CTA on any active ticket-detail screen. To keep the Customer App simple and decoupled from CSP-side ticket taxonomy, IVR exposes <strong>one API</strong>. The Customer App passes two things — <code>customer_id</code> and <code>ticket_id</code> — and IVR resolves the right PIN regardless of whether the underlying ticket is an Install, a Restore, or a Net Box Recovery (NBREC / pickup).</p>
+  <p style="font-size:13px;color:var(--muted);">This is the <strong>only</strong> integration surface the Customer App needs for showing PINs. No family branching on the app side, no separate endpoints per ticket type, no lookup of the masked DID through a different API.</p>
+
+  <h4>API contract</h4>
+  <table>
+    <tr><th style="width:24%">Field</th><th>Value</th></tr>
+    <tr><td>HTTP method</td><td><code>GET</code>. Path owned by engineering — PM-side label: <strong>Customer-App PIN-fetch API</strong>.</td></tr>
+    <tr><td>Called by</td><td>Customer App backend (<code>tickets-service-net</code>) whenever it renders a ticket detail screen that may surface the Call CTA. Cached app-side per ticket for a short TTL is recommended (PIN doesn't change).</td></tr>
+    <tr><td>Auth</td><td>Existing mobile JWT on the Customer App.</td></tr>
+    <tr><td>Query parameters</td><td>
+      <code>customer_id</code> — the Customer App's <code>Ticket.customer_account_id</code> (long, stringified).<br>
+      <code>ticket_id</code> — the Customer App's ticket identifier. For Restore tickets this should be the <strong>Kapture ticket ID</strong> (<code>Ticket.kapture_ticket_id</code>, 16-digit numeric string). For Install / NBREC, any value (or the Customer App's own <code>Ticket.ticket_id</code>) — IVR ignores it on those paths.
+    </td></tr>
+    <tr><td>Response — success</td><td>
+      <strong>HTTP 200</strong>:
+      <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{
+  "pin":           "47291",
+  "masked_number": "+91&lt;masked_did&gt;",
+  "family":        "install | restore | nbrec",
+  "is_active":     true
+}</pre>
+    </td></tr>
+    <tr><td>Response — no PIN found</td><td>
+      <strong>HTTP 404</strong> with body:
+      <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{ "error": "PIN_NOT_FOUND", "reason": "no_active_ticket_for_customer | ticket_not_eligible" }</pre>
+      The Customer App should hide the Call CTA in this case (no PIN to bridge with).
+    </td></tr>
+    <tr><td>Error cases</td><td>4xx codes: <code>NOT_AUTHENTICATED</code>, <code>CUSTOMER_MISMATCH</code> (mobile JWT doesn't own the <code>customer_id</code>), <code>AMBIGUOUS_LOOKUP</code> (multiple active rows under the same customer_id with no disambiguator — shouldn't happen; ops alert).</td></tr>
+    <tr><td>Idempotency</td><td>Pure read. Safe to retry.</td></tr>
+    <tr><td>Latency target</td><td>Backend p95 &lt; 100 ms.</td></tr>
+  </table>
+
+  <h4>Resolution algorithm (IVR side)</h4>
+  <p>The Customer App is family-agnostic — it passes two IDs and lets IVR figure out the right row. IVR resolves in this order:</p>
+  <ol style="margin:6px 0 6px 22px;">
+    <li><strong>Restore-first lookup (by <code>ticket_id</code>).</strong> Query Table 2 for a row where <code>ticket_id = :ticket_id AND side = 'customer' AND is_active = true</code>. Only Restore rows carry a Kapture <code>ticket_id</code>, so a hit here is unambiguously a Restore. Return the PIN with <code>family = "restore"</code>.</li>
+    <li><strong>Customer-scoped lookup (by <code>customer_id</code>) for Install / NBREC.</strong> If step 1 missed, query Table 2 for <code>customer_account_id = :customer_id AND family IN ('install', 'nbrec') AND side = 'customer' AND is_active = true</code>. At most one row should match (Install and NBREC don't overlap in time for the same customer — Install is initial setup, NBREC is end-of-life pickup). Return that PIN with the appropriate family.</li>
+    <li><strong>No match → 404.</strong></li>
+  </ol>
+
+  <h4>Per-family lookup rules</h4>
+  <table>
+    <tr><th>Family</th><th>Disambiguation key</th><th>Why this key</th><th>How many active per customer</th></tr>
+    <tr><td><strong>Install</strong></td><td><code>customer_id</code></td><td>Install is initial setup; one connection per customer at this stage. <code>customer_account_id</code> alone uniquely identifies the active Install row.</td><td>0 or 1</td></tr>
+    <tr><td><strong>Restore</strong></td><td><code>ticket_id</code> (Kapture)</td><td>A customer can have multiple open Restore complaints simultaneously (e.g., billing + internet-down on the same account). The Kapture <code>ticket_id</code> is the only key that disambiguates which complaint.</td><td>0 or many</td></tr>
+    <tr><td><strong>NBREC (pickup)</strong></td><td><code>customer_id</code></td><td>Router pickup is the exit step; one connection per customer being recovered. <code>customer_account_id</code> alone disambiguates.</td><td>0 or 1</td></tr>
+  </table>
+
+  <h4>What this requires on Table 2</h4>
+  <p>For the algorithm above to work, Table 2 must store these columns at PIN allocation time:</p>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><code>execution_candidate_id</code> — already in scope (CSP App lookup key)</li>
+    <li><code>customer_account_id</code> — used by step 2 (Install + NBREC lookup)</li>
+    <li><code>ticket_id</code> — used by step 1 (Restore lookup). For Restore only; NULL for Install / NBREC. Kapture format on Restore rows. <em>Open: rename column to <code>kapture_ticket_id</code> or <code>external_ticket_id</code> for clarity</em> — see footnote.</li>
+    <li><code>family</code> — required for step 2's filter (<code>IN ('install', 'nbrec')</code>) and for the response payload</li>
+    <li><code>side</code> = <code>'customer'</code> on the row returned</li>
+    <li><code>is_active</code> — see B5; flipped on deallocation</li>
+  </ul>
+  <p style="font-size:12.5px;color:var(--muted);"><strong>Column-naming note:</strong> the Restore <code>ticket_id</code> stored on Table 2 is the <strong>Kapture ticket ID</strong> (16-digit numeric, copied from <code>ComplaintTaskCreated.ticketId</code> via the Restore ES outbound event). It is <em>not</em> the Customer App's internal <code>Ticket.ticket_id</code> long. The Customer App's <code>Ticket.kapture_ticket_id</code> field is what should be sent in the API call's <code>ticket_id</code> parameter. Verified June 2026 against prod: 98.7% of populated <code>ticket_id</code> values are 16-digit Kapture format; remainder are test pollution.</p>
+
+  <h4>Worked examples — what Customer App sends, what IVR returns</h4>
+  <table>
+    <tr><th style="width:18%">Scenario</th><th style="width:34%">Customer App passes</th><th style="width:48%">IVR resolution + response</th></tr>
+    <tr><td><strong>Install — customer opens their install ticket card</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 4738</code> (Customer App's internal <code>Ticket.ticket_id</code>, ignored by IVR)</td><td>Step 1 misses (no Table 2 row with <code>ticket_id = '4738'</code>). Step 2: finds the unique Install row for <code>customer_id = 281749854744006</code>. Returns <code>{ pin, masked_number, family: "install" }</code>.</td></tr>
+    <tr><td><strong>Restore — customer opens one of their open complaints</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = "1780943579155825"</code> (Customer App's <code>Ticket.kapture_ticket_id</code>)</td><td>Step 1 hits: Table 2 row with <code>ticket_id = '1780943579155825'</code> found. Returns <code>{ pin, masked_number, family: "restore" }</code>. The <code>customer_id</code> is not used for lookup but IVR validates that the matched row's <code>customer_account_id</code> matches (defence-in-depth — prevents Customer A from fetching Customer B's PIN by guessing a Kapture ID).</td></tr>
+    <tr><td><strong>NBREC — customer opens their pending pickup ticket</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 8821</code> (Customer App's internal NBREC ticket ID)</td><td>Step 1 misses. Step 2: finds the unique NBREC row for <code>customer_id = 281749854744006</code>. Returns <code>{ pin, masked_number, family: "nbrec" }</code>.</td></tr>
+    <tr><td><strong>Customer has Restore + Install open simultaneously, opens Install card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = 4738</code> (Install's Customer App ID)</td><td>Step 1 misses. Step 2 finds the Install row (NBREC absent). Returns Install PIN. The active Restore is unaffected.</td></tr>
+    <tr><td><strong>Customer has 2 open Restores, opens Restore #2 card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = Kapture-ID-for-Restore-2</code></td><td>Step 1 hits the right row — disambiguation works because each Restore has its own Kapture ID.</td></tr>
+    <tr><td><strong>Customer has no active tickets but opens a closed-ticket card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = closed_ticket_kapture_id</code></td><td>Step 1 misses (closed → <code>is_active = false</code>). Step 2 misses (no active Install / NBREC). Returns <strong>404 PIN_NOT_FOUND</strong>. Customer App hides the Call CTA.</td></tr>
+  </table>
+
+  <h4>Security note — defence-in-depth on cross-customer lookups</h4>
+  <p style="font-size:13px;color:var(--muted);">Even though the Restore-path lookup uses <code>ticket_id</code> alone (which is sufficient because Kapture IDs are unique), the IVR backend should verify that the matched Table 2 row's <code>customer_account_id</code> equals the <code>customer_id</code> in the request. Otherwise a malicious customer who guesses or harvests a Kapture ticket ID could fetch another customer's PIN. Auth via mobile JWT already binds the request to a specific customer; the extra check inside IVR closes the gap if JWT validation is bypassed in some future code path.</p>
+
+  <h4>Why the Customer App stays family-agnostic</h4>
+  <p style="font-size:13px;color:var(--muted);">The Customer App backend (<code>tickets-service-net</code>) deliberately doesn't need to know which CSP-side family (Install / Restore / NBREC) a given ticket belongs to. It looks at its own Ticket record, sends <code>customer_account_id</code> and whatever ticket identifier it has (preferring <code>kapture_ticket_id</code> when present), and lets IVR resolve. This keeps the Customer App decoupled from CSP-TAS taxonomy changes — if a new ticket family is added later, only IVR's resolution algorithm needs to change.</p>
 
   <h3>B14.7 Worked end-to-end traces</h3>
   <p>Three representative call sessions showing the complete HTTP-level exchange between Exotel and our backend. Each shows every webhook URL Exotel sends and every response we return.</p>
