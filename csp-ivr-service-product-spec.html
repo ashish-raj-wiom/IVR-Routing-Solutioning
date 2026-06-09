@@ -2269,8 +2269,7 @@ sequenceDiagram
       <pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:12.5px;">{
   "pin":           "47291",
   "masked_number": "+91&lt;masked_did&gt;",
-  "family":        "install | restore | nbrec",
-  "is_active":     true
+  "family":        "install | restore | nbrec"
 }</pre>
     </td></tr>
     <tr><td>Response — no PIN found</td><td>
@@ -2286,8 +2285,8 @@ sequenceDiagram
   <h4>Resolution algorithm (IVR side)</h4>
   <p>The Customer App is family-agnostic — it passes two IDs and lets IVR figure out the right row. IVR resolves in this order:</p>
   <ol style="margin:6px 0 6px 22px;">
-    <li><strong>Restore-first lookup (by <code>ticket_id</code>).</strong> Query Table 2 for a row where <code>ticket_id = :ticket_id AND side = 'customer' AND is_active = true</code>. Only Restore rows carry a Kapture <code>ticket_id</code>, so a hit here is unambiguously a Restore. Return the PIN with <code>family = "restore"</code>.</li>
-    <li><strong>Customer-scoped lookup (by <code>customer_id</code>) for Install / NBREC.</strong> If step 1 missed, query Table 2 for <code>customer_account_id = :customer_id AND family IN ('install', 'nbrec') AND side = 'customer' AND is_active = true</code>. At most one row should match (Install and NBREC don't overlap in time for the same customer — Install is initial setup, NBREC is end-of-life pickup). Return that PIN with the appropriate family.</li>
+    <li><strong>Restore-first lookup (by <code>ticket_id</code>).</strong> Query Table 2 for a row where <code>ticket_id = :ticket_id AND side = 'customer'</code>. Per INV-04 a Table 2 row exists only while the candidate is non-terminal, so any row found is by definition active. Only Restore rows carry a Kapture <code>ticket_id</code>, so a hit here is unambiguously a Restore. Return the PIN with <code>family = "restore"</code>.</li>
+    <li><strong>Customer-scoped lookup (by <code>customer_id</code>) for Install / NBREC.</strong> If step 1 missed, query Table 2 for <code>customer_account_id = :customer_id AND family IN ('install', 'nbrec') AND side = 'customer'</code>. At most one row should match (Install and NBREC don't overlap in time for the same customer — Install is initial setup, NBREC is end-of-life pickup). Return that PIN with the appropriate family.</li>
     <li><strong>No match → 404.</strong></li>
   </ol>
 
@@ -2307,8 +2306,8 @@ sequenceDiagram
     <li><code>ticket_id</code> — used by step 1 (Restore lookup). For Restore only; NULL for Install / NBREC. Kapture format on Restore rows. <em>Open: rename column to <code>kapture_ticket_id</code> or <code>external_ticket_id</code> for clarity</em> — see footnote.</li>
     <li><code>family</code> — required for step 2's filter (<code>IN ('install', 'nbrec')</code>) and for the response payload</li>
     <li><code>side</code> = <code>'customer'</code> on the row returned</li>
-    <li><code>is_active</code> — see B5; flipped on deallocation</li>
   </ul>
+  <p style="font-size:12.5px;color:var(--muted);"><strong>Active-vs-inactive semantics:</strong> Table 2 row presence is the active signal — per INV-04, rows exist if and only if the underlying execution candidate is in a non-terminal state. Deallocation removes the row (post-cooldown). No <code>is_active</code> flag needed.</p>
   <p style="font-size:12.5px;color:var(--muted);"><strong>Column-naming note:</strong> the Restore <code>ticket_id</code> stored on Table 2 is the <strong>Kapture ticket ID</strong> (16-digit numeric, copied from <code>ComplaintTaskCreated.ticketId</code> via the Restore ES outbound event). It is <em>not</em> the Customer App's internal <code>Ticket.ticket_id</code> long. The Customer App's <code>Ticket.kapture_ticket_id</code> field is what should be sent in the API call's <code>ticket_id</code> parameter. Verified June 2026 against prod: 98.7% of populated <code>ticket_id</code> values are 16-digit Kapture format; remainder are test pollution.</p>
 
   <h4>Worked examples — what Customer App sends, what IVR returns</h4>
@@ -2319,7 +2318,7 @@ sequenceDiagram
     <tr><td><strong>NBREC — customer opens their pending pickup ticket</strong></td><td><code>customer_id = 281749854744006</code><br><code>ticket_id = 8821</code> (Customer App's internal NBREC ticket ID)</td><td>Step 1 misses. Step 2: finds the unique NBREC row for <code>customer_id = 281749854744006</code>. Returns <code>{ pin, masked_number, family: "nbrec" }</code>.</td></tr>
     <tr><td><strong>Customer has Restore + Install open simultaneously, opens Install card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = 4738</code> (Install's Customer App ID)</td><td>Step 1 misses. Step 2 finds the Install row (NBREC absent). Returns Install PIN. The active Restore is unaffected.</td></tr>
     <tr><td><strong>Customer has 2 open Restores, opens Restore #2 card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = Kapture-ID-for-Restore-2</code></td><td>Step 1 hits the right row — disambiguation works because each Restore has its own Kapture ID.</td></tr>
-    <tr><td><strong>Customer has no active tickets but opens a closed-ticket card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = closed_ticket_kapture_id</code></td><td>Step 1 misses (closed → <code>is_active = false</code>). Step 2 misses (no active Install / NBREC). Returns <strong>404 PIN_NOT_FOUND</strong>. Customer App hides the Call CTA.</td></tr>
+    <tr><td><strong>Customer has no active tickets but opens a closed-ticket card</strong></td><td><code>customer_id = X</code><br><code>ticket_id = closed_ticket_kapture_id</code></td><td>Step 1 misses (Table 2 row was removed on candidate-terminal per INV-04). Step 2 misses (no active Install / NBREC). Returns <strong>404 PIN_NOT_FOUND</strong>. Customer App hides the Call CTA.</td></tr>
   </table>
 
   <h4>Security note — defence-in-depth on cross-customer lookups</h4>
