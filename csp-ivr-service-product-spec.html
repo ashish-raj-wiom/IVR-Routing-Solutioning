@@ -2502,6 +2502,7 @@ sequenceDiagram
     <tr><td>Idempotency</td><td>Pure read. Safe to retry.</td></tr>
     <tr><td>Latency target</td><td>Backend p95 &lt; 100 ms.</td></tr>
   </table>
+  <p style="font-size:13px;"><strong>What IVR needs to store for this to work:</strong> IVR must keep the <strong>ticket_id</strong> and the <strong>ticket type</strong> on Table 2, alongside the existing <code>execution_candidate_id</code>. Without these two fields, the lookup above can't resolve the right row. Exact column names are tech's call.</p>
 
   <h3>B15.3 Ticket-active rules</h3>
   <p>At any moment, a customer can have:</p>
