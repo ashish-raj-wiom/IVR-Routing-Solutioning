@@ -2559,20 +2559,31 @@ sequenceDiagram
     <tr>
       <td><em>Initial PIN allocation event</em></td>
       <td>When IVR consumes <code>*_CANDIDATE_CREATED</code> for a new ticket and writes the first Table 2 rows.</td>
-      <td><code>execution_candidate_id</code>, <code>ticket_type</code> (install / restore / nbrec), <code>csp_mobile</code>, <code>csp_user_id</code>, <code>customer_mobile</code>, <code>PIN_for_customer</code>, <code>PIN_for_CSP</code></td>
+      <td><code>execution_candidate_id</code>, <code>ticket_type</code> (install / restore / nbrec), <code>csp_mobile</code>, <code>csp_user_id</code>, <code>customer_mobile</code>, <code>PIN_for_customer</code>, <code>PIN_for_CSP</code>, <code>page_name</code></td>
     </tr>
     <tr>
       <td><em>CSP-side PIN reallocation event</em></td>
       <td>When IVR consumes a <code>*_TECHNICIAN_ASSIGNED</code> event that moves the CSP-side PIN from Owner to a Technician (or between Technicians). The PIN value itself does not change — what changes is who holds it on the CSP side.</td>
-      <td>Same payload shape as the initial-allocation event — full payload is always sent (customer-side fields are passed through unchanged for completeness, even though NS will not notify the customer).</td>
+      <td>Same payload shape as the initial-allocation event — full payload (including <code>page_name</code>) is always sent. Customer-side fields are passed through unchanged for completeness, even though NS will not notify the customer.</td>
     </tr>
     <tr>
       <td><em>Missed-call event</em></td>
       <td>When the end-of-call call-log webhook reports <code>DialCallStatus ∈ {no-answer, busy, failed}</code> — i.e., the dialled party didn't pick up.</td>
-      <td><code>From_No</code>, <code>DialWhom</code>, <code>Call_ID</code>, <code>Call_Status</code>, <code>csp_user_id</code> (empty if the missed party is the customer), <code>Masked_Number</code>, <code>execution_candidate_id</code>, <code>ticket_type</code><br><br><em style="font-size:12.5px;color:var(--muted);">PIN is intentionally NOT in this payload. NS derives the missed party's PIN by looking up Table 2 with the appropriate mobile (<code>From_No</code> if CSP missed, <code>DialWhom</code> if customer missed) and the <code>execution_candidate_id</code>, then attaches it to the CT event.</em></td>
+      <td><code>From_No</code>, <code>DialWhom</code>, <code>Call_ID</code>, <code>Call_Status</code>, <code>csp_user_id</code> (empty if the missed party is the customer), <code>Masked_Number</code>, <code>execution_candidate_id</code>, <code>ticket_type</code>, <code>page_name</code><br><br><em style="font-size:12.5px;color:var(--muted);">PIN is intentionally NOT in this payload. NS derives the missed party's PIN by looking up Table 2 with the appropriate mobile (<code>From_No</code> if CSP missed, <code>DialWhom</code> if customer missed) and the <code>execution_candidate_id</code>, then attaches it to the CT event.</em></td>
     </tr>
   </table>
-  <p style="font-size:12.5px;color:var(--muted);">Payload field names above are also placeholders — engineering finalises the schema.</p>
+
+  <h4>The <code>page_name</code> field — for PN deep-linking</h4>
+  <p>Every event carries a <code>page_name</code> attribute. CT uses this on PN-click to deep-link the user to the correct drilldown screen. The value is derived from <code>ticket_type</code>:</p>
+  <table>
+    <tr><th><code>ticket_type</code></th><th><code>page_name</code> value</th></tr>
+    <tr><td>install</td><td><code>INSTALL_TASK_DRILLDOWN</code></td></tr>
+    <tr><td>restore</td><td><code>RESTORE_TASK_DRILLDOWN</code></td></tr>
+    <tr><td>nbrec (pickup)</td><td><code>PICKUP_TASK_DRILLDOWN</code></td></tr>
+  </table>
+  <p style="font-size:12.5px;color:var(--muted);">The three <code>page_name</code> values above are <strong>load-bearing for the PN-click deep-link</strong> — the app reads them to choose the destination screen — so these specific strings are PM-defined and must be sent verbatim. The field name itself (<code>page_name</code>) is a placeholder; tech finalises.</p>
+
+  <p style="font-size:12.5px;color:var(--muted);">Other payload field names above are also placeholders — engineering finalises the schema.</p>
 
   <h3>B17.3 NS routing — which CT instance receives the event</h3>
   <table>
