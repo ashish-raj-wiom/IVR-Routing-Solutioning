@@ -2507,6 +2507,7 @@ sequenceDiagram
 
   <h3>B16.1 Overview</h3>
   <p>The CSP App and the Technician App (forked codebase) display the per-ticket PIN alongside the Call CTA on any active ticket card. The CSP-side world is keyed on <code>execution_candidate_id</code> end-to-end — it's the same identifier the CSP ticket DTOs already carry from CSP TAS — so the lookup is a single direct match in Table 2. No disambiguation logic needed.</p>
+  <p>The CSP backend that calls this API must <strong>forward the PIN to the frontend</strong> as part of the install / restore / NBREC drilldown response (alongside the other ticket fields the drilldown already returns). The frontend renders the PIN on the install drilldown screen (and equivalent restore / NBREC drilldowns) next to the Call CTA. Without this propagation step, the PIN sits on the backend but never reaches the user.</p>
 
   <h3>B16.2 API contract</h3>
   <table>
