@@ -1778,6 +1778,139 @@ sequenceDiagram
     </div>
   </div>
 
+  <!-- ============================================================== -->
+  <!-- NEW — CRITERIA_40 through CRITERIA_46 — UAT for B15 / B16 / B17 -->
+  <!-- ============================================================== -->
+
+  <div class="gherkin">
+    <strong>CRITERIA_40 (UAT · Customer App PIN display · install):</strong> Customer sees their PIN on the install ticket screen<br>
+    <span class="scenario">Scenario: A customer with an active install booking opens the Customer App. The ticket-detail screen displays the customer-side PIN alongside the masked-number Call CTA. Validates the B15 PIN-fetch contract end-to-end (Customer App backend → IVR → Table 2 → response → app).</span>
+    <span class="kw">Given</span> Customer has an in-progress install ticket and is on a new Customer App build that wires the B15 API call<br>
+    <span class="kw">When</span> They open the install ticket detail screen<br>
+    <span class="kw">Then</span> The customer-side PIN is displayed prominently alongside the masked-number Call CTA<br>
+    <span class="kw">And</span> The Customer App backend received that PIN via the B15 API (single GET with <code>type_of_ticket=install</code>, lookup by <code>customer_id</code>)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Visual</strong> — Open install ticket on Customer App; PIN is shown next to the Call CTA</li>
+        <li><strong>Backend log</strong> — One B15 API call returned 200 with <code>{"pin": "…"}</code> for this <code>customer_id</code></li>
+        <li><strong>DB</strong> — The PIN matches the customer-side Table 2 row for this customer's active install candidate</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_41 (UAT · Customer App PIN display · multi-Restore):</strong> Customer with 2 open Restores sees the correct PIN per ticket<br>
+    <span class="scenario">Scenario: The Restore-path disambiguation (by Kapture <code>ticket_id</code>) works on the app — opening complaint A vs complaint B yields complaint-specific PINs.</span>
+    <span class="kw">Given</span> Customer has 2 open Restore complaints with distinct Kapture IDs and distinct customer-side PINs<br>
+    <span class="kw">When</span> They open complaint A's detail, then complaint B's detail<br>
+    <span class="kw">Then</span> Each screen shows that complaint's specific PIN<br>
+    <span class="kw">And</span> The two displayed PINs are not the same value
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Visual</strong> — Side-by-side: open complaint A and complaint B in sequence; the PIN value differs</li>
+        <li><strong>Backend log</strong> — 2 separate B15 API calls with different <code>ticket_id</code> values, both returning 200</li>
+        <li><strong>DB</strong> — The 2 PINs match the 2 Table 2 customer-side rows for these 2 Kapture IDs</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_42 (UAT · CSP / Technician App PIN display):</strong> CSP and Technician see the CSP-side PIN on the ticket card<br>
+    <span class="scenario">Scenario: CSP App and Technician App (forked codebase) both display the CSP-side PIN on the install / restore / pickup drilldown by using the B16 API (<code>execution_candidate_id</code> lookup).</span>
+    <span class="kw">Given</span> A ticket is currently assigned to a Technician<br>
+    <span class="kw">When</span> The Technician opens the assigned-ticket drilldown on the Technician App, and the Owner opens the same ticket on the CSP App<br>
+    <span class="kw">Then</span> Both apps display the current CSP-side PIN<br>
+    <span class="kw">And</span> The value matches Table 2's CSP-side row for this <code>execution_candidate_id</code>
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Visual</strong> — Side-by-side on a Technician App device and a CSP App device (Owner login)</li>
+        <li><strong>Backend log</strong> — B16 API hit with this <code>execution_candidate_id</code> from both app surfaces</li>
+        <li><strong>DB</strong> — PIN value matches the CSP-side Table 2 row</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_43 (UAT · end-to-end bridge with displayed PIN):</strong> The PIN shown on the app actually bridges the call to the other party<br>
+    <span class="scenario">Scenario: This is the load-bearing end-to-end check — the displayed PIN isn't just a cosmetic number, it has to work. From either side, the user reads the PIN off their app, dials the masked DID from any phone (registered or different SIM), enters the PIN through the IVR's Gather flow, and gets connected to the correct counterparty for that specific ticket.</span>
+    <span class="kw">Given</span> A customer (or CSP) has an active ticket and the PIN displayed on their app, and they are dialling from a SIM that is <em>not</em> recognised by Table 1 / Table 2 by-FROM / sim_inventory (i.e., the IVR flow will go to the PIN gather path)<br>
+    <span class="kw">When</span> They dial the masked DID, the IVR's Gather applet prompts for a PIN, and they enter the value displayed on their app<br>
+    <span class="kw">Then</span> The call bridges to the correct counterparty (customer → CSP / Technician for that ticket; CSP → customer for that ticket)<br>
+    <span class="kw">And</span> The conversation works end-to-end (both parties can hear each other; recipient's caller ID shows the masked DID, never the real mobile)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Live test, customer side</strong> — Use a relative's phone (unregistered SIM); read the PIN from the customer's Install / Restore / NBREC drilldown; dial masked DID; enter PIN; verify the technician's / Owner's phone rings and the call connects</li>
+        <li><strong>Live test, CSP side</strong> — From a non-registered phone (or a Technician's phone forwarded a PIN from Owner); read CSP-side PIN from CSP App; dial masked DID; enter PIN; verify the customer's phone rings and the call connects</li>
+        <li><strong>Cross-ticket check</strong> — If customer has 2 open Restores, the PIN from Restore A bridges to the Restore-A assignee; the PIN from Restore B bridges to the Restore-B assignee. Neither PIN routes to the wrong ticket.</li>
+        <li><strong>Recording / call-log</strong> — Disposition webhook arrives with <code>DialCallStatus=completed</code>; <code>DialWhomNumber</code> matches the expected counterparty's mobile; caller ID on recipient is the masked DID</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_44 (UAT · Notification Service · initial PIN delivery):</strong> Customer receives the PIN notification at ticket creation (and only then)<br>
+    <span class="scenario">Scenario: The initial PIN allocation event flows IVR → Notification Service → CleverTap → SMS/PN to the customer. The customer receives the message exactly once per ticket. Validates B17.2 initial-allocation event + B17.3 routing (both CSP CT and Customer CT) + B17.4 communication rule (customer notified once).</span>
+    <span class="kw">Given</span> A fresh install booking is created for a customer who has the Customer App installed<br>
+    <span class="kw">When</span> IVR consumes the <code>*_CANDIDATE_CREATED</code> event and writes the Table 2 rows<br>
+    <span class="kw">Then</span> Within 60 seconds the customer's phone receives a PN (or SMS / WA if PN unavailable) containing the customer-side PIN + masked number<br>
+    <span class="kw">And</span> Tapping the PN opens the install drilldown (page_name = <code>INSTALL_TASK_DRILLDOWN</code>)<br>
+    <span class="kw">And</span> No subsequent technician-change events cause the customer to receive a second PIN notification for this same ticket
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>CT event log</strong> — One event fired on Customer CT with this customer's <code>customer_mobile</code> identity, with <code>PIN_for_customer</code> + <code>page_name=INSTALL_TASK_DRILLDOWN</code> in the payload</li>
+        <li><strong>Physical phone</strong> — PN / SMS / WA received within 60 s; tapping opens the install drilldown for this ticket</li>
+        <li><strong>No re-notification</strong> — Reassign the technician; confirm no new event fires on Customer CT for this customer / ticket</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_45 (UAT · Notification Service · CSP-side reallocation):</strong> Reassigning the technician notifies the new technician, not the customer<br>
+    <span class="scenario">Scenario: The reallocation rule (CSP re-notified on every change; customer not re-notified) holds end-to-end. Validates B17.2 reallocation event + B17.3 CSP-CT-only routing + B17.4 communication rule.</span>
+    <span class="kw">Given</span> A ticket is currently assigned to Technician A; the customer has already received their PIN at ticket creation<br>
+    <span class="kw">When</span> Owner reassigns the ticket to Technician B (triggers <code>*_TECHNICIAN_ASSIGNED</code> with B as the assignee)<br>
+    <span class="kw">Then</span> Technician B's phone receives a PN within 60 seconds containing the CSP-side PIN (deep-links to the assigned-ticket drilldown)<br>
+    <span class="kw">And</span> Customer's phone does NOT receive any new notification for this ticket<br>
+    <span class="kw">And</span> The customer-side PIN the customer already has continues to work for callbacks (CRITERIA_43 path still bridges)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>CT event log</strong> — One new event on CSP CT for Technician B's <code>csp_user_id</code>; zero new events on Customer CT for this customer's <code>customer_mobile</code></li>
+        <li><strong>Physical phones</strong> — Technician B's phone receives the PN; customer's phone receives no PN/SMS</li>
+        <li><strong>Callback works</strong> — Customer dials masked DID from a different SIM, enters their existing PIN; bridges to Technician B (the new assignee)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>CRITERIA_46 (UAT · Notification Service · missed-call PN + deep-link):</strong> Missed-call notification arrives with the right PIN and the right deep-link, both directions<br>
+    <span class="scenario">Scenario: End-to-end missed-call → IVR end-of-call handler → NS → CT → PN reaches the missed party with the callback PIN + a deep-link that opens the correct drilldown. Validates B17.2 missed-call event + B17.3 routing (CSP CT vs Customer CT based on <code>csp_user_id</code> presence) + the <code>page_name</code> contract.</span>
+    <strong>Part A — CSP misses customer's call (Restore ticket):</strong><br>
+    <span class="kw">Given</span> A customer with an open Restore ticket dials the masked DID; the CSP / Technician's phone rings but no answer<br>
+    <span class="kw">When</span> Exotel fires the end-of-call call-log webhook with <code>DialCallStatus=no-answer</code><br>
+    <span class="kw">Then</span> The CSP / Technician receives a PN within 60 s — "Missed call from &lt;customer&gt;; your PIN is XXXXX; tap to view"<br>
+    <span class="kw">And</span> Tapping opens the Restore drilldown for that specific ticket (page_name = <code>RESTORE_TASK_DRILLDOWN</code>)<br>
+    <br>
+    <strong>Part B — Customer misses CSP's call (Install ticket):</strong><br>
+    <span class="kw">Given</span> CSP calls customer about an active install; customer doesn't pick up<br>
+    <span class="kw">When</span> The same end-of-call webhook fires<br>
+    <span class="kw">Then</span> Customer receives a PN — "Missed call from your installation team; your PIN is YYYYY; tap to view"<br>
+    <span class="kw">And</span> Tapping opens the install drilldown (page_name = <code>INSTALL_TASK_DRILLDOWN</code>)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Physical phones</strong> — Two devices, one CSP one customer, both with apps installed. Trigger missed call from each direction; visually confirm PN content includes the right PIN value and tapping lands on the correct drilldown screen.</li>
+        <li><strong>CT event log</strong> — Missed-call event payload at NS / CT contains <code>PIN_for_customer</code>, <code>PIN_for_CSP</code>, and <code>page_name</code>; CT campaign rendered the right PIN for the recipient (CSP CT route uses <code>PIN_for_CSP</code>; Customer CT route uses <code>PIN_for_customer</code>)</li>
+        <li><strong>Deep-link routing</strong> — page_name value sent by IVR is one of the three load-bearing strings (<code>INSTALL_TASK_DRILLDOWN</code> / <code>RESTORE_TASK_DRILLDOWN</code> / <code>PICKUP_TASK_DRILLDOWN</code>); app's PN-click handler recognises it and routes to the matching screen</li>
+      </ul>
+    </div>
+  </div>
+
   <hr class="sect-end">
 </section>
 
