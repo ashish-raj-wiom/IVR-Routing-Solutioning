@@ -1911,6 +1911,48 @@ sequenceDiagram
     </div>
   </div>
 
+  <div class="gherkin">
+    <strong>CRITERIA_47 (UAT · Net Box Recovery / Pickup — end-to-end):</strong> NBREC ticket: PIN visible on both apps, customer notified at creation, missed-call PN deep-links to pickup drilldown, bridge with displayed PIN connects<br>
+    <span class="scenario">Scenario: One consolidated UAT for the Net Box Recovery (router pickup) family — exercises B15 / B16 / B17 and the page_name contract for the <code>nbrec</code> family in a single end-to-end run. Different from CRITERIA_40–42 (install / restore) and CRITERIA_46 (missed-call install / restore), because NBREC is a distinct lifecycle phase with its own drilldown screen and its own deep-link string.</span>
+
+    <strong>Part A — PIN visible on both apps:</strong><br>
+    <span class="kw">Given</span> A customer has an active NBREC (router-pickup) ticket assigned to a Technician<br>
+    <span class="kw">When</span> The customer opens the pickup ticket on Customer App; the Technician opens the same ticket on Technician App; the Owner opens it on CSP App<br>
+    <span class="kw">Then</span> Customer App shows the customer-side NBREC PIN; CSP App and Technician App show the CSP-side NBREC PIN<br>
+    <span class="kw">And</span> The customer-side PIN was fetched via B15 with <code>type_of_ticket=nbrec</code> + <code>customer_id</code> lookup; the CSP-side PIN via B16 with <code>execution_candidate_id</code> lookup<br>
+
+    <strong>Part B — Customer notified at NBREC ticket creation:</strong><br>
+    <span class="kw">Given</span> A fresh NBREC candidate is created (IVR consumes the <code>ES_NBREC_CANDIDATE_CREATED</code> event)<br>
+    <span class="kw">When</span> The initial PIN allocation event flows IVR → NS → CT<br>
+    <span class="kw">Then</span> Within 60 s the customer receives a PN (or SMS / WA fallback) with the customer-side PIN<br>
+    <span class="kw">And</span> Tapping the PN opens the pickup drilldown (page_name = <code>PICKUP_TASK_DRILLDOWN</code>)<br>
+
+    <strong>Part C — Missed-call PN on an NBREC ticket:</strong><br>
+    <span class="kw">Given</span> Customer (or CSP) dials the masked DID about the NBREC ticket; the dialled party doesn't pick up<br>
+    <span class="kw">When</span> The end-of-call webhook fires with <code>DialCallStatus ∈ {no-answer, busy, failed}</code> and <code>ticket_type=nbrec</code><br>
+    <span class="kw">Then</span> The missed party receives a PN with the callback PIN + masked number<br>
+    <span class="kw">And</span> Tapping the PN opens the pickup drilldown (page_name = <code>PICKUP_TASK_DRILLDOWN</code>) — not install, not restore<br>
+
+    <strong>Part D — End-to-end bridge with displayed NBREC PIN:</strong><br>
+    <span class="kw">Given</span> The customer (or CSP) reads the NBREC PIN off their app and dials the masked DID from a SIM that is not auto-recognised<br>
+    <span class="kw">When</span> IVR's Gather prompts for PIN and they enter the displayed value<br>
+    <span class="kw">Then</span> The call bridges to the correct NBREC counterparty for that specific ticket<br>
+    <span class="kw">And</span> The recipient's caller ID is the masked DID
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Visual (Part A)</strong> — Three devices side-by-side (Customer App, CSP App with Owner login, Technician App); all three show the correct PIN value for this NBREC ticket</li>
+        <li><strong>Backend logs (Part A)</strong> — B15 API hit with <code>type_of_ticket=nbrec</code>; B16 API hit with this <code>execution_candidate_id</code>; both returned 200</li>
+        <li><strong>DB (Part A)</strong> — The two PIN values match the customer-side and CSP-side Table 2 rows for this NBREC <code>execution_candidate_id</code></li>
+        <li><strong>CT event log (Part B)</strong> — One event on Customer CT with <code>customer_mobile</code> identity, <code>ticket_type=nbrec</code>, <code>page_name=PICKUP_TASK_DRILLDOWN</code>, <code>PIN_for_customer</code> populated</li>
+        <li><strong>Physical phone (Part B)</strong> — Customer receives PN within 60 s; tap opens pickup drilldown</li>
+        <li><strong>Physical phone (Part C)</strong> — Trigger missed call on the NBREC ticket; missed party's PN content includes the callback PIN; tap opens pickup drilldown (NOT install / restore)</li>
+        <li><strong>Live bridge (Part D)</strong> — From an unregistered SIM, dial masked DID; enter NBREC PIN; confirm bridge connects to the correct counterparty and the recipient's caller ID shows masked DID</li>
+        <li><strong>Cross-family no-leak</strong> — If the customer has an NBREC ticket and previously had an install ticket (closed), the NBREC PIN must NOT bridge them to the closed install's previous CSP. PIN lookup must hit only the active NBREC row.</li>
+      </ul>
+    </div>
+  </div>
+
   <hr class="sect-end">
 </section>
 
