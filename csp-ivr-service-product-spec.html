@@ -1026,29 +1026,32 @@ sequenceDiagram
   <p style="font-size:13px;color:var(--muted);">User-Acceptance Tests — observable from the apps and physical phones. These are what PM (or PM-coordinated testers) validate by sitting with a phone and stepping through the scenarios. 24 cases.</p>
 
 <div class="gherkin">
-    <strong>UAT_01 (happy · in-app CTA):</strong> Seamless in-app CTA bridge<br>
-    <span class="scenario">Scenario: Priya (customer) is on her active install ticket. She taps Call inside the Wiom app. The call should connect to Ramesh (her CSP technician) instantly, no PIN prompt.</span>
+    <strong>UAT_01 (happy · in-app CTA):</strong> Seamless in-app CTA bridge (both directions)<br>
+    <span class="scenario">Scenario: Priya (customer) is on her active install ticket. She taps Call inside the Wiom app. The call should connect to Ramesh (her CSP technician) instantly, no PIN prompt. The reverse direction must also work — Ramesh (or his assigned Technician) taps Call CTA from the CSP App / Technician App and bridges to Priya the same way.</span>
     <span class="kw">Given</span> Priya has tapped the Call CTA from her registered mobile within the last 5 minutes<br>
     <span class="kw">When</span> Priya dials the masked number that her app handed her<br>
     <span class="kw">Then</span> Exotel's first webhook (API 1) finds Priya's row in Table 1 and returns Ramesh's mobile as the bridge destination<br>
     <span class="kw">And</span> Both legs of the call are recorded (dual-channel)<br>
-    <span class="kw">And</span> No PIN prompt plays at any point
+    <span class="kw">And</span> No PIN prompt plays at any point<br>
+    <span class="kw">And</span> The same flow works in reverse — when Ramesh / Technician taps Call CTA on the CSP App or Technician App, Priya's phone rings with the masked DID as caller ID, and the call connects without a PIN prompt
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
         <li><strong>Service log</strong> — Within 200 ms: <code>"Table 1 hit for CallSid=X"</code> and <code>"Bridge response returned"</code></li>
         <li><strong>Exotel response body</strong> — <code>{"destination": {"numbers": ["+91...Ramesh..."]}}</code> — only the <code>destination</code> field; Exotel's defaults cover the rest (Rule 6)</li>
         <li><strong>App state</strong> — Customer App ticket card shows "Connected" while the call is active</li>
+        <li><strong>Reverse direction — Technician App</strong> — On the Technician App: open the assigned ticket → tap Call CTA → confirm customer's phone rings within 5 seconds, caller ID shows the masked DID (not Technician's real mobile), and the bridge connects both parties.</li>
+        <li><strong>Reverse direction — CSP App (Owner)</strong> — Same flow from the CSP App with Owner login on a ticket whose current executor is the Owner; confirm bridge connects.</li>
       </ul>
     </div>
   </div>
 
   <div class="gherkin">
-    <strong>UAT_02 (happy · Path 2):</strong> Recognised caller with one active ticket bridges directly, no PIN<br>
-    <span class="scenario">Scenario: Ramesh calls back later from his registered SIM, after the 5-minute Table 1 window expired. He has exactly one active ticket. We should resolve via Table 2 by-FROM and bridge — no PIN.</span>
-    <span class="kw">Given</span> Ramesh has 1 active ticket and Table 1 has no fresh entry for his mobile<br>
-    <span class="kw">When</span> Ramesh dials the masked number from his registered mobile<br>
-    <span class="kw">Then</span> API 1 finds exactly 1 row in Table 2 for Ramesh's mobile and returns the customer's mobile as bridge destination<br>
+    <strong>UAT_02 (happy · Path 2):</strong> Recognised caller (CSP OR customer) with one active ticket bridges directly, no PIN<br>
+    <span class="scenario">Scenario (Part A — CSP side): Ramesh calls back later from his registered SIM, after the 5-minute Table 1 window expired. He has exactly one active ticket. We should resolve via Table 2 by-FROM and bridge — no PIN.<br><br>Scenario (Part B — customer-side mirror): Priya saved Wiom's masked DID after her first call (e.g., from her phone's call log). A week later, with her install ticket still active, she dials the masked DID directly from contacts on her registered SIM. Same Table-2-by-FROM resolution path — she must bridge to her CSP without a PIN prompt.</span>
+    <span class="kw">Given</span> Ramesh (or Priya) has 1 active ticket and Table 1 has no fresh entry for their mobile<br>
+    <span class="kw">When</span> They dial the masked number from their registered mobile (call log redial for Ramesh; saved-contact direct dial for Priya)<br>
+    <span class="kw">Then</span> API 1 finds exactly 1 row in Table 2 for that mobile and returns the counterparty's mobile as bridge destination<br>
     <span class="kw">And</span> The call connects with no PIN prompt
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
@@ -1057,6 +1060,7 @@ sequenceDiagram
         <li><strong>Service log</strong> — <code>"Table 1 miss"</code> followed by <code>"Table 2 by-FROM returned 1 row"</code></li>
         <li><strong>Exotel response</strong> — JSON with the counterparty's mobile in <code>destination.numbers</code></li>
         <li><strong>Gather applet</strong> — Never invoked (check App Bazaar call timeline)</li>
+        <li><strong>Customer-saved-contacts mirror</strong> — On a customer's test phone: complete one Path 1 in-app CTA call (so the masked DID lands in the call log) → save the masked DID to contacts → days later, dial the saved contact directly → confirm the bridge connects without any PIN prompt and the CSP's phone rings.</li>
       </ul>
     </div>
   </div>
@@ -1117,12 +1121,13 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>UAT_06 (happy · post-assignment):</strong> After technician delegation, customer's call routes to the technician (not the Owner)<br>
-    <span class="scenario">Scenario: Continuing from UAT_05 — the Owner has now delegated the Restore ticket to Rohit. The next time the customer calls, they should reach Rohit. The PIN must not change (the customer's SMS still works).</span>
+    <strong>UAT_06 (happy · post-assignment):</strong> After technician delegation, customer's call routes to the CURRENT technician (not the Owner, and not previous technicians in the reassignment chain)<br>
+    <span class="scenario">Scenario: Continuing from UAT_05 — the Owner has now delegated the Restore ticket to Rohit. The next time the customer calls, they should reach Rohit. The PIN must not change (the customer's SMS still works).<br><br>Multi-hop extension: in real ops the same ticket may be reassigned several times in a day — Owner → A → B → C. The customer's call MUST reach C (the current assignee), not the Owner, not A, not B. This verifies that Table 2's CSP-side row tracks the latest executor across the full chain, with no stale-target leakage.</span>
     <span class="kw">Given</span> The same Restore ticket where the Owner just delegated to Rohit (event <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code> processed)<br>
     <span class="kw">When</span> The customer dials the masked number again<br>
     <span class="kw">Then</span> The call bridges to Rohit's mobile, not the Owner's<br>
-    <span class="kw">And</span> The customer-side PIN value is byte-for-byte unchanged from before delegation
+    <span class="kw">And</span> The customer-side PIN value is byte-for-byte unchanged from before delegation<br>
+    <span class="kw">And</span> When the ticket is later reassigned through multiple technicians (Rohit → Suresh → Anita), the customer's next call after all reassignments bridges only to Anita (the current executor) — none of the previous assignees' phones ring
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
@@ -1131,6 +1136,8 @@ sequenceDiagram
         <li><strong>Service log</strong> — <code>"Universal mobile-update path: executor=Rohit, mobile=+91...Rohit..., PIN preserved"</code></li>
         <li><strong>Bridge</strong> — Call connects to Rohit; Owner's phone does not ring</li>
         <li><strong>No new SMS</strong> — <code>SELECT count(*) FROM sms_audit WHERE recipient = customer AND ticket_id = X AND created_at &gt; delegation_time</code> → 0 (no new SMS fired)</li>
+        <li><strong>Multi-hop chain</strong> — Set up a Restore ticket → reassign 3 times in sequence (Owner → A → B → C, each triggering the appropriate <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code> event) → customer calls (any path) → confirm bridge connects to C only. <code>SELECT csp_user_id FROM table_2 WHERE ticket_id = X AND side = 'csp'</code> → equals C's user_id after all reassignments.</li>
+        <li><strong>Stale-target check</strong> — A's, B's, and Owner's phones do NOT ring during this final call (physically observed on multi-device test).</li>
       </ul>
     </div>
   </div>
@@ -1328,18 +1335,21 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>UAT_17 (UAT · Customer App PIN display · install):</strong> Customer sees their PIN on the install ticket screen<br>
-    <span class="scenario">Scenario: A customer with an active install booking opens the Customer App. The ticket-detail screen displays the customer-side PIN alongside the masked-number Call CTA. Validates the B15 PIN-fetch contract end-to-end (Customer App backend → IVR → Table 2 → response → app).</span>
+    <strong>UAT_17 (UAT · Customer App PIN display · install):</strong> Customer sees their PIN on the install ticket screen (new app) AND the old app version continues to work via the legacy actual-number flow with no regression<br>
+    <span class="scenario">Scenario (Part A): A customer with an active install booking opens the Customer App. The ticket-detail screen displays the customer-side PIN alongside the masked-number Call CTA. Validates the B15 PIN-fetch contract end-to-end (Customer App backend → IVR → Table 2 → response → app).<br><br>Scenario (Part B — no-migration regression): The same customer, on an OLD Customer App version that doesn't know about the B15 API. The old build still hits the legacy actual-number endpoint. The Call CTA must continue to work — old build dials the actual mobile of the CSP, call connects exactly as today (no IVR involvement, no masked DID, no PIN). This confirms the B10 "no migration" claim end-to-end: rolling out the new app doesn't break users still on the old build.</span>
     <span class="kw">Given</span> Customer has an in-progress install ticket and is on a new Customer App build that wires the B15 API call<br>
     <span class="kw">When</span> They open the install ticket detail screen<br>
     <span class="kw">Then</span> The customer-side PIN is displayed prominently alongside the masked-number Call CTA<br>
-    <span class="kw">And</span> The Customer App backend received that PIN via the B15 API (single GET with <code>type_of_ticket=install</code>, lookup by <code>customer_id</code>)
+    <span class="kw">And</span> The Customer App backend received that PIN via the B15 API (single GET with <code>type_of_ticket=install</code>, lookup by <code>customer_id</code>)<br>
+    <span class="kw">And</span> The same customer on an OLD app version (no B15 wiring) still sees their Call CTA and, on tap, dials the actual mobile of the CSP through the legacy endpoint — call connects with no regression
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
-        <li><strong>Visual</strong> — Open install ticket on Customer App; PIN is shown next to the Call CTA</li>
-        <li><strong>Backend log</strong> — One B15 API call returned 200 with <code>{"pin": "…"}</code> for this <code>customer_id</code></li>
+        <li><strong>Visual (new build)</strong> — Open install ticket on Customer App; PIN is shown next to the Call CTA</li>
+        <li><strong>Backend log (new build)</strong> — One B15 API call returned 200 with <code>{"pin": "…"}</code> for this <code>customer_id</code></li>
         <li><strong>DB</strong> — The PIN matches the customer-side Table 2 row for this customer's active install candidate</li>
+        <li><strong>Old-build regression test</strong> — Sideload the pre-rollout APK (or use an old TestFlight build) on a second device with the same customer login → open the same install ticket → confirm: (a) no PIN is shown, (b) Call CTA dials the actual mobile of the CSP (NOT the masked DID), (c) call connects normally. This confirms the legacy actual-number endpoint is untouched.</li>
+        <li><strong>Upgrade-in-place check</strong> — On the same device used for the old-build test, upgrade to the new build → reopen the same ticket → confirm PIN is now displayed and Call CTA switches to the masked-DID flow. Verifies seamless transition with no manual intervention.</li>
       </ul>
     </div>
   </div>
