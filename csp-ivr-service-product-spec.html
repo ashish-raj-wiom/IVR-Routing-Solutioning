@@ -476,7 +476,7 @@ flowchart LR
   <h3>A9.1 Cross-service dependencies (not OS amendments, but worth flagging)</h3>
   <table>
     <tr><th>Service</th><th>Dependency</th><th>Owner</th></tr>
-    <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to: <code>ES_INSTALL_CANDIDATE_CREATED</code>, <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code>, and the 4 terminal events <code>ES_INSTALL_REPORTED_FAILED</code>, <code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code>, <code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code>, <code>ES_INSTALL_CANCELLED_ONSITE</code>. No schema changes requested.</td><td>csp-execution-platform</td></tr>
+    <tr><td><code>es-installation-service</code></td><td>IVR is a new subscriber to: <code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> (PIN allocation trigger — fires when the customer confirms the install slot, which is also when the Call CTA becomes visible on Customer App), <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code>, and the 4 failure-terminal events <code>ES_INSTALL_REPORTED_FAILED</code>, <code>ES_INSTALL_CANCELLED_BY_CUSTOMER</code>, <code>ES_INSTALL_CANCELLED_BY_UPSTREAM</code>, <code>ES_INSTALL_CANCELLED_ONSITE</code>. No schema changes requested.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>es-installation-service</code> (Install ES)</td><td>IVR subscribes to <code>ES_INSTALL_INCENTIVE_EVALUATED</code> as the success-path signal for Install tickets. Verified in <code>RatingServiceImpl.submit()</code>: fires at <code>RATING_PENDING → CONNECTION_ACTIVE</code> when the CSP submits the customer rating (the final wizard step, post-OTP-verify). Carries <code>executionCandidateId</code> + <code>connectionId</code>. Prod-verified June 2026: 100% match with OTP-verified installs in last 15 days; fires 3–15 seconds after OTP verify (p50 = 3s, p95 = 9s, max = 14.5s).</td><td>csp-platform</td></tr>
     <tr><td><code>es-restore</code></td><td>New subscriber to: <code>ES_RESTORE_CANDIDATE_CREATED</code>, <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code>, <code>ES_RESTORE_TASK_RECALLED</code>, and the 2 terminal events <code>ES_RESTORE_CANDIDATE_COMPLETED</code>, <code>ES_RESTORE_CANDIDATE_CANCELLED</code>.</td><td>csp-execution-platform</td></tr>
     <tr><td><code>es-netbox-recovery</code></td><td>New subscriber to: <code>ES_NBREC_CANDIDATE_CREATED</code> (allocation), <code>ES_NBREC_TASK_ASSIGNED</code> (delegation / un-delegation), and the 3 terminal events <code>ES_NBREC_CANDIDATE_COMPLETED</code>, <code>ES_NBREC_CANDIDATE_CANCELLED</code>, <code>ES_NBREC_CANDIDATE_FAILED</code>.</td><td>csp-execution-platform</td></tr>
@@ -600,7 +600,7 @@ flowchart LR
   <h3>B2.2 Transition matrix</h3>
   <table>
     <tr><th>From</th><th>Event</th><th>Guard</th><th>To</th><th>What happens (semantic)</th></tr>
-    <tr><td>(none)</td><td>Any one of: <code>ES_INSTALL_CANDIDATE_CREATED</code> (es-installation), <code>ES_RESTORE_CANDIDATE_CREATED</code> (es-restore), <code>ES_NBREC_CANDIDATE_CREATED</code> (es-netbox-recovery)</td><td>Owner resolvable for the candidate's csp_id</td><td>ACTIVE</td><td>INSERT 2 rows (customer-side + csp-side); generate 2 unique PINs; resolve Owner mobile and persist; dispatch customer SMS.</td></tr>
+    <tr><td>(none)</td><td>Any one of: <code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> (es-installation — Install allocates at slot confirmation so the customer can call only when the Call CTA is visible), <code>ES_RESTORE_CANDIDATE_CREATED</code> (es-restore — CTA is visible immediately), <code>ES_NBREC_CANDIDATE_CREATED</code> (es-netbox-recovery — same as Restore)</td><td>Owner resolvable for the candidate's csp_id</td><td>ACTIVE</td><td>INSERT 2 rows (customer-side + csp-side); generate 2 unique PINs; resolve Owner mobile and persist; dispatch customer SMS.</td></tr>
     <tr><td>ACTIVE</td><td>ES_*_TECHNICIAN_ASSIGNED (any executor_id, any is_self_assigned)</td><td>—</td><td>ACTIVE</td><td>Universal mobile-update path: resolve executor mobile via gateway; UPDATE customer-side row.other_party_mobile; UPDATE csp-side row.csp_user_id. PIN preserved.</td></tr>
     <tr><td>ACTIVE</td><td>ES_RESTORE_TASK_RECALLED</td><td>—</td><td>ACTIVE</td><td>Revert customer-side row.other_party_mobile to Owner mobile; revert csp-side row.csp_user_id to Owner. PIN preserved.</td></tr>
     <tr><td>ACTIVE</td><td>ES_*_terminal event</td><td>—</td><td>EXPIRED</td><td>Soft-delete: set expires_at = now(); set cooldown_until = now() + 90 days.</td></tr>
@@ -626,7 +626,7 @@ stateDiagram-v2
   <p>Triggered <strong>on ticket creation</strong> for each family. The Owner of the owning CSP is set as the default bridge target.</p>
   <table>
     <tr><th style="width:18%">Service family</th><th>Event name</th><th>Emitted by</th><th>What it represents</th></tr>
-    <tr><td>Install</td><td><code>ES_INSTALL_CANDIDATE_CREATED</code></td><td><code>es-installation-service</code></td><td>D&amp;A's <code>ALLOCATION_ACCEPTED</code> landed; a new Install candidate has been created</td></tr>
+    <tr><td>Install</td><td><code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code></td><td><code>es-installation-service</code></td><td>Customer has confirmed the install slot — also when the Call CTA becomes visible on Customer App. PIN is allocated at this point so the customer can use it from the moment they can see it. <em>Future note:</em> if CSP-takeover-of-pre-confirmed-slot paths skip this event, the corresponding state-transition event will need to be added as an additional allocation trigger (idempotency on Table 2 prevents double-allocation).</td></tr>
     <tr><td>Restore</td><td><code>ES_RESTORE_CANDIDATE_CREATED</code></td><td><code>es-restore</code></td><td>SR OS's <code>COMPLAINT_TASK_CREATED</code> landed; Restore candidate entered <code>PENDING_ACCEPTANCE</code></td></tr>
     <tr><td>Pickup (NBREC)</td><td><code>ES_NBREC_CANDIDATE_CREATED</code></td><td><code>es-netbox-recovery</code></td><td>NetBox recovery task created (Owner auto-self-assigned by default)</td></tr>
   </table>
@@ -771,7 +771,7 @@ flowchart TD
   <p style="font-size:13px;color:var(--muted);margin-top:14px;margin-bottom:4px;font-weight:600;">Workflow 3: <span style="color:var(--ink);">PIN registry lifecycle (event-driven)</span></p>
   <div class="mermaid">
 flowchart TD
-    EV1[ES_*_CANDIDATE_CREATED fires] --> Res[Resolve Owner via gateway]
+    EV1["Allocation trigger fires<br/>Restore/NBREC: ES_*_CANDIDATE_CREATED<br/>Install: ES_INSTALL_CUSTOMER_SLOT_CONFIRMED"] --> Res[Resolve Owner via gateway]
     Res --> ResOK{Owner found?}
     ResOK -- No --> ErrAlloc[Allocation fails · maskedCallAvailable=false · ops alert]
     ResOK -- Yes --> Gen[Generate 2 unique 5-digit PINs]
@@ -1020,8 +1020,12 @@ sequenceDiagram
   <h2><span class="num">B9.</span> Acceptance Criteria — Gherkin <span class="tier how">HOW</span></h2>
   <div class="expected"><strong>What is expected:</strong> Given / When / Then covering happy paths, negatives, edges, failure modes, cross-OS integration. Each test carries a "Verify with" panel listing the concrete checks (DB queries, log greps, API calls, manual observations) so QA can execute without re-deriving them. Target ratio 1 happy : 3 negative.</div>
 
-  <div class="gherkin">
-    <strong>CRITERIA_01 (happy · in-app CTA):</strong> Seamless in-app CTA bridge<br>
+  
+  <h3>B9.1 UAT test Cases</h3>
+  <p style="font-size:13px;color:var(--muted);">User-Acceptance Tests — observable from the apps and physical phones. These are what PM (or PM-coordinated testers) validate by sitting with a phone and stepping through the scenarios. 28 cases.</p>
+
+<div class="gherkin">
+    <strong>UAT_01 (happy · in-app CTA):</strong> Seamless in-app CTA bridge<br>
     <span class="scenario">Scenario: Priya (customer) is on her active install ticket. She taps Call inside the Wiom app. The call should connect to Ramesh (her CSP technician) instantly, no PIN prompt.</span>
     <span class="kw">Given</span> Priya has tapped the Call CTA from her registered mobile within the last 5 minutes<br>
     <span class="kw">When</span> Priya dials the masked number that her app handed her<br>
@@ -1040,7 +1044,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_02 (happy · Path 2):</strong> Recognised caller with one active ticket bridges directly, no PIN<br>
+    <strong>UAT_02 (happy · Path 2):</strong> Recognised caller with one active ticket bridges directly, no PIN<br>
     <span class="scenario">Scenario: Ramesh calls back later from his registered SIM, after the 5-minute Table 1 window expired. He has exactly one active ticket. We should resolve via Table 2 by-FROM and bridge — no PIN.</span>
     <span class="kw">Given</span> Ramesh has 1 active ticket and Table 1 has no fresh entry for his mobile<br>
     <span class="kw">When</span> Ramesh dials the masked number from his registered mobile<br>
@@ -1058,7 +1062,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_03 (happy · Path 3):</strong> Customer with multiple active tickets disambiguates via PIN<br>
+    <strong>UAT_03 (happy · Path 3):</strong> Customer with multiple active tickets disambiguates via PIN<br>
     <span class="scenario">Scenario: Meena has 2 active tickets — one Restore (PIN 11111) and one Pickup (PIN 22222). She dials the masked number. Because she has more than one ticket, the IVR can't auto-route; it must ask for the PIN. Her Restore PIN should bridge her to the Restore CSP, not the Pickup CSP.</span>
     <span class="kw">Given</span> Meena has 2 active tickets and her registered mobile maps to both<br>
     <span class="kw">When</span> Meena dials the masked number, hears the PIN prompt, and enters 11111 (her Restore ticket's customer-side PIN)<br>
@@ -1077,7 +1081,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_04 (happy · Path 4 / UC 13):</strong> Colleague holding a forwarded PIN can bridge from an unknown SIM<br>
+    <strong>UAT_04 (happy · Path 4 / UC 13):</strong> Colleague holding a forwarded PIN can bridge from an unknown SIM<br>
     <span class="scenario">Scenario: Ramesh is on a rooftop with no signal. He forwards his ticket SMS (which contains the masked number and CSP-side PIN 47291) to his colleague Vikram. Vikram dials from his own phone (not in any Wiom table). The system shouldn't recognise Vikram — but the PIN itself should still bridge the call.</span>
     <span class="kw">Given</span> Vikram's mobile is not in <code>customers</code>, <code>csp_users</code>, or <code>sim_inventory</code>, and Vikram has received Ramesh's CSP-side PIN (47291) by SMS forwarding<br>
     <span class="kw">When</span> Vikram dials the masked number and enters 47291 at the prompt<br>
@@ -1095,7 +1099,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_05 (happy · Restore pre-assignment):</strong> Customer can reach the Owner before any technician is delegated<br>
+    <strong>UAT_05 (happy · Restore pre-assignment):</strong> Customer can reach the Owner before any technician is delegated<br>
     <span class="scenario">Scenario: A complaint just landed. The Restore ticket is in <code>PENDING_ACCEPTANCE</code> — no technician picked up yet. Today (legacy) the customer could call the Owner directly; the new design must preserve that. Customer-side row's bridge target should be the Owner's mobile from the moment the ticket exists.</span>
     <span class="kw">Given</span> A Restore candidate just created (state = PENDING_ACCEPTANCE, no technician assigned, customer-side row's <code>other_party_mobile</code> = Owner's mobile)<br>
     <span class="kw">When</span> The customer dials the masked number from their registered mobile<br>
@@ -1113,8 +1117,8 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_06 (happy · post-assignment):</strong> After technician delegation, customer's call routes to the technician (not the Owner)<br>
-    <span class="scenario">Scenario: Continuing from CRITERIA_05 — the Owner has now delegated the Restore ticket to Rohit. The next time the customer calls, they should reach Rohit. The PIN must not change (the customer's SMS still works).</span>
+    <strong>UAT_06 (happy · post-assignment):</strong> After technician delegation, customer's call routes to the technician (not the Owner)<br>
+    <span class="scenario">Scenario: Continuing from UAT_05 — the Owner has now delegated the Restore ticket to Rohit. The next time the customer calls, they should reach Rohit. The PIN must not change (the customer's SMS still works).</span>
     <span class="kw">Given</span> The same Restore ticket where the Owner just delegated to Rohit (event <code>ES_RESTORE_TECHNICIAN_ASSIGNED</code> processed)<br>
     <span class="kw">When</span> The customer dials the masked number again<br>
     <span class="kw">Then</span> The call bridges to Rohit's mobile, not the Owner's<br>
@@ -1132,7 +1136,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_07 (happy · recall to Owner):</strong> When Owner recalls the task, customer's call routes back to Owner<br>
+    <strong>UAT_07 (happy · recall to Owner):</strong> When Owner recalls the task, customer's call routes back to Owner<br>
     <span class="scenario">Scenario: Rohit isn't responsive. The Owner recalls the Restore task (CSP action <code>RECALL_TASK</code>). The customer's next call should reach the Owner again — same PIN as before.</span>
     <span class="kw">Given</span> The same Restore ticket where the Owner just recalled the task from Rohit (event <code>ES_RESTORE_TASK_RECALLED</code> processed)<br>
     <span class="kw">When</span> The customer dials the masked number<br>
@@ -1150,7 +1154,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_08 (happy · Install recall via re-fire):</strong> Install ticket reassigned back to Owner via the same event with is_self_assigned=true<br>
+    <strong>UAT_08 (happy · Install recall via re-fire):</strong> Install ticket reassigned back to Owner via the same event with is_self_assigned=true<br>
     <span class="scenario">Scenario: Install has no separate recall event. When the Owner takes a ticket back, the system re-fires <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code> with <code>executor_id = Owner</code> and <code>is_self_assigned = true</code>. The IVR listener must process this (not skip it) and revert the customer-side mobile to Owner. <strong>This was a real bug we fixed earlier — don't regress it.</strong></span>
     <span class="kw">Given</span> An Install ticket where Rohit was assigned (<code>is_self_assigned = false</code>) — Table 2 customer-side row has Rohit's mobile<br>
     <span class="kw">When</span> The Owner reassigns to themselves; <code>ES_INSTALL_TECHNICIAN_ASSIGNED</code> re-fires with <code>executor_id = Owner.csp_user_id, is_self_assigned = true</code><br>
@@ -1169,7 +1173,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_09 (negative):</strong> Former customer with 0 active tickets hits the dead-end greeting, no PIN prompt<br>
+    <strong>UAT_09 (negative):</strong> Former customer with 0 active tickets hits the dead-end greeting, no PIN prompt<br>
     <span class="scenario">Scenario: Priya's installation finished 3 weeks ago. The ticket is closed. She has the masked number saved in her phone and dials it (maybe she has a question). She's still in <code>customers</code> table — so user_type = customer. But she has 0 active rows in Table 2. We should send her to the customer dead-end, NOT prompt for a PIN she doesn't have. <strong>This is the bug we caught early in the design review — verify it stays fixed.</strong></span>
     <span class="kw">Given</span> Priya is in the <code>customers</code> table but all her tickets are closed (Table 2 has 0 active rows for her mobile)<br>
     <span class="kw">When</span> Priya dials the masked number from her registered mobile<br>
@@ -1188,7 +1192,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_10 (negative):</strong> A PIN from a closed ticket (still in cooldown) cannot bridge any call<br>
+    <strong>UAT_10 (negative):</strong> A PIN from a closed ticket (still in cooldown) cannot bridge any call<br>
     <span class="scenario">Scenario: Two months ago, Rohit had a ticket whose CSP-side PIN was 47291. The ticket closed and is now in 90-day cooldown. Rohit remembers the PIN and dials in (maybe trying to reach the old customer). The PIN should NOT bridge — to anyone, ever — until cooldown expires.</span>
     <span class="kw">Given</span> A Table 2 row that was soft-deleted 60 days ago with PIN 47291 (cooldown active until day 90)<br>
     <span class="kw">When</span> Rohit dials from an unregistered SIM and enters 47291<br>
@@ -1208,7 +1212,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_11 (negative · security):</strong> A CSP cannot reach another organisation's customer even if they enter that org's PIN<br>
+    <strong>UAT_11 (negative · security):</strong> A CSP cannot reach another organisation's customer even if they enter that org's PIN<br>
     <span class="scenario">Scenario: Suresh works for CSP Org A. He has somehow learned a PIN (99999) that belongs to a ticket owned by CSP Org B. He dials and enters it, hoping to reach Org B's customer. The CSP-scope filter on API 3 must block this attempt.</span>
     <span class="kw">Given</span> Suresh's csp_id = 100 (Org A), and PIN 99999 belongs to a ticket whose csp_id = 200 (Org B)<br>
     <span class="kw">When</span> Suresh dials, API 2 identifies him as CSP, the PIN prompt fires, and he enters 99999<br>
@@ -1227,7 +1231,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_12 (negative):</strong> Two wrong PIN attempts lead to a user-type-aware dead-end with helpline SMS<br>
+    <strong>UAT_12 (negative):</strong> Two wrong PIN attempts lead to a user-type-aware dead-end with helpline SMS<br>
     <span class="scenario">Scenario: A caller enters a wrong PIN, gets a second chance, enters wrong again. Exotel's flow caps at 2 attempts. The dead-end greeting that plays must be the one appropriate to who they are (customer hears 88803-22222, CSP/unknown hears 78368-11111). An SMS with the helpline goes to the caller's mobile too.</span>
     <span class="kw">Given</span> A caller who has no valid PIN (any user_type)<br>
     <span class="kw">When</span> They enter wrong PINs at both Gather attempts<br>
@@ -1246,7 +1250,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_13 (negative · INV-09):</strong> Backend errors always return HTTP 200 with a safe default — never 5xx<br>
+    <strong>UAT_13 (negative · INV-09):</strong> Backend errors always return HTTP 200 with a safe default — never 5xx<br>
     <span class="scenario">Scenario: Some backend dependency (DB, csp-gateway, Redis) is failing during a call. Exotel's behaviour on 5xx is undocumented and may abort the flow with no greeting. Our endpoints must always return 200; convey errors through empty destination (Connect) or <code>{"select": "unknown"}</code> body (Passthru Sync).</span>
     <span class="kw">Given</span> A simulated backend fault (DB down, Redis unreachable, gateway timeout) during a live call<br>
     <span class="kw">When</span> Exotel calls API 1, API 2, or API 3<br>
@@ -1267,44 +1271,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_14 (computation · boundary):</strong> 90-day PIN cooldown expires at exactly 90 days, not 89, not 91<br>
-    <span class="scenario">Scenario: A ticket closes at time T. Its PIN value is reserved for 90 days. At T + 89 days, the PIN must still be unusable (cooldown not yet expired). At T + 90 days, the row becomes eligible for hard-delete by the retention job. The boundary must be exact.</span>
-    <span class="kw">Given</span> A Table 2 row soft-deleted at time T, with <code>ES_CSPIVR_PIN_COOLDOWN_DAYS = 90</code><br>
-    <span class="kw">When</span> The system clock reaches T + 89 days, 23 hours, 59 minutes<br>
-    <span class="kw">Then</span> A PIN lookup using that row's PIN returns invalid<br>
-    <span class="kw">When</span> The system clock reaches T + 90 days, 0 hours, 1 minute<br>
-    <span class="kw">Then</span> The hard-delete retention job picks up the row as eligible
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>DB</strong> — At soft-delete time: <code>cooldown_until = expires_at + INTERVAL '90 days'</code></li>
-        <li><strong>Time-travel test</strong> — Manually fast-forward clock (or set <code>expires_at</code> 89.9 days in past) and trigger a PIN lookup → returns no match; then 90.1 days in past and run retention job → row deleted</li>
-        <li><strong>Service log</strong> — At 89.9d: <code>"PIN lookup found cooldown row, invalid"</code>. At 90.1d: <code>"Retention job hard-deleted row"</code></li>
-        <li><strong>Generation pool</strong> — After hard-delete, the PIN value can be reissued by the generation algorithm (test by exhausting other PINs and confirming this one is available again)</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_15 (computation · structural):</strong> PIN attempts are capped at 2 by App Bazaar structure, not by backend counter<br>
-    <span class="scenario">Scenario: We don't want our backend tracking attempt counts (state in the wrong place). Exotel's App Bazaar flow has exactly 2 Gather applets in sequence. After the second wrong attempt, the flow falls through to dead-end. There is no third Gather configured.</span>
-    <span class="kw">Given</span> A caller in the PIN gather flow<br>
-    <span class="kw">When</span> They enter wrong PINs at both Gather attempts<br>
-    <span class="kw">Then</span> The App Bazaar flow routes directly to the final Passthru Sync → Switch Case → dead-end<br>
-    <span class="kw">And</span> No third Gather applet exists in the App Bazaar flow
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>App Bazaar flow inspection</strong> — Open the flow in Exotel App Bazaar; count Gather applets — must be exactly 2</li>
-        <li><strong>Code review</strong> — Confirm API 3 backend has NO attempt counter (no <code>attempt_count++</code> logic) — the structure enforces the cap</li>
-        <li><strong>Audit log</strong> — <code>pin_audit_logs</code> for any single CallSid contains at most 2 attempt rows</li>
-        <li><strong>End state after 2 wrong attempts</strong> — Per CRITERIA_12 (dead-end greeting + SMS)</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_16 (invariant · INV-01):</strong> PIN value is byte-for-byte unchanged from allocation through cooldown<br>
+    <strong>UAT_14 (invariant · INV-01):</strong> PIN value is byte-for-byte unchanged from allocation through cooldown<br>
     <span class="scenario">Scenario: Across a ticket's full life — allocation, multiple technician reassignments, recall back to Owner, terminal closure, cooldown — the PIN value on each Table 2 row must never change. Customers and CSPs have screenshots and SMS messages with that PIN; rotating it would invalidate what they hold.</span>
     <span class="kw">Given</span> A Table 2 row throughout its complete lifecycle<br>
     <span class="kw">When</span> Multiple events fire across the ticket's life (CANDIDATE_CREATED, TECHNICIAN_ASSIGNED ×N, TASK_RECALLED, terminal event)<br>
@@ -1313,7 +1280,7 @@ sequenceDiagram
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
-        <li><strong>E2E test</strong> — Run a full ticket lifecycle in test environment (CRITERIA_05 → CRITERIA_06 → CRITERIA_07 → terminal event). At each step, query <code>SELECT pin FROM table_2 WHERE id = row_id</code> — confirm value identical across all steps</li>
+        <li><strong>E2E test</strong> — Run a full ticket lifecycle in test environment (UAT_05 → UAT_06 → UAT_07 → terminal event). At each step, query <code>SELECT pin FROM table_2 WHERE id = row_id</code> — confirm value identical across all steps</li>
         <li><strong>Code review</strong> — Grep all UPDATE statements in the codebase that touch <code>table_2</code> → confirm none include <code>pin =</code></li>
         <li><strong>DB-level guard (optional)</strong> — Recommend a PostgreSQL trigger that blocks UPDATE of <code>pin</code> column for defence-in-depth</li>
         <li><strong>Audit</strong> — If the DB has a row-version audit table, confirm <code>pin</code> column has 0 change events across the lifecycle</li>
@@ -1322,7 +1289,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_17 (invariant · INV-08):</strong> Neither party ever sees the other's real mobile number<br>
+    <strong>UAT_15 (invariant · INV-08):</strong> Neither party ever sees the other's real mobile number<br>
     <span class="scenario">Scenario: The whole point of the masking layer. For any call bridged through the IVR — happy path or PIN gather, Owner or Technician — the recipient's caller ID screen and call log must show only the masked DID, never the real <code>registered_mobile</code> of the other party.</span>
     <span class="kw">Given</span> Any bridged call across any flow<br>
     <span class="kw">Then</span> The recipient's dialer / call log shows only the masked DID<br>
@@ -1333,74 +1300,14 @@ sequenceDiagram
         <li><strong>Test devices</strong> — Use 2 real phones (one CSP, one customer). Trigger calls via each path (in-app CTA, Table 2 by-FROM, PIN gather, unknown-FROM-with-PIN). On each recipient device, manually inspect the incoming caller ID screen during the call.</li>
         <li><strong>Caller ID</strong> — Always shows the masked DID, e.g., <code>+91-8000-00001</code>, never the real Wiom-registered mobile</li>
         <li><strong>Post-call log</strong> — Recipient's phone call log entry shows the masked DID; not the other party's mobile</li>
-        <li><strong>Truecaller</strong> — If installed, shows "Wiom" with verified badge for the masked DID (CRITERIA_22)</li>
+        <li><strong>Truecaller</strong> — If installed, shows "Wiom" with verified badge for the masked DID (DEV_06)</li>
         <li><strong>Exotel caller-ID audit</strong> — Connect response omits <code>outgoing_phone_number</code> entirely; Exotel defaults the caller ID to the incoming masked DID (NOT the other party's mobile) — verify on a live test call that the recipient's phone shows the masked DID</li>
       </ul>
     </div>
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_18 (edge · BEC-06):</strong> Race between caller's dial and ticket's terminal transition → dead-end (never a stale bridge)<br>
-    <span class="scenario">Scenario: A customer dials the masked number at the exact moment their ticket transitions to terminal state. Between Exotel's webhook hitting our API 1 and our DB read, the terminal event has processed and soft-deleted the Table 2 rows. The IVR must NOT bridge to a now-closed ticket — even by a microsecond.</span>
-    <span class="kw">Given</span> A customer dialling at the moment their ticket transitions to terminal<br>
-    <span class="kw">When</span> Table 2 has been soft-deleted by the time API 1 reads<br>
-    <span class="kw">Then</span> The dead-end greeting plays<br>
-    <span class="kw">And</span> The call is never bridged to the now-closed ticket
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Race test</strong> — Use a transactional script: fire the terminal event AND the API 1 request in parallel; repeat 100 times; confirm no bridge happens on terminal'd ticket</li>
-        <li><strong>DB consistency</strong> — Table 2 row's <code>expires_at</code> is set BEFORE any new API 1 lookup begins (transaction commit ordering)</li>
-        <li><strong>API 1 SQL trace</strong> — Always includes <code>AND expires_at IS NULL</code> so terminal'd rows are excluded by definition</li>
-        <li><strong>End state</strong> — Caller hears the dead-end greeting; call_audit_logs shows the lookup-miss event</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_19 (edge · BEC-10):</strong> Owner missing for a CSP → allocation fails cleanly, CTA hidden, ops alerted<br>
-    <span class="scenario">Scenario: A data-quality issue — a candidate belongs to a CSP organisation that has no user with <code>role = owner</code>. Allocation can't pick a default executor mobile. The right behaviour is to fail gracefully: skip Table 2 row creation, leave <code>maskedCallAvailable = false</code> so the apps hide the Call CTA, and alert ops to fix the data.</span>
-    <span class="kw">Given</span> A candidate whose csp_id has no user with role=owner<br>
-    <span class="kw">When</span> The candidate-creation event fires<br>
-    <span class="kw">Then</span> Table 2 row creation fails for this ticket<br>
-    <span class="kw">And</span> <code>maskedCallAvailable = false</code> on the ticket DTO<br>
-    <span class="kw">And</span> The CSP App / Customer App hide the Call CTA<br>
-    <span class="kw">And</span> An ops alert fires
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>DB (csp_users)</strong> — <code>SELECT count(*) FROM csp_users WHERE csp_id = X AND role = 'owner'</code> → 0 (the broken precondition)</li>
-        <li><strong>DB (Table 2)</strong> — No rows exist for this ticket_id after candidate-creation event processed</li>
-        <li><strong>Service log</strong> — ERROR: <code>"Allocation failed for ticket=X — no Owner found for csp_id=X"</code></li>
-        <li><strong>Ticket API</strong> — GET ticket DTO returns <code>maskedCallAvailable: false</code></li>
-        <li><strong>App test</strong> — Open the ticket in CSP App and Customer App; Call CTA button is hidden or disabled</li>
-        <li><strong>Ops alert</strong> — Alert delivered to ops Slack / PagerDuty (configurable destination)</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_20 (failure · FM-04):</strong> Missed-call event publishes reliably via transactional outbox; IVR doesn't talk to CleverTap directly<br>
-    <span class="scenario">Scenario: Ramesh (CSP) tries to call Priya; Priya doesn't pick up. The IVR must publish <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> to the bus topic <code>csp.ivr.missed-call</code> reliably (no loss on backend restart). The transactional outbox pattern guarantees this. The IVR is NOT allowed to call CleverTap / FCM / Gupshup directly — that's <code>csp-notification-service</code>'s job.</span>
-    <span class="kw">Given</span> A CSP-initiated bridge attempt where the customer doesn't pick up (Exotel returns DNP)<br>
-    <span class="kw">When</span> Passthru-Async-on-DNP fires our backend's <strong>API_logging</strong> DNP endpoint<br>
-    <span class="kw">Then</span> <code>call_audit_logs</code> INSERT and the outbox INSERT commit in the same DB transaction<br>
-    <span class="kw">And</span> The outbox worker picks up the row and publishes <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> to topic <code>csp.ivr.missed-call</code><br>
-    <span class="kw">And</span> IVR does NOT make any direct API call to CleverTap / FCM / Gupshup for this missed-call alert
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>DB transaction</strong> — Both INSERTs have the same transaction ID; if either fails, both rollback</li>
-        <li><strong>Outbox table</strong> — One row per CallSid (idempotency); payload contains <code>missed_party_pin</code>, <code>missed_party_mobile</code>, <code>ticket_id</code>, <code>ticket_type</code>, <code>caller_display_name</code>, <code>callback_deeplink</code></li>
-        <li><strong>Bus topic</strong> — Consume <code>csp.ivr.missed-call</code> in a test consumer; confirm the event arrived</li>
-        <li><strong>Code grep</strong> — Search IVR codebase for any direct call to CleverTap / FCM / Gupshup APIs from the missed-call path → must find ZERO matches (Gupshup calls exist for PIN-delivery and dead-end SMS, but NOT for missed-call alerts)</li>
-        <li><strong>Backend crash test</strong> — Kill the backend pod after the DB transaction commits but before the outbox worker runs. On restart, the worker picks up the row and publishes (no event lost).</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_21 (regression):</strong> In-app CTA happy-path latency does not regress vs the legacy system<br>
+    <strong>UAT_16 (regression):</strong> In-app CTA happy-path latency does not regress vs the legacy system<br>
     <span class="scenario">Scenario: The in-app Call CTA tap is the most-used path. Whatever architectural changes we make under the hood (new tables, new flow), this path must remain fast — backend p95 ≤ 200 ms — and must not gain any extra applet hops in Exotel.</span>
     <span class="kw">Given</span> An in-app CTA tap with a valid Table 1 entry<br>
     <span class="kw">When</span> The user dials within the TTL window<br>
@@ -1418,207 +1325,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_22:</strong> Truecaller / VLT verification displays on the masked DID at rollout<br>
-    <span class="scenario">Scenario: Truecaller marks unknown business numbers as "Spam Likely" — that's the #1 cause of customers not picking up. The masked DID provisioned for the IVR must carry Truecaller and VLT verification before rollout so the "Wiom" verified banner shows on customer phones from the first masked call onwards.</span>
-    <span class="kw">Given</span> The chosen masked DID has been registered with Truecaller (business profile) and submitted for VLT verification with the carrier<br>
-    <span class="kw">When</span> A Truecaller-installed phone receives a ringing call from the masked DID<br>
-    <span class="kw">Then</span> The "Wiom" verified green banner shows on the caller-ID screen<br>
-    <span class="kw">And</span> The masked DID is whitelisted (not flagged as "Spam Likely" or "Unknown") before any user-facing rollout
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Test device</strong> — Android phone with Truecaller installed; receive a call from the masked DID via the new IVR flow</li>
-        <li><strong>Caller ID</strong> — Shows "Wiom" with the green verified badge during ringing; NOT "Spam Likely" or "Unknown"</li>
-        <li><strong>Truecaller in-app search</strong> — Search the masked DID — returns the Wiom business profile</li>
-        <li><strong>Pickup rate</strong> — Post-launch baseline: ≥ 60% of bridged calls picked up within first ring sequence</li>
-        <li><strong>Pre-launch check</strong> — Confirm with Truecaller Business that the DID's verification entry is unchanged (no re-submission needed)</li>
-      </ul>
-    </div>
-  </div>
-
-  <!-- ============================================================== -->
-  <!-- NEW — CRITERIA_23 through CRITERIA_39 (17 added per QA CSV) -->
-  <!-- ============================================================== -->
-
-  <div class="gherkin">
-    <strong>CRITERIA_23 (api · contract · P0):</strong> API 3 strips the literal double-quotes Exotel wraps around the <code>digits</code> parameter<br>
-    <span class="scenario">Scenario: Exotel's Gather applet sends collected digits with literal double-quotes wrapping the value. If <code>56789</code> is entered, the URL contains <code>digits="56789"</code> — quotes included. Backend MUST <code>strip('"')</code> before validating, or every multi-ticket PIN lookup fails. <strong>This is the single most common implementation gotcha — verify explicitly.</strong></span>
-    <span class="kw">Given</span> A caller is in the PIN gather flow with a known-valid PIN (e.g., 56789)<br>
-    <span class="kw">When</span> Exotel sends a GET to <strong>API 3</strong> with <code>digits="56789"</code>, <code>from=...</code>, <code>CallSid=...</code> in the query string (with literal quote characters around the digits value)<br>
-    <span class="kw">Then</span> API 3 strips the quotes, validates "56789" is 5 numeric digits, and queries Table 2 with PIN = 56789 (not "56789")<br>
-    <span class="kw">And</span> The lookup succeeds and the call bridges
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Manual webhook test</strong> — From Postman / curl: GET to the API 3 endpoint with <code>digits=%2256789%22&amp;...</code> (URL-encoded quotes). Confirm response includes the bridge destination (not empty)</li>
-        <li><strong>Code review</strong> — API 3 handler contains <code>digits.strip('"')</code> (or equivalent) as the first line of digits processing</li>
-        <li><strong>SQL trace</strong> — Captured query parameter is exactly <code>56789</code> (5 chars), not <code>"56789"</code> (7 chars)</li>
-        <li><strong>Service log</strong> — <code>"PIN received raw='\"56789\"', stripped='56789'"</code> for traceability</li>
-        <li><strong>Negative test</strong> — Send <code>digits="ABC"</code> (quoted alpha) → format validation fails → empty destination returned</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_24 (api · contract):</strong> API 1 / API 3 response body contains <strong>only</strong> the <code>destination</code> field<br>
-    <span class="scenario">Scenario: Per Rule 6, the Connect response body must be minimal — only <code>destination</code>. Recording (on/off + channels), max ring duration, caller ID, and "fetch after every attempt" are configured statically in the App Bazaar Connect applet UI. The dynamic URL response is reserved for what changes per call (destination only). Sending extra fields would unintentionally override the App Bazaar config.</span>
-    <span class="kw">Given</span> Any call that reaches API 1 or API 3<br>
-    <span class="kw">When</span> The response is returned to Exotel<br>
-    <span class="kw">Then</span> The JSON body's top-level keys are exactly <code>{"destination"}</code><br>
-    <span class="kw">And</span> No <code>outgoing_phone_number</code>, <code>record</code>, <code>recording_channels</code>, <code>max_ringing_duration</code>, or <code>fetch_after_attempt</code> fields are sent
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Response inspection</strong> — Capture API 1 + API 3 responses across all paths (bridge, no-bridge, error fallback). Each response body contains only the <code>destination</code> key.</li>
-        <li><strong>Code review</strong> — Response builder constructs the body from a single field; no code path adds the optional fields.</li>
-        <li><strong>Live behaviour</strong> — Confirm Exotel still bridges correctly, dials with the masked DID as caller ID, and times out after 30s on no-answer — all from defaults.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_25 (api · contract):</strong> API 1's no-bridge response is exactly <code>{"destination": {"numbers": []}}</code> — not 404, not null, not <code>{}</code><br>
-    <span class="scenario">Scenario: When Table 1 misses AND Table 2 by-FROM returns 0 or ≥2 rows, API 1 must return a specific shape that Exotel interprets as "Did not Dial". A 404, null body, or empty object would cause Exotel to drop the call or misroute the flow.</span>
-    <span class="kw">Given</span> A caller whose mobile has no Table 1 entry and no Table 2 match (or has ≥ 2 Table 2 matches)<br>
-    <span class="kw">When</span> Exotel calls API 1<br>
-    <span class="kw">Then</span> Response is HTTP 200 with body <code>{"destination": {"numbers": []}}</code><br>
-    <span class="kw">And</span> Exotel routes the flow to the next applet (Passthru Sync → API 2)
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Response inspection</strong> — For an unknown FROM and a multi-ticket FROM, API 1 returns the exact JSON above</li>
-        <li><strong>NOT 404</strong> — Status code is 200, not 404</li>
-        <li><strong>NOT null</strong> — Body is not <code>null</code>, not empty string, not <code>{}</code></li>
-        <li><strong>Exotel App Bazaar timeline</strong> — Confirm flow advances to Passthru Sync (not aborted)</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_26 (security · P0):</strong> SQL injection via the PIN field returns empty + safe response, no DB corruption<br>
-    <span class="scenario">Scenario: If our backend uses string concatenation to build the PIN lookup SQL (instead of parameterised queries), a malicious payload like <code>' OR '1'='1</code> could match all rows and return a random destination. We MUST use parameterised queries.</span>
-    <span class="kw">Given</span> A caller in the PIN gather flow (CallSid + user_type cached)<br>
-    <span class="kw">When</span> Exotel sends a GET to <strong>API 3</strong> with <code>digits="' OR '1'='1"</code> in the query string (or similar SQL-injection payload, URL-encoded)<br>
-    <span class="kw">Then</span> API 3 strips quotes, validates format (must be 5 numeric digits) → fails validation → returns <code>{"destination": {"numbers": []}}</code><br>
-    <span class="kw">And</span> No DB row is matched, no row is deleted or modified, no schema is dropped
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Injection payloads tested</strong> — <code>' OR '1'='1</code>, <code>'; DROP TABLE table_2; --</code>, <code>56789' AND '1'='1</code>, <code>UNION SELECT ...</code>, all URL-encoded</li>
-        <li><strong>All return</strong> — HTTP 200 with empty destination; format validation failure logged</li>
-        <li><strong>DB inspection after test</strong> — <code>table_2</code> intact, row counts unchanged, no schema changes</li>
-        <li><strong>Code review</strong> — All Table 2 queries use parameterised statements / prepared queries (no string concatenation of user input)</li>
-        <li><strong>Response body</strong> — No raw SQL error / stack trace leaked to caller</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_27 (security · P0 · design gap):</strong> Brute-force PIN attempts are rate-limited per-FROM at the API 3 level<br>
-    <span class="scenario">Scenario: A 5-digit PIN has 100,000 possible values. The 2-attempt-per-call cap doesn't stop a determined attacker who can place 1000 calls and try a different PIN each time. We need an explicit rate limit at API 3 (e.g., max 10 PIN attempts per FROM per hour). <strong>This is currently a DESIGN gap, not just a test gap — engineering needs to add a rate limiter before launch.</strong></span>
-    <span class="kw">Given</span> A FROM mobile that has made N failed PIN attempts in the last hour<br>
-    <span class="kw">When</span> N exceeds the per-FROM rate limit threshold (e.g., 10 attempts/hour)<br>
-    <span class="kw">Then</span> API 3 returns empty destination without performing the Table 2 lookup<br>
-    <span class="kw">And</span> The FROM is locked for a backoff window (15 minutes minimum)<br>
-    <span class="kw">And</span> An ops alert fires for repeated lockouts (potential attack)
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Pre-launch confirmation</strong> — Rate limiter implementation exists in API 3 (engineering deliverable). PM blocker until confirmed.</li>
-        <li><strong>Load test</strong> — Send 100 PIN attempts from the same FROM in rapid succession. After the threshold: subsequent attempts return empty without DB query (confirm via SQL log absence)</li>
-        <li><strong>Lockout state</strong> — Per-FROM lockout entry visible in Redis / DB with expiry timestamp</li>
-        <li><strong>Ops alert</strong> — Trigger lockout 3 times across different FROMs; confirm aggregated alert fires</li>
-        <li><strong>Reset</strong> — Lockout expires automatically after backoff window</li>
-        <li><strong>Documentation</strong> — Rate limit threshold (per-FROM and per-hour) recorded in B3 parameters</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_28 (lifecycle · Restore):</strong> <code>ES_RESTORE_CANDIDATE_CREATED</code> writes 2 Table 2 rows with Owner as default executor<br>
-    <span class="scenario">Scenario: Symmetric to CRITERIA_05 but for Restore family specifically. A Restore complaint task creates a candidate at PENDING_ACCEPTANCE; the listener must write customer-side + CSP-side rows with the Owner as the default bridge target.</span>
-    <span class="kw">Given</span> A Restore complaint that triggers <code>ES_RESTORE_CANDIDATE_CREATED</code><br>
-    <span class="kw">When</span> The IVR listener consumes the event<br>
-    <span class="kw">Then</span> Two rows are written to Table 2: customer-side (other_party_mobile = Owner's mobile) + CSP-side (other_party_mobile = customer's mobile)<br>
-    <span class="kw">And</span> Each row has a unique 5-digit PIN<br>
-    <span class="kw">And</span> Customer-side row's <code>csp_user_id = Owner's csp_user_id</code>; CSP-side row's <code>csp_id</code> = the owning CSP org<br>
-    <span class="kw">And</span> The Customer App shows <code>maskedCallAvailable = true</code> on this Restore ticket
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Event trigger</strong> — Manually publish <code>ES_RESTORE_CANDIDATE_CREATED</code> for a test ticket</li>
-        <li><strong>DB</strong> — <code>SELECT side, pin, other_party_mobile, csp_user_id, csp_id FROM table_2 WHERE ticket_id = X</code> → exactly 2 rows, both <code>expires_at IS NULL</code>, PINs unique</li>
-        <li><strong>Customer-side row</strong> — <code>other_party_mobile</code> matches Owner's <code>registered_mobile</code> (cross-check via gateway query)</li>
-        <li><strong>Customer SMS</strong> — Customer receives PIN SMS via Gupshup with the customer-side PIN inline</li>
-        <li><strong>App</strong> — Open the Restore ticket in Customer App; Call CTA is visible</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_29 (lifecycle · NBREC):</strong> <code>ES_NBREC_CANDIDATE_CREATED</code> writes 2 Table 2 rows for NetBox recovery tickets<br>
-    <span class="scenario">Scenario: NBREC (NetBox Recovery / Pickup) is the third execution-service family. The same allocation pattern must work. If NBREC was missed in implementation, every NBREC ticket's call would silently fail.</span>
-    <span class="kw">Given</span> An NBREC pickup ticket that triggers <code>ES_NBREC_CANDIDATE_CREATED</code><br>
-    <span class="kw">When</span> The IVR listener consumes the event<br>
-    <span class="kw">Then</span> Two rows are written to Table 2 with the Owner as default executor (same allocation pattern as Install / Restore)<br>
-    <span class="kw">And</span> Customer-side PIN dispatched via SMS<br>
-    <span class="kw">And</span> CSP App's NBREC ticket card shows <code>maskedCallAvailable = true</code>
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Event trigger</strong> — Manually publish <code>ES_NBREC_CANDIDATE_CREATED</code></li>
-        <li><strong>DB</strong> — Same checks as CRITERIA_28 — 2 rows, unique PINs, Owner-side mobile</li>
-        <li><strong>NBREC-specific</strong> — Confirm listener handles this event type explicitly (code review of listener match-case / switch)</li>
-        <li><strong>App</strong> — NBREC ticket in CSP App has Call CTA visible</li>
-        <li><strong>End-to-end</strong> — Call from customer's mobile bridges correctly for NBREC ticket</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_30 (lifecycle · terminal):</strong> Terminal ES event soft-deletes both Table 2 rows and flips <code>maskedCallAvailable = false</code><br>
-    <span class="scenario">Scenario: When a ticket closes (any terminal event in any family — completed / cancelled / failed / etc.), the IVR listener must soft-delete both Table 2 rows (set <code>expires_at = now()</code>, <code>cooldown_until = now() + 90d</code>) AND the app's <code>maskedCallAvailable</code> flag must flip to false immediately so the Call CTA disappears.</span>
-    <span class="kw">Given</span> An active ticket with 2 Table 2 rows<br>
-    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_INCENTIVE_EVALUATED</code> for the Install success path or <code>ES_INSTALL_REPORTED_FAILED</code> for failure — both from es-installation; <code>ES_RESTORE_CANDIDATE_COMPLETED</code> from es-restore; <code>ES_NBREC_CANDIDATE_CANCELLED</code> from es-netbox-recovery)<br>
-    <span class="kw">Then</span> Both Table 2 rows have <code>expires_at = now()</code> and <code>cooldown_until = now() + 90 days</code><br>
-    <span class="kw">And</span> The ticket DTO returns <code>maskedCallAvailable = false</code> within seconds<br>
-    <span class="kw">And</span> Any subsequent call attempt routes to dead-end (per CRITERIA_18 race / CRITERIA_09 0-ticket)
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Event trigger</strong> — Fire a terminal event for an active ticket</li>
-        <li><strong>DB (after)</strong> — Both rows have <code>expires_at</code> set; <code>cooldown_until = expires_at + 90 days</code></li>
-        <li><strong>Soft delete</strong> — Rows still exist (audit), but excluded from active lookups</li>
-        <li><strong>Service log</strong> — <code>"Soft-deleted Table 2 rows for ticket=X due to ES_*_terminal event"</code></li>
-        <li><strong>App</strong> — Open the ticket; Call CTA disappears within 5 seconds of event processing (cache invalidation works)</li>
-        <li><strong>Post-test call</strong> — Customer dials the masked number → routes to dead-end greeting (no bridge to closed ticket)</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_31 (lifecycle · idempotency):</strong> Duplicate ES event delivery does not create duplicate Table 2 rows<br>
-    <span class="scenario">Scenario: ES events use at-least-once delivery. The same <code>ES_INSTALL_CANDIDATE_CREATED</code> may be delivered twice (e.g., during broker retry). The IVR listener's upsert on <code>(ticket_id, side)</code> must make this idempotent — we should still end with exactly 2 rows, not 4, and PINs should not change.</span>
-    <span class="kw">Given</span> A new ticket whose <code>ES_INSTALL_CANDIDATE_CREATED</code> has been processed once (Table 2 has 2 rows)<br>
-    <span class="kw">When</span> The same event is delivered again (broker retry)<br>
-    <span class="kw">Then</span> Table 2 still has exactly 2 rows for this ticket, with the original PIN values<br>
-    <span class="kw">And</span> No duplicate SMS to the customer<br>
-    <span class="kw">And</span> Service log notes the idempotency check fired
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Test trigger</strong> — Publish the event, wait for processing, publish the same event again with same idempotency key</li>
-        <li><strong>DB</strong> — Row count for the ticket = 2 (not 4)</li>
-        <li><strong>PINs unchanged</strong> — PIN values byte-identical to first processing</li>
-        <li><strong>Service log</strong> — <code>"Table 2 rows already exist for ticket=X, skipping (idempotent)"</code></li>
-        <li><strong>SMS audit</strong> — Only 1 customer-side PIN-delivery SMS fired (not 2)</li>
-        <li><strong>Code review</strong> — Listener uses upsert on <code>(ticket_id, side)</code> as the unique key</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_32 (sim_inventory):</strong> CSP calling from a registered alternate SIM is recognised as the same CSP<br>
+    <strong>UAT_17 (sim_inventory):</strong> CSP calling from a registered alternate SIM is recognised as the same CSP<br>
     <span class="scenario">Scenario: Rohit has 2 SIMs — primary (in <code>csp_users.registered_mobile</code>) and work SIM (in <code>sim_inventory</code> mapped to his csp_user_id). He calls from his work SIM. The IVR must join <code>sim_inventory</code> → <code>csp_users</code> to identify him as a CSP, then look up his ticket's Table 2 row by his csp_user_id.</span>
     <span class="kw">Given</span> Rohit's primary SIM is in <code>csp_users</code>; his work SIM is in <code>sim_inventory</code> with <code>csp_user_id = Rohit</code><br>
     <span class="kw">When</span> Rohit dials the masked number from his work SIM<br>
@@ -1636,7 +1343,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_33 (sim_inventory · SIM swap):</strong> Old SIM removed from <code>sim_inventory</code> no longer routes; new SIM added does<br>
+    <strong>UAT_18 (sim_inventory · SIM swap):</strong> Old SIM removed from <code>sim_inventory</code> no longer routes; new SIM added does<br>
     <span class="scenario">Scenario: Rohit's work SIM number changes (lost phone, new SIM). Old SIM gets <code>removed_at</code> set in <code>sim_inventory</code>; new SIM is added. From this moment: calls from the old SIM no longer identify as CSP; calls from the new SIM do.</span>
     <span class="kw">Given</span> Rohit's old SIM has <code>removed_at = now()</code>; new SIM has <code>removed_at IS NULL</code> + correct csp_user_id<br>
     <span class="kw">When</span> A call comes from the old SIM<br>
@@ -1656,7 +1363,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_34 (identity · conflict):</strong> Mobile present in both <code>customers</code> and <code>csp_users</code> resolves to customer + logs warning<br>
+    <strong>UAT_19 (identity · conflict):</strong> Mobile present in both <code>customers</code> and <code>csp_users</code> resolves to customer + logs warning<br>
     <span class="scenario">Scenario: Data quality edge case. A mobile number appears in both the <code>customers</code> table and the <code>csp_users</code> table (data error). The IVR must resolve deterministically — customer wins — AND log a warning so ops can fix the underlying data.</span>
     <span class="kw">Given</span> A mobile that exists in both <code>customers</code> AND <code>csp_users</code> tables<br>
     <span class="kw">When</span> Exotel calls API 2 for that FROM<br>
@@ -1676,88 +1383,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_35 (resilience):</strong> Redis down → API 2 falls back to live DB resolution, still returns 200 with correct value<br>
-    <span class="scenario">Scenario: We cache <code>user_type + csp_id + table_2_row_count</code> against CallSid in Redis for sub-ms reads. If Redis is down (or the key has expired), API 2 must fall back to a live identity + count resolution from the DB. The caller's experience is unchanged — same correct response, slightly higher latency.</span>
-    <span class="kw">Given</span> Redis is offline (or CallSid cache entry missing)<br>
-    <span class="kw">When</span> Exotel calls API 2 during a live call<br>
-    <span class="kw">Then</span> API 2 performs a live DB resolution and returns the correct 5-value discriminator<br>
-    <span class="kw">And</span> Response is HTTP 200 (not 500)<br>
-    <span class="kw">And</span> Service log notes the cache miss + DB-fallback path
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Chaos test</strong> — Stop Redis mid-call: <code>redis-cli SHUTDOWN NOSAVE</code> in test env</li>
-        <li><strong>API 2 response</strong> — HTTP 200 with the correct value (e.g., <code>csp_with_pin</code>)</li>
-        <li><strong>Latency</strong> — Higher than cache hit (~50-200 ms vs &lt; 5 ms) but still well under Exotel's 5s budget</li>
-        <li><strong>Service log</strong> — WARN: <code>"Redis unavailable for CallSid=X, falling back to DB"</code></li>
-        <li><strong>Recovery</strong> — After Redis restart, subsequent calls cache normally again</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_36 (resilience · concurrency):</strong> Concurrent calls from the same FROM (different CallSids) don't mix sessions<br>
-    <span class="scenario">Scenario: A user accidentally double-dials within a second (common on Android). Two simultaneous webhooks arrive from Exotel with the same FROM but different CallSids. Each must be processed independently — no shared state, no race conditions, no cross-pollination of cached <code>user_type</code> values.</span>
-    <span class="kw">Given</span> 2 simultaneous API 1 requests with same FROM mobile but different CallSids (CallSid-A and CallSid-B)<br>
-    <span class="kw">When</span> Both arrive at the backend within milliseconds<br>
-    <span class="kw">Then</span> Each gets its own independent processing path<br>
-    <span class="kw">And</span> Redis has 2 separate cache entries (one per CallSid)<br>
-    <span class="kw">And</span> Both responses are correct and consistent
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Load test</strong> — Fire 2 parallel HTTP requests with same FROM, different CallSids (using Apache JMeter, k6, or 2 parallel curl)</li>
-        <li><strong>Both responses</strong> — HTTP 200, identical or appropriately matching content</li>
-        <li><strong>Redis</strong> — <code>redis-cli GET ivr:CallSid-A</code> and <code>redis-cli GET ivr:CallSid-B</code> both return cache entries with correct content (not cross-contaminated)</li>
-        <li><strong>DB queries</strong> — 2 independent transactions, no lock waits or deadlocks in logs</li>
-        <li><strong>Repeated test</strong> — 100 concurrent calls from same FROM; no errors, no shared session bleed</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_37 (lifecycle · PIN generation):</strong> PIN generation handles near-pool-exhaustion without collisions<br>
-    <span class="scenario">Scenario: With 5-digit PINs (100,000 keyspace) and ~10K active tickets × 2 PINs + ~45K in cooldown, the pool is comfortable. But the generation algorithm must still correctly handle near-exhaustion — and never write a duplicate PIN to an active row.</span>
-    <span class="kw">Given</span> A test environment with ~99,000 of 100,000 PINs in active or cooldown state<br>
-    <span class="kw">When</span> A new ticket is created and PIN generation runs<br>
-    <span class="kw">Then</span> The generated PIN is unique (no collision with active or cooldown rows)<br>
-    <span class="kw">And</span> If retry count exceeds threshold (e.g., 10 collisions), service emits an alert<br>
-    <span class="kw">And</span> Above 70% pool reservation: triggers escalation alert to migrate to 6-digit PINs
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Test setup</strong> — Seed ~99,000 PIN rows in test DB (mix of active + cooldown)</li>
-        <li><strong>New PIN generation</strong> — Finds the remaining valid PIN; takes longer than usual but succeeds</li>
-        <li><strong>DB constraint</strong> — Unique index on <code>(pin) WHERE expires_at IS NULL</code> prevents duplicate active rows at the DB layer</li>
-        <li><strong>Metrics</strong> — Pool-reservation % surfaced on dashboard; alert fires at 70%</li>
-        <li><strong>Generation retry count</strong> — Logged per allocation; alert if average exceeds threshold</li>
-        <li><strong>Code review</strong> — Generation algorithm queries both active and cooldown rows before settling on a PIN</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_38 (resilience · Exotel idempotency):</strong> Exotel retry of the same webhook (same CallSid) produces the same response, no duplicate side effects<br>
-    <span class="scenario">Scenario: If our backend is slow or times out, Exotel may retry the same webhook. We must treat retries idempotently — same CallSid should produce the same response, and not double-write to Table 1 or fire duplicate missed-call events.</span>
-    <span class="kw">Given</span> API 1 has already processed a request for CallSid X<br>
-    <span class="kw">When</span> Exotel retries the exact same webhook (same CallSid, same payload)<br>
-    <span class="kw">Then</span> API 1 returns the same response as the first call<br>
-    <span class="kw">And</span> No duplicate Table 1 row is created<br>
-    <span class="kw">And</span> Cached state for CallSid X is reused (no DB re-query)
-    <div class="verify">
-      <strong class="v-label">Verify with:</strong>
-      <ul>
-        <li><strong>Replay test</strong> — Send the same API 1 webhook twice with identical CallSid; compare responses byte-for-byte</li>
-        <li><strong>Redis</strong> — Single cache entry for CallSid X</li>
-        <li><strong>DB</strong> — No duplicate row in <code>table_1</code> or audit logs (idempotency key on CallSid)</li>
-        <li><strong>Missed-call event idempotency</strong> — Replay a DNP Passthru-Async; bus has only one <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> event for the CallSid (per INV-10)</li>
-        <li><strong>Service log</strong> — Second invocation: <code>"Cache hit for CallSid=X, returning cached response"</code></li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin">
-    <strong>CRITERIA_39 (regression):</strong> All 5 Switch Case branches at API 2 routes are wired correctly in App Bazaar<br>
+    <strong>UAT_20 (regression):</strong> All 5 Switch Case branches at API 2 routes are wired correctly in App Bazaar<br>
     <span class="scenario">Scenario: The 5-branch Switch Case is the load-bearing piece that fixed the multi-ticket bug. Verify that each of the 5 values returned by API 2 routes to the correct next applet — wrong wiring sends recognised multi-ticket callers to dead-end (the original bug).</span>
     <span class="kw">Given</span> The Exotel App Bazaar Switch Case downstream of API 2's Passthru Sync<br>
     <span class="kw">When</span> API 2 returns each of the 5 possible values<br>
@@ -1772,18 +1398,14 @@ sequenceDiagram
       <ul>
         <li><strong>App Bazaar inspection</strong> — Open the Switch Case applet; confirm all 5 case names match exactly (case-sensitive, no typos)</li>
         <li><strong>Each branch tested live</strong> — Trigger 5 calls in test env that result in each of the 5 outcomes. Confirm the next applet fires correctly for each.</li>
-        <li><strong>End-to-end</strong> — Multi-ticket customer (per CRITERIA_03) hits Gather (not dead-end). 0-ticket customer (per CRITERIA_09) hits Greeting (not Gather).</li>
+        <li><strong>End-to-end</strong> — Multi-ticket customer (per UAT_03) hits Gather (not dead-end). 0-ticket customer (per UAT_09) hits Greeting (not Gather).</li>
         <li><strong>No fall-through</strong> — Test an unconfigured value (e.g., backend returns <code>{"select": "garbage"}</code> in error). Confirm what happens (Switch Case behaviour on unmatched value is undocumented by Exotel — flag if it falls through to nothing).</li>
       </ul>
     </div>
   </div>
 
-  <!-- ============================================================== -->
-  <!-- NEW — CRITERIA_40 through CRITERIA_46 — UAT for B15 / B16 / B17 -->
-  <!-- ============================================================== -->
-
   <div class="gherkin">
-    <strong>CRITERIA_40 (UAT · Customer App PIN display · install):</strong> Customer sees their PIN on the install ticket screen<br>
+    <strong>UAT_21 (UAT · Customer App PIN display · install):</strong> Customer sees their PIN on the install ticket screen<br>
     <span class="scenario">Scenario: A customer with an active install booking opens the Customer App. The ticket-detail screen displays the customer-side PIN alongside the masked-number Call CTA. Validates the B15 PIN-fetch contract end-to-end (Customer App backend → IVR → Table 2 → response → app).</span>
     <span class="kw">Given</span> Customer has an in-progress install ticket and is on a new Customer App build that wires the B15 API call<br>
     <span class="kw">When</span> They open the install ticket detail screen<br>
@@ -1800,7 +1422,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_41 (UAT · Customer App PIN display · multi-Restore):</strong> Customer with 2 open Restores sees the correct PIN per ticket<br>
+    <strong>UAT_22 (UAT · Customer App PIN display · multi-Restore):</strong> Customer with 2 open Restores sees the correct PIN per ticket<br>
     <span class="scenario">Scenario: The Restore-path disambiguation (by Kapture <code>ticket_id</code>) works on the app — opening complaint A vs complaint B yields complaint-specific PINs.</span>
     <span class="kw">Given</span> Customer has 2 open Restore complaints with distinct Kapture IDs and distinct customer-side PINs<br>
     <span class="kw">When</span> They open complaint A's detail, then complaint B's detail<br>
@@ -1817,7 +1439,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_42 (UAT · CSP / Technician App PIN display):</strong> CSP and Technician see the CSP-side PIN on the ticket card<br>
+    <strong>UAT_23 (UAT · CSP / Technician App PIN display):</strong> CSP and Technician see the CSP-side PIN on the ticket card<br>
     <span class="scenario">Scenario: CSP App and Technician App (forked codebase) both display the CSP-side PIN on the install / restore / pickup drilldown by using the B16 API (<code>execution_candidate_id</code> lookup).</span>
     <span class="kw">Given</span> A ticket is currently assigned to a Technician<br>
     <span class="kw">When</span> The Technician opens the assigned-ticket drilldown on the Technician App, and the Owner opens the same ticket on the CSP App<br>
@@ -1834,7 +1456,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_43 (UAT · end-to-end bridge with displayed PIN):</strong> The PIN shown on the app actually bridges the call to the other party<br>
+    <strong>UAT_24 (UAT · end-to-end bridge with displayed PIN):</strong> The PIN shown on the app actually bridges the call to the other party<br>
     <span class="scenario">Scenario: This is the load-bearing end-to-end check — the displayed PIN isn't just a cosmetic number, it has to work. From either side, the user reads the PIN off their app, dials the masked DID from any phone (registered or different SIM), enters the PIN through the IVR's Gather flow, and gets connected to the correct counterparty for that specific ticket.</span>
     <span class="kw">Given</span> A customer (or CSP) has an active ticket and the PIN displayed on their app, and they are dialling from a SIM that is <em>not</em> recognised by Table 1 / Table 2 by-FROM / sim_inventory (i.e., the IVR flow will go to the PIN gather path)<br>
     <span class="kw">When</span> They dial the masked DID, the IVR's Gather applet prompts for a PIN, and they enter the value displayed on their app<br>
@@ -1852,10 +1474,10 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_44 (UAT · Notification Service · initial PIN delivery):</strong> Customer receives the PIN notification at ticket creation (and only then)<br>
+    <strong>UAT_25 (UAT · Notification Service · initial PIN delivery):</strong> Customer receives the PIN notification at ticket creation (and only then)<br>
     <span class="scenario">Scenario: The initial PIN allocation event flows IVR → Notification Service → CleverTap → SMS/PN to the customer. The customer receives the message exactly once per ticket. Validates B17.2 initial-allocation event + B17.3 routing (both CSP CT and Customer CT) + B17.4 communication rule (customer notified once).</span>
     <span class="kw">Given</span> A fresh install booking is created for a customer who has the Customer App installed<br>
-    <span class="kw">When</span> IVR consumes the <code>*_CANDIDATE_CREATED</code> event and writes the Table 2 rows<br>
+    <span class="kw">When</span> IVR consumes the per-family allocation event (<code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> for Install — fires once slot is confirmed; <code>ES_RESTORE_CANDIDATE_CREATED</code> / <code>ES_NBREC_CANDIDATE_CREATED</code> for the others) and writes the Table 2 rows<br>
     <span class="kw">Then</span> Within 60 seconds the customer's phone receives a PN (or SMS / WA if PN unavailable) containing the customer-side PIN + masked number<br>
     <span class="kw">And</span> Tapping the PN opens the install drilldown (page_name = <code>INSTALL_TASK_DRILLDOWN</code>)<br>
     <span class="kw">And</span> No subsequent technician-change events cause the customer to receive a second PIN notification for this same ticket
@@ -1870,13 +1492,13 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_45 (UAT · Notification Service · CSP-side reallocation):</strong> Reassigning the technician notifies the new technician, not the customer<br>
+    <strong>UAT_26 (UAT · Notification Service · CSP-side reallocation):</strong> Reassigning the technician notifies the new technician, not the customer<br>
     <span class="scenario">Scenario: The reallocation rule (CSP re-notified on every change; customer not re-notified) holds end-to-end. Validates B17.2 reallocation event + B17.3 CSP-CT-only routing + B17.4 communication rule.</span>
     <span class="kw">Given</span> A ticket is currently assigned to Technician A; the customer has already received their PIN at ticket creation<br>
     <span class="kw">When</span> Owner reassigns the ticket to Technician B (triggers <code>*_TECHNICIAN_ASSIGNED</code> with B as the assignee)<br>
     <span class="kw">Then</span> Technician B's phone receives a PN within 60 seconds containing the CSP-side PIN (deep-links to the assigned-ticket drilldown)<br>
     <span class="kw">And</span> Customer's phone does NOT receive any new notification for this ticket<br>
-    <span class="kw">And</span> The customer-side PIN the customer already has continues to work for callbacks (CRITERIA_43 path still bridges)
+    <span class="kw">And</span> The customer-side PIN the customer already has continues to work for callbacks (UAT_24 path still bridges)
     <div class="verify">
       <strong class="v-label">Verify with:</strong>
       <ul>
@@ -1888,7 +1510,7 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_46 (UAT · Notification Service · missed-call PN + deep-link):</strong> Missed-call notification arrives with the right PIN and the right deep-link, both directions<br>
+    <strong>UAT_27 (UAT · Notification Service · missed-call PN + deep-link):</strong> Missed-call notification arrives with the right PIN and the right deep-link, both directions<br>
     <span class="scenario">Scenario: End-to-end missed-call → IVR end-of-call handler → NS → CT → PN reaches the missed party with the callback PIN + a deep-link that opens the correct drilldown. Validates B17.2 missed-call event + B17.3 routing (CSP CT vs Customer CT based on <code>csp_user_id</code> presence) + the <code>page_name</code> contract.</span>
     <strong>Part A — CSP misses customer's call (Restore ticket):</strong><br>
     <span class="kw">Given</span> A customer with an open Restore ticket dials the masked DID; the CSP / Technician's phone rings but no answer<br>
@@ -1912,8 +1534,8 @@ sequenceDiagram
   </div>
 
   <div class="gherkin">
-    <strong>CRITERIA_47 (UAT · Net Box Recovery / Pickup — end-to-end):</strong> NBREC ticket: PIN visible on both apps, customer notified at creation, missed-call PN deep-links to pickup drilldown, bridge with displayed PIN connects<br>
-    <span class="scenario">Scenario: One consolidated UAT for the Net Box Recovery (router pickup) family — exercises B15 / B16 / B17 and the page_name contract for the <code>nbrec</code> family in a single end-to-end run. Different from CRITERIA_40–42 (install / restore) and CRITERIA_46 (missed-call install / restore), because NBREC is a distinct lifecycle phase with its own drilldown screen and its own deep-link string.</span>
+    <strong>UAT_28 (UAT · Net Box Recovery / Pickup — end-to-end):</strong> NBREC ticket: PIN visible on both apps, customer notified at creation, missed-call PN deep-links to pickup drilldown, bridge with displayed PIN connects<br>
+    <span class="scenario">Scenario: One consolidated UAT for the Net Box Recovery (router pickup) family — exercises B15 / B16 / B17 and the page_name contract for the <code>nbrec</code> family in a single end-to-end run. Different from UAT_21–42 (install / restore) and UAT_27 (missed-call install / restore), because NBREC is a distinct lifecycle phase with its own drilldown screen and its own deep-link string.</span>
 
     <strong>Part A — PIN visible on both apps:</strong><br>
     <span class="kw">Given</span> A customer has an active NBREC (router-pickup) ticket assigned to a Technician<br>
@@ -1953,6 +1575,384 @@ sequenceDiagram
     </div>
   </div>
 
+  
+  <h3>B9.2 Internal Dev Test Cases</h3>
+  <p style="font-size:13px;color:var(--muted);">Tests that primarily require dev / QA tooling — DB inspection, code review, simulation, log greps, chaos / brute-force runners. 19 cases.</p>
+
+<div class="gherkin">
+    <strong>DEV_01 (computation · boundary):</strong> 90-day PIN cooldown expires at exactly 90 days, not 89, not 91<br>
+    <span class="scenario">Scenario: A ticket closes at time T. Its PIN value is reserved for 90 days. At T + 89 days, the PIN must still be unusable (cooldown not yet expired). At T + 90 days, the row becomes eligible for hard-delete by the retention job. The boundary must be exact.</span>
+    <span class="kw">Given</span> A Table 2 row soft-deleted at time T, with <code>ES_CSPIVR_PIN_COOLDOWN_DAYS = 90</code><br>
+    <span class="kw">When</span> The system clock reaches T + 89 days, 23 hours, 59 minutes<br>
+    <span class="kw">Then</span> A PIN lookup using that row's PIN returns invalid<br>
+    <span class="kw">When</span> The system clock reaches T + 90 days, 0 hours, 1 minute<br>
+    <span class="kw">Then</span> The hard-delete retention job picks up the row as eligible
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>DB</strong> — At soft-delete time: <code>cooldown_until = expires_at + INTERVAL '90 days'</code></li>
+        <li><strong>Time-travel test</strong> — Manually fast-forward clock (or set <code>expires_at</code> 89.9 days in past) and trigger a PIN lookup → returns no match; then 90.1 days in past and run retention job → row deleted</li>
+        <li><strong>Service log</strong> — At 89.9d: <code>"PIN lookup found cooldown row, invalid"</code>. At 90.1d: <code>"Retention job hard-deleted row"</code></li>
+        <li><strong>Generation pool</strong> — After hard-delete, the PIN value can be reissued by the generation algorithm (test by exhausting other PINs and confirming this one is available again)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_02 (computation · structural):</strong> PIN attempts are capped at 2 by App Bazaar structure, not by backend counter<br>
+    <span class="scenario">Scenario: We don't want our backend tracking attempt counts (state in the wrong place). Exotel's App Bazaar flow has exactly 2 Gather applets in sequence. After the second wrong attempt, the flow falls through to dead-end. There is no third Gather configured.</span>
+    <span class="kw">Given</span> A caller in the PIN gather flow<br>
+    <span class="kw">When</span> They enter wrong PINs at both Gather attempts<br>
+    <span class="kw">Then</span> The App Bazaar flow routes directly to the final Passthru Sync → Switch Case → dead-end<br>
+    <span class="kw">And</span> No third Gather applet exists in the App Bazaar flow
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>App Bazaar flow inspection</strong> — Open the flow in Exotel App Bazaar; count Gather applets — must be exactly 2</li>
+        <li><strong>Code review</strong> — Confirm API 3 backend has NO attempt counter (no <code>attempt_count++</code> logic) — the structure enforces the cap</li>
+        <li><strong>Audit log</strong> — <code>pin_audit_logs</code> for any single CallSid contains at most 2 attempt rows</li>
+        <li><strong>End state after 2 wrong attempts</strong> — Per UAT_12 (dead-end greeting + SMS)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_03 (edge · BEC-06):</strong> Race between caller's dial and ticket's terminal transition → dead-end (never a stale bridge)<br>
+    <span class="scenario">Scenario: A customer dials the masked number at the exact moment their ticket transitions to terminal state. Between Exotel's webhook hitting our API 1 and our DB read, the terminal event has processed and soft-deleted the Table 2 rows. The IVR must NOT bridge to a now-closed ticket — even by a microsecond.</span>
+    <span class="kw">Given</span> A customer dialling at the moment their ticket transitions to terminal<br>
+    <span class="kw">When</span> Table 2 has been soft-deleted by the time API 1 reads<br>
+    <span class="kw">Then</span> The dead-end greeting plays<br>
+    <span class="kw">And</span> The call is never bridged to the now-closed ticket
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Race test</strong> — Use a transactional script: fire the terminal event AND the API 1 request in parallel; repeat 100 times; confirm no bridge happens on terminal'd ticket</li>
+        <li><strong>DB consistency</strong> — Table 2 row's <code>expires_at</code> is set BEFORE any new API 1 lookup begins (transaction commit ordering)</li>
+        <li><strong>API 1 SQL trace</strong> — Always includes <code>AND expires_at IS NULL</code> so terminal'd rows are excluded by definition</li>
+        <li><strong>End state</strong> — Caller hears the dead-end greeting; call_audit_logs shows the lookup-miss event</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_04 (edge · BEC-10):</strong> Owner missing for a CSP → allocation fails cleanly, CTA hidden, ops alerted<br>
+    <span class="scenario">Scenario: A data-quality issue — a candidate belongs to a CSP organisation that has no user with <code>role = owner</code>. Allocation can't pick a default executor mobile. The right behaviour is to fail gracefully: skip Table 2 row creation, leave <code>maskedCallAvailable = false</code> so the apps hide the Call CTA, and alert ops to fix the data.</span>
+    <span class="kw">Given</span> A candidate whose csp_id has no user with role=owner<br>
+    <span class="kw">When</span> The candidate-creation event fires<br>
+    <span class="kw">Then</span> Table 2 row creation fails for this ticket<br>
+    <span class="kw">And</span> <code>maskedCallAvailable = false</code> on the ticket DTO<br>
+    <span class="kw">And</span> The CSP App / Customer App hide the Call CTA<br>
+    <span class="kw">And</span> An ops alert fires
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>DB (csp_users)</strong> — <code>SELECT count(*) FROM csp_users WHERE csp_id = X AND role = 'owner'</code> → 0 (the broken precondition)</li>
+        <li><strong>DB (Table 2)</strong> — No rows exist for this ticket_id after candidate-creation event processed</li>
+        <li><strong>Service log</strong> — ERROR: <code>"Allocation failed for ticket=X — no Owner found for csp_id=X"</code></li>
+        <li><strong>Ticket API</strong> — GET ticket DTO returns <code>maskedCallAvailable: false</code></li>
+        <li><strong>App test</strong> — Open the ticket in CSP App and Customer App; Call CTA button is hidden or disabled</li>
+        <li><strong>Ops alert</strong> — Alert delivered to ops Slack / PagerDuty (configurable destination)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_05 (failure · FM-04):</strong> Missed-call event publishes reliably via transactional outbox; IVR doesn't talk to CleverTap directly<br>
+    <span class="scenario">Scenario: Ramesh (CSP) tries to call Priya; Priya doesn't pick up. The IVR must publish <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> to the bus topic <code>csp.ivr.missed-call</code> reliably (no loss on backend restart). The transactional outbox pattern guarantees this. The IVR is NOT allowed to call CleverTap / FCM / Gupshup directly — that's <code>csp-notification-service</code>'s job.</span>
+    <span class="kw">Given</span> A CSP-initiated bridge attempt where the customer doesn't pick up (Exotel returns DNP)<br>
+    <span class="kw">When</span> Passthru-Async-on-DNP fires our backend's <strong>API_logging</strong> DNP endpoint<br>
+    <span class="kw">Then</span> <code>call_audit_logs</code> INSERT and the outbox INSERT commit in the same DB transaction<br>
+    <span class="kw">And</span> The outbox worker picks up the row and publishes <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> to topic <code>csp.ivr.missed-call</code><br>
+    <span class="kw">And</span> IVR does NOT make any direct API call to CleverTap / FCM / Gupshup for this missed-call alert
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>DB transaction</strong> — Both INSERTs have the same transaction ID; if either fails, both rollback</li>
+        <li><strong>Outbox table</strong> — One row per CallSid (idempotency); payload contains <code>missed_party_pin</code>, <code>missed_party_mobile</code>, <code>ticket_id</code>, <code>ticket_type</code>, <code>caller_display_name</code>, <code>callback_deeplink</code></li>
+        <li><strong>Bus topic</strong> — Consume <code>csp.ivr.missed-call</code> in a test consumer; confirm the event arrived</li>
+        <li><strong>Code grep</strong> — Search IVR codebase for any direct call to CleverTap / FCM / Gupshup APIs from the missed-call path → must find ZERO matches (Gupshup calls exist for PIN-delivery and dead-end SMS, but NOT for missed-call alerts)</li>
+        <li><strong>Backend crash test</strong> — Kill the backend pod after the DB transaction commits but before the outbox worker runs. On restart, the worker picks up the row and publishes (no event lost).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_06:</strong> Truecaller / VLT verification displays on the masked DID at rollout<br>
+    <span class="scenario">Scenario: Truecaller marks unknown business numbers as "Spam Likely" — that's the #1 cause of customers not picking up. The masked DID provisioned for the IVR must carry Truecaller and VLT verification before rollout so the "Wiom" verified banner shows on customer phones from the first masked call onwards.</span>
+    <span class="kw">Given</span> The chosen masked DID has been registered with Truecaller (business profile) and submitted for VLT verification with the carrier<br>
+    <span class="kw">When</span> A Truecaller-installed phone receives a ringing call from the masked DID<br>
+    <span class="kw">Then</span> The "Wiom" verified green banner shows on the caller-ID screen<br>
+    <span class="kw">And</span> The masked DID is whitelisted (not flagged as "Spam Likely" or "Unknown") before any user-facing rollout
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Test device</strong> — Android phone with Truecaller installed; receive a call from the masked DID via the new IVR flow</li>
+        <li><strong>Caller ID</strong> — Shows "Wiom" with the green verified badge during ringing; NOT "Spam Likely" or "Unknown"</li>
+        <li><strong>Truecaller in-app search</strong> — Search the masked DID — returns the Wiom business profile</li>
+        <li><strong>Pickup rate</strong> — Post-launch baseline: ≥ 60% of bridged calls picked up within first ring sequence</li>
+        <li><strong>Pre-launch check</strong> — Confirm with Truecaller Business that the DID's verification entry is unchanged (no re-submission needed)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_07 (api · contract · P0):</strong> API 3 strips the literal double-quotes Exotel wraps around the <code>digits</code> parameter<br>
+    <span class="scenario">Scenario: Exotel's Gather applet sends collected digits with literal double-quotes wrapping the value. If <code>56789</code> is entered, the URL contains <code>digits="56789"</code> — quotes included. Backend MUST <code>strip('"')</code> before validating, or every multi-ticket PIN lookup fails. <strong>This is the single most common implementation gotcha — verify explicitly.</strong></span>
+    <span class="kw">Given</span> A caller is in the PIN gather flow with a known-valid PIN (e.g., 56789)<br>
+    <span class="kw">When</span> Exotel sends a GET to <strong>API 3</strong> with <code>digits="56789"</code>, <code>from=...</code>, <code>CallSid=...</code> in the query string (with literal quote characters around the digits value)<br>
+    <span class="kw">Then</span> API 3 strips the quotes, validates "56789" is 5 numeric digits, and queries Table 2 with PIN = 56789 (not "56789")<br>
+    <span class="kw">And</span> The lookup succeeds and the call bridges
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Manual webhook test</strong> — From Postman / curl: GET to the API 3 endpoint with <code>digits=%2256789%22&amp;...</code> (URL-encoded quotes). Confirm response includes the bridge destination (not empty)</li>
+        <li><strong>Code review</strong> — API 3 handler contains <code>digits.strip('"')</code> (or equivalent) as the first line of digits processing</li>
+        <li><strong>SQL trace</strong> — Captured query parameter is exactly <code>56789</code> (5 chars), not <code>"56789"</code> (7 chars)</li>
+        <li><strong>Service log</strong> — <code>"PIN received raw='\"56789\"', stripped='56789'"</code> for traceability</li>
+        <li><strong>Negative test</strong> — Send <code>digits="ABC"</code> (quoted alpha) → format validation fails → empty destination returned</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_08 (api · contract):</strong> API 1 / API 3 response body contains <strong>only</strong> the <code>destination</code> field<br>
+    <span class="scenario">Scenario: Per Rule 6, the Connect response body must be minimal — only <code>destination</code>. Recording (on/off + channels), max ring duration, caller ID, and "fetch after every attempt" are configured statically in the App Bazaar Connect applet UI. The dynamic URL response is reserved for what changes per call (destination only). Sending extra fields would unintentionally override the App Bazaar config.</span>
+    <span class="kw">Given</span> Any call that reaches API 1 or API 3<br>
+    <span class="kw">When</span> The response is returned to Exotel<br>
+    <span class="kw">Then</span> The JSON body's top-level keys are exactly <code>{"destination"}</code><br>
+    <span class="kw">And</span> No <code>outgoing_phone_number</code>, <code>record</code>, <code>recording_channels</code>, <code>max_ringing_duration</code>, or <code>fetch_after_attempt</code> fields are sent
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Response inspection</strong> — Capture API 1 + API 3 responses across all paths (bridge, no-bridge, error fallback). Each response body contains only the <code>destination</code> key.</li>
+        <li><strong>Code review</strong> — Response builder constructs the body from a single field; no code path adds the optional fields.</li>
+        <li><strong>Live behaviour</strong> — Confirm Exotel still bridges correctly, dials with the masked DID as caller ID, and times out after 30s on no-answer — all from defaults.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_09 (api · contract):</strong> API 1's no-bridge response is exactly <code>{"destination": {"numbers": []}}</code> — not 404, not null, not <code>{}</code><br>
+    <span class="scenario">Scenario: When Table 1 misses AND Table 2 by-FROM returns 0 or ≥2 rows, API 1 must return a specific shape that Exotel interprets as "Did not Dial". A 404, null body, or empty object would cause Exotel to drop the call or misroute the flow.</span>
+    <span class="kw">Given</span> A caller whose mobile has no Table 1 entry and no Table 2 match (or has ≥ 2 Table 2 matches)<br>
+    <span class="kw">When</span> Exotel calls API 1<br>
+    <span class="kw">Then</span> Response is HTTP 200 with body <code>{"destination": {"numbers": []}}</code><br>
+    <span class="kw">And</span> Exotel routes the flow to the next applet (Passthru Sync → API 2)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Response inspection</strong> — For an unknown FROM and a multi-ticket FROM, API 1 returns the exact JSON above</li>
+        <li><strong>NOT 404</strong> — Status code is 200, not 404</li>
+        <li><strong>NOT null</strong> — Body is not <code>null</code>, not empty string, not <code>{}</code></li>
+        <li><strong>Exotel App Bazaar timeline</strong> — Confirm flow advances to Passthru Sync (not aborted)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_10 (security · P0):</strong> SQL injection via the PIN field returns empty + safe response, no DB corruption<br>
+    <span class="scenario">Scenario: If our backend uses string concatenation to build the PIN lookup SQL (instead of parameterised queries), a malicious payload like <code>' OR '1'='1</code> could match all rows and return a random destination. We MUST use parameterised queries.</span>
+    <span class="kw">Given</span> A caller in the PIN gather flow (CallSid + user_type cached)<br>
+    <span class="kw">When</span> Exotel sends a GET to <strong>API 3</strong> with <code>digits="' OR '1'='1"</code> in the query string (or similar SQL-injection payload, URL-encoded)<br>
+    <span class="kw">Then</span> API 3 strips quotes, validates format (must be 5 numeric digits) → fails validation → returns <code>{"destination": {"numbers": []}}</code><br>
+    <span class="kw">And</span> No DB row is matched, no row is deleted or modified, no schema is dropped
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Injection payloads tested</strong> — <code>' OR '1'='1</code>, <code>'; DROP TABLE table_2; --</code>, <code>56789' AND '1'='1</code>, <code>UNION SELECT ...</code>, all URL-encoded</li>
+        <li><strong>All return</strong> — HTTP 200 with empty destination; format validation failure logged</li>
+        <li><strong>DB inspection after test</strong> — <code>table_2</code> intact, row counts unchanged, no schema changes</li>
+        <li><strong>Code review</strong> — All Table 2 queries use parameterised statements / prepared queries (no string concatenation of user input)</li>
+        <li><strong>Response body</strong> — No raw SQL error / stack trace leaked to caller</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_11 (security · P0 · design gap):</strong> Brute-force PIN attempts are rate-limited per-FROM at the API 3 level<br>
+    <span class="scenario">Scenario: A 5-digit PIN has 100,000 possible values. The 2-attempt-per-call cap doesn't stop a determined attacker who can place 1000 calls and try a different PIN each time. We need an explicit rate limit at API 3 (e.g., max 10 PIN attempts per FROM per hour). <strong>This is currently a DESIGN gap, not just a test gap — engineering needs to add a rate limiter before launch.</strong></span>
+    <span class="kw">Given</span> A FROM mobile that has made N failed PIN attempts in the last hour<br>
+    <span class="kw">When</span> N exceeds the per-FROM rate limit threshold (e.g., 10 attempts/hour)<br>
+    <span class="kw">Then</span> API 3 returns empty destination without performing the Table 2 lookup<br>
+    <span class="kw">And</span> The FROM is locked for a backoff window (15 minutes minimum)<br>
+    <span class="kw">And</span> An ops alert fires for repeated lockouts (potential attack)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Pre-launch confirmation</strong> — Rate limiter implementation exists in API 3 (engineering deliverable). PM blocker until confirmed.</li>
+        <li><strong>Load test</strong> — Send 100 PIN attempts from the same FROM in rapid succession. After the threshold: subsequent attempts return empty without DB query (confirm via SQL log absence)</li>
+        <li><strong>Lockout state</strong> — Per-FROM lockout entry visible in Redis / DB with expiry timestamp</li>
+        <li><strong>Ops alert</strong> — Trigger lockout 3 times across different FROMs; confirm aggregated alert fires</li>
+        <li><strong>Reset</strong> — Lockout expires automatically after backoff window</li>
+        <li><strong>Documentation</strong> — Rate limit threshold (per-FROM and per-hour) recorded in B3 parameters</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_12 (lifecycle · Restore):</strong> <code>ES_RESTORE_CANDIDATE_CREATED</code> writes 2 Table 2 rows with Owner as default executor<br>
+    <span class="scenario">Scenario: Symmetric to UAT_05 but for Restore family specifically. A Restore complaint task creates a candidate at PENDING_ACCEPTANCE; the listener must write customer-side + CSP-side rows with the Owner as the default bridge target.</span>
+    <span class="kw">Given</span> A Restore complaint that triggers <code>ES_RESTORE_CANDIDATE_CREATED</code><br>
+    <span class="kw">When</span> The IVR listener consumes the event<br>
+    <span class="kw">Then</span> Two rows are written to Table 2: customer-side (other_party_mobile = Owner's mobile) + CSP-side (other_party_mobile = customer's mobile)<br>
+    <span class="kw">And</span> Each row has a unique 5-digit PIN<br>
+    <span class="kw">And</span> Customer-side row's <code>csp_user_id = Owner's csp_user_id</code>; CSP-side row's <code>csp_id</code> = the owning CSP org<br>
+    <span class="kw">And</span> The Customer App shows <code>maskedCallAvailable = true</code> on this Restore ticket
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Event trigger</strong> — Manually publish <code>ES_RESTORE_CANDIDATE_CREATED</code> for a test ticket</li>
+        <li><strong>DB</strong> — <code>SELECT side, pin, other_party_mobile, csp_user_id, csp_id FROM table_2 WHERE ticket_id = X</code> → exactly 2 rows, both <code>expires_at IS NULL</code>, PINs unique</li>
+        <li><strong>Customer-side row</strong> — <code>other_party_mobile</code> matches Owner's <code>registered_mobile</code> (cross-check via gateway query)</li>
+        <li><strong>Customer SMS</strong> — Customer receives PIN SMS via Gupshup with the customer-side PIN inline</li>
+        <li><strong>App</strong> — Open the Restore ticket in Customer App; Call CTA is visible</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_13 (lifecycle · NBREC):</strong> <code>ES_NBREC_CANDIDATE_CREATED</code> writes 2 Table 2 rows for NetBox recovery tickets<br>
+    <span class="scenario">Scenario: NBREC (NetBox Recovery / Pickup) is the third execution-service family. The same allocation pattern must work. If NBREC was missed in implementation, every NBREC ticket's call would silently fail.</span>
+    <span class="kw">Given</span> An NBREC pickup ticket that triggers <code>ES_NBREC_CANDIDATE_CREATED</code><br>
+    <span class="kw">When</span> The IVR listener consumes the event<br>
+    <span class="kw">Then</span> Two rows are written to Table 2 with the Owner as default executor (same allocation pattern as Install / Restore)<br>
+    <span class="kw">And</span> Customer-side PIN dispatched via SMS<br>
+    <span class="kw">And</span> CSP App's NBREC ticket card shows <code>maskedCallAvailable = true</code>
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Event trigger</strong> — Manually publish <code>ES_NBREC_CANDIDATE_CREATED</code></li>
+        <li><strong>DB</strong> — Same checks as DEV_12 — 2 rows, unique PINs, Owner-side mobile</li>
+        <li><strong>NBREC-specific</strong> — Confirm listener handles this event type explicitly (code review of listener match-case / switch)</li>
+        <li><strong>App</strong> — NBREC ticket in CSP App has Call CTA visible</li>
+        <li><strong>End-to-end</strong> — Call from customer's mobile bridges correctly for NBREC ticket</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_14 (lifecycle · terminal):</strong> Terminal ES event soft-deletes both Table 2 rows and flips <code>maskedCallAvailable = false</code><br>
+    <span class="scenario">Scenario: When a ticket closes (any terminal event in any family — completed / cancelled / failed / etc.), the IVR listener must soft-delete both Table 2 rows (set <code>expires_at = now()</code>, <code>cooldown_until = now() + 90d</code>) AND the app's <code>maskedCallAvailable</code> flag must flip to false immediately so the Call CTA disappears.</span>
+    <span class="kw">Given</span> An active ticket with 2 Table 2 rows<br>
+    <span class="kw">When</span> A terminal ES event fires (e.g., <code>ES_INSTALL_INCENTIVE_EVALUATED</code> for the Install success path or <code>ES_INSTALL_REPORTED_FAILED</code> for failure — both from es-installation; <code>ES_RESTORE_CANDIDATE_COMPLETED</code> from es-restore; <code>ES_NBREC_CANDIDATE_CANCELLED</code> from es-netbox-recovery)<br>
+    <span class="kw">Then</span> Both Table 2 rows have <code>expires_at = now()</code> and <code>cooldown_until = now() + 90 days</code><br>
+    <span class="kw">And</span> The ticket DTO returns <code>maskedCallAvailable = false</code> within seconds<br>
+    <span class="kw">And</span> Any subsequent call attempt routes to dead-end (per DEV_03 race / UAT_09 0-ticket)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Event trigger</strong> — Fire a terminal event for an active ticket</li>
+        <li><strong>DB (after)</strong> — Both rows have <code>expires_at</code> set; <code>cooldown_until = expires_at + 90 days</code></li>
+        <li><strong>Soft delete</strong> — Rows still exist (audit), but excluded from active lookups</li>
+        <li><strong>Service log</strong> — <code>"Soft-deleted Table 2 rows for ticket=X due to ES_*_terminal event"</code></li>
+        <li><strong>App</strong> — Open the ticket; Call CTA disappears within 5 seconds of event processing (cache invalidation works)</li>
+        <li><strong>Post-test call</strong> — Customer dials the masked number → routes to dead-end greeting (no bridge to closed ticket)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_15 (lifecycle · idempotency):</strong> Duplicate ES event delivery does not create duplicate Table 2 rows<br>
+    <span class="scenario">Scenario: ES events use at-least-once delivery. The same allocation-trigger event (e.g., <code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> for Install, or <code>ES_RESTORE_CANDIDATE_CREATED</code> / <code>ES_NBREC_CANDIDATE_CREATED</code> for the others) may be delivered twice (e.g., during broker retry, or — in the Install case — if the customer reschedules and re-confirms a slot). The IVR listener's upsert on <code>(ticket_id, side)</code> must make this idempotent — we should still end with exactly 2 rows, not 4, and PINs should not change.</span>
+    <span class="kw">Given</span> A new ticket whose allocation-trigger event has been processed once (Table 2 has 2 rows)<br>
+    <span class="kw">When</span> The same event is delivered again (broker retry)<br>
+    <span class="kw">Then</span> Table 2 still has exactly 2 rows for this ticket, with the original PIN values<br>
+    <span class="kw">And</span> No duplicate SMS to the customer<br>
+    <span class="kw">And</span> Service log notes the idempotency check fired
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Test trigger</strong> — Publish the event, wait for processing, publish the same event again with same idempotency key</li>
+        <li><strong>DB</strong> — Row count for the ticket = 2 (not 4)</li>
+        <li><strong>PINs unchanged</strong> — PIN values byte-identical to first processing</li>
+        <li><strong>Service log</strong> — <code>"Table 2 rows already exist for ticket=X, skipping (idempotent)"</code></li>
+        <li><strong>SMS audit</strong> — Only 1 customer-side PIN-delivery SMS fired (not 2)</li>
+        <li><strong>Code review</strong> — Listener uses upsert on <code>(ticket_id, side)</code> as the unique key</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_16 (resilience):</strong> Redis down → API 2 falls back to live DB resolution, still returns 200 with correct value<br>
+    <span class="scenario">Scenario: We cache <code>user_type + csp_id + table_2_row_count</code> against CallSid in Redis for sub-ms reads. If Redis is down (or the key has expired), API 2 must fall back to a live identity + count resolution from the DB. The caller's experience is unchanged — same correct response, slightly higher latency.</span>
+    <span class="kw">Given</span> Redis is offline (or CallSid cache entry missing)<br>
+    <span class="kw">When</span> Exotel calls API 2 during a live call<br>
+    <span class="kw">Then</span> API 2 performs a live DB resolution and returns the correct 5-value discriminator<br>
+    <span class="kw">And</span> Response is HTTP 200 (not 500)<br>
+    <span class="kw">And</span> Service log notes the cache miss + DB-fallback path
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Chaos test</strong> — Stop Redis mid-call: <code>redis-cli SHUTDOWN NOSAVE</code> in test env</li>
+        <li><strong>API 2 response</strong> — HTTP 200 with the correct value (e.g., <code>csp_with_pin</code>)</li>
+        <li><strong>Latency</strong> — Higher than cache hit (~50-200 ms vs &lt; 5 ms) but still well under Exotel's 5s budget</li>
+        <li><strong>Service log</strong> — WARN: <code>"Redis unavailable for CallSid=X, falling back to DB"</code></li>
+        <li><strong>Recovery</strong> — After Redis restart, subsequent calls cache normally again</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_17 (resilience · concurrency):</strong> Concurrent calls from the same FROM (different CallSids) don't mix sessions<br>
+    <span class="scenario">Scenario: A user accidentally double-dials within a second (common on Android). Two simultaneous webhooks arrive from Exotel with the same FROM but different CallSids. Each must be processed independently — no shared state, no race conditions, no cross-pollination of cached <code>user_type</code> values.</span>
+    <span class="kw">Given</span> 2 simultaneous API 1 requests with same FROM mobile but different CallSids (CallSid-A and CallSid-B)<br>
+    <span class="kw">When</span> Both arrive at the backend within milliseconds<br>
+    <span class="kw">Then</span> Each gets its own independent processing path<br>
+    <span class="kw">And</span> Redis has 2 separate cache entries (one per CallSid)<br>
+    <span class="kw">And</span> Both responses are correct and consistent
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Load test</strong> — Fire 2 parallel HTTP requests with same FROM, different CallSids (using Apache JMeter, k6, or 2 parallel curl)</li>
+        <li><strong>Both responses</strong> — HTTP 200, identical or appropriately matching content</li>
+        <li><strong>Redis</strong> — <code>redis-cli GET ivr:CallSid-A</code> and <code>redis-cli GET ivr:CallSid-B</code> both return cache entries with correct content (not cross-contaminated)</li>
+        <li><strong>DB queries</strong> — 2 independent transactions, no lock waits or deadlocks in logs</li>
+        <li><strong>Repeated test</strong> — 100 concurrent calls from same FROM; no errors, no shared session bleed</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_18 (lifecycle · PIN generation):</strong> PIN generation handles near-pool-exhaustion without collisions<br>
+    <span class="scenario">Scenario: With 5-digit PINs (100,000 keyspace) and ~10K active tickets × 2 PINs + ~45K in cooldown, the pool is comfortable. But the generation algorithm must still correctly handle near-exhaustion — and never write a duplicate PIN to an active row.</span>
+    <span class="kw">Given</span> A test environment with ~99,000 of 100,000 PINs in active or cooldown state<br>
+    <span class="kw">When</span> A new ticket is created and PIN generation runs<br>
+    <span class="kw">Then</span> The generated PIN is unique (no collision with active or cooldown rows)<br>
+    <span class="kw">And</span> If retry count exceeds threshold (e.g., 10 collisions), service emits an alert<br>
+    <span class="kw">And</span> Above 70% pool reservation: triggers escalation alert to migrate to 6-digit PINs
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Test setup</strong> — Seed ~99,000 PIN rows in test DB (mix of active + cooldown)</li>
+        <li><strong>New PIN generation</strong> — Finds the remaining valid PIN; takes longer than usual but succeeds</li>
+        <li><strong>DB constraint</strong> — Unique index on <code>(pin) WHERE expires_at IS NULL</code> prevents duplicate active rows at the DB layer</li>
+        <li><strong>Metrics</strong> — Pool-reservation % surfaced on dashboard; alert fires at 70%</li>
+        <li><strong>Generation retry count</strong> — Logged per allocation; alert if average exceeds threshold</li>
+        <li><strong>Code review</strong> — Generation algorithm queries both active and cooldown rows before settling on a PIN</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <strong>DEV_19 (resilience · Exotel idempotency):</strong> Exotel retry of the same webhook (same CallSid) produces the same response, no duplicate side effects<br>
+    <span class="scenario">Scenario: If our backend is slow or times out, Exotel may retry the same webhook. We must treat retries idempotently — same CallSid should produce the same response, and not double-write to Table 1 or fire duplicate missed-call events.</span>
+    <span class="kw">Given</span> API 1 has already processed a request for CallSid X<br>
+    <span class="kw">When</span> Exotel retries the exact same webhook (same CallSid, same payload)<br>
+    <span class="kw">Then</span> API 1 returns the same response as the first call<br>
+    <span class="kw">And</span> No duplicate Table 1 row is created<br>
+    <span class="kw">And</span> Cached state for CallSid X is reused (no DB re-query)
+    <div class="verify">
+      <strong class="v-label">Verify with:</strong>
+      <ul>
+        <li><strong>Replay test</strong> — Send the same API 1 webhook twice with identical CallSid; compare responses byte-for-byte</li>
+        <li><strong>Redis</strong> — Single cache entry for CallSid X</li>
+        <li><strong>DB</strong> — No duplicate row in <code>table_1</code> or audit logs (idempotency key on CallSid)</li>
+        <li><strong>Missed-call event idempotency</strong> — Replay a DNP Passthru-Async; bus has only one <code>ES_CSPIVR_MISSED_CALL_DETECTED</code> event for the CallSid (per INV-10)</li>
+        <li><strong>Service log</strong> — Second invocation: <code>"Cache hit for CallSid=X, returning cached response"</code></li>
+      </ul>
+    </div>
+  </div>
+
   <hr class="sect-end">
 </section>
 
@@ -1977,7 +1977,7 @@ sequenceDiagram
     <tr><th>Data category</th><th>Treatment</th><th>Rationale</th></tr>
     <tr><td>Existing active Install / Restore / Pickup tickets at IVR backend launch</td><td><strong>One-time backfill.</strong> A backend script reads all currently-active tickets across Install / Restore / NBREC ESs, resolves Owner / current executor via csp-gateway-service, generates per-ticket PINs, writes 2 Table 2 rows per ticket (customer-side + CSP-side).</td><td>Without backfill, in-flight tickets only support Path 1 (in-app CTA → Table 1 short-TTL). Path 2 (recognised caller from their registered SIM) and Path 3 (PIN gate from a different SIM, UC 11) both fail because Table 2 row / PIN don't exist. Backfill closes that gap for in-flight tickets from day 1 of the user's app update.</td></tr>
     <tr><td>Customer-side PIN delivery for backfilled tickets</td><td>No SMS blast. PIN is visible in-app whenever the Call CTA is visible (per B6).</td><td>Customers see the PIN the first time they open the new app on the active ticket. No separate notification step needed.</td></tr>
-    <tr><td>Tickets created after IVR backend goes live</td><td>Standard flow — PIN allocated at <code>*_CANDIDATE_CREATED</code> event by the IVR event consumer.</td><td>Steady-state behaviour per spec. The event consumer is running from IVR backend launch, so there is no gap between backfill and steady-state.</td></tr>
+    <tr><td>Tickets created after IVR backend goes live</td><td>Standard flow — PIN allocated at the per-family allocation trigger by the IVR event consumer (<code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> for Install; <code>ES_RESTORE_CANDIDATE_CREATED</code> / <code>ES_NBREC_CANDIDATE_CREATED</code> for the others).</td><td>Steady-state behaviour per spec. The event consumer is running from IVR backend launch, so there is no gap between backfill and steady-state.</td></tr>
     <tr><td>Closed tickets (within last 90 days)</td><td>Not backfilled.</td><td>No active calls expected on closed tickets. Calls land on the dead-end IVR regardless of PIN existence.</td></tr>
     <tr><td>SIM inventory</td><td>Built fresh. CSPs register SIMs via self-service or admin tool from IVR backend launch onward.</td><td>No legacy SIM dataset exists today (the legacy IVR code does not route live customer-CSP calls). Starting fresh ensures clean audit history.</td></tr>
     <tr><td>Call audit logs</td><td>New <code>call_audit_logs</code> + <code>call_event_log</code> tables start fresh in <code>csp-ivr-service</code> at IVR backend launch.</td><td>No legacy call-history dataset to migrate or cross-reference.</td></tr>
@@ -2733,7 +2733,7 @@ sequenceDiagram
     <tr><th style="width:22%">Event (PM-side descriptor)</th><th style="width:30%">When IVR fires it</th><th>Payload IVR sends</th></tr>
     <tr>
       <td><em>Initial PIN allocation event</em></td>
-      <td>When IVR consumes <code>*_CANDIDATE_CREATED</code> for a new ticket and writes the first Table 2 rows.</td>
+      <td>When IVR consumes the per-family allocation trigger and writes the first Table 2 rows:<br>• <strong>Install:</strong> <code>ES_INSTALL_CUSTOMER_SLOT_CONFIRMED</code> — fires once the customer confirms the slot (Call CTA becomes visible at the same time)<br>• <strong>Restore:</strong> <code>ES_RESTORE_CANDIDATE_CREATED</code> — fires at ticket creation (CTA visible immediately)<br>• <strong>NBREC:</strong> <code>ES_NBREC_CANDIDATE_CREATED</code> — same as Restore<br><br><em style="font-size:12px;color:var(--muted);">Install-specific future note: when CSP-takeover-of-pre-confirmed-slot logic ships, the corresponding state-transition event will need to be subscribed too (idempotency on Table 2 prevents double-allocation; per-ticket "customer-already-notified" flag prevents double-notification).</em></td>
       <td><code>execution_candidate_id</code>, <code>ticket_type</code> (install / restore / nbrec), <code>csp_mobile</code>, <code>csp_user_id</code>, <code>customer_mobile</code>, <code>PIN_for_customer</code>, <code>PIN_for_CSP</code>, <code>page_name</code></td>
     </tr>
     <tr>
