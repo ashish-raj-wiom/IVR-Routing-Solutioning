@@ -168,7 +168,7 @@
     <li><a href="#s23"><span class="ix">B12.</span>Metrics &amp; Measurement</a></li>
     <li><a href="#s24"><span class="ix">B13.</span>Build Phases</a></li>
     <li><a href="#s25"><span class="ix">B14.</span>Third-Party Integration (Exotel API contract)</a></li>
-    <li><a href="#s26"><span class="ix">B15.</span>Third-Party Integration (Customer App Backend PIN-fetch)</a></li>
+    <li><a href="#s26"><span class="ix">B15.</span>Third-Party Integration (Customer-side: PIN fetch + account_id resolution)</a></li>
     <li><a href="#s27"><span class="ix">B16.</span>Third-Party Integration (CSP App Backend PIN-fetch)</a></li>
     <li><a href="#s28"><span class="ix">B17.</span>Third-Party Integration (Notification Service — PIN + missed-call)</a></li>
   </ol>
@@ -2596,14 +2596,18 @@ sequenceDiagram
 <!-- B15 Third-Party Integration: Customer App Backend -->
 <!-- ====================================================================== -->
 <section class="spec" id="s26">
-  <h2><span class="num">B15.</span> Third-Party Integration: Customer App Backend (PIN-fetch contract) <span class="tier how">HOW</span></h2>
-  <div class="expected"><strong>What is expected:</strong> Server-to-server API contract between IVR backend and the Customer App backend for fetching the per-ticket PIN displayed alongside the Call CTA. One endpoint, one query, three ticket types.</div>
+  <h2><span class="num">B15.</span> Third-Party Integration: Customer-side data flows (PIN fetch + account_id resolution) <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Two server-to-server integrations on the customer side of the IVR. <strong>Sub-flow A</strong> — Customer App backend → IVR for PIN fetch (one endpoint, three ticket types). <strong>Sub-flow B</strong> — IVR → Customer Service / Booking Service for resolving the caller's mobile to a <code>customer_account_id</code> (sequential fallback because the customer record sits in different tables depending on lifecycle stage).</div>
 
   <h3>B15.1 Overview</h3>
-  <p>The Customer App displays the per-ticket PIN alongside the Call CTA on any active ticket-detail screen. The PIN is fetched <strong>server-to-server</strong> by the Customer App backend from the IVR service — the mobile client never talks to IVR directly. This section defines the single API contract used for that fetch, across all three CSP-side ticket families (Install / Restore / NBREC).</p>
-  <div class="hint"><strong>Why this is a separate B-section from B14:</strong> B14 documents the Exotel API contract (IVR ↔ telephony provider, webhook-driven, IP allowlist). B15 documents a peer integration with a different counterparty (IVR ↔ Customer App backend, request-response, server-to-server auth). Keeping them as siblings makes the distinct contracts clear for each owning team — Exotel-facing work goes to the vendor liaison + IVR backend team, Customer-App-facing work goes to the IVR backend team + Customer App backend team.</div>
+  <p>Two distinct customer-side integrations live in this section:</p>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><strong>Sub-flow A — PIN fetch.</strong> Customer App backend pulls the per-ticket PIN from IVR to render alongside the Call CTA on any active ticket-detail screen. Server-to-server; the mobile client never talks to IVR directly. <em>Working in QA — kept as the baseline contract.</em></li>
+    <li><strong>Sub-flow B — Customer <code>account_id</code> resolution from caller mobile.</strong> When an inbound call hits the IVR (or whenever IVR needs to turn a mobile into a <code>customer_account_id</code>, e.g. at Table 2 row creation), it queries the Customer Service first and falls back to the Booking Service. Two services because pre-install customers live in the booking table only; post-install they are "promoted" to the customer table.</li>
+  </ul>
+  <div class="hint"><strong>Why this is a separate B-section from B14:</strong> B14 documents the Exotel API contract (IVR ↔ telephony provider, webhook-driven, IP allowlist). B15 documents peer integrations on the customer side (IVR ↔ Customer App backend for PIN fetch, and IVR → Customer / Booking services for identity resolution). Keeping them as siblings makes the distinct contracts clear for each owning team.</div>
 
-  <h3>B15.2 API contract</h3>
+  <h3>B15.2 Sub-flow A — PIN fetch (Customer App backend → IVR)</h3>
   <table>
     <tr><th style="width:24%">Field</th><th>Value</th></tr>
     <tr><td>HTTP method</td><td><code>GET</code>. Path owned by engineering — PM-side label: <strong>Customer-App PIN-fetch API</strong>.</td></tr>
@@ -2630,9 +2634,55 @@ sequenceDiagram
     <tr><td>Idempotency</td><td>Pure read. Safe to retry.</td></tr>
     <tr><td>Latency target</td><td>Backend p95 &lt; 100 ms.</td></tr>
   </table>
-  <p style="font-size:13px;"><strong>What IVR needs to store for this to work:</strong> IVR must keep the <strong>ticket_id</strong> and the <strong>ticket type</strong> on Table 2, alongside the existing <code>execution_candidate_id</code>. Without these two fields, the lookup above can't resolve the right row. Exact column names are tech's call.</p>
+  <p style="font-size:13px;"><strong>What IVR needs to store for sub-flow A to work:</strong> IVR must keep the <strong>ticket_id</strong> and the <strong>ticket type</strong> on Table 2, alongside the existing <code>execution_candidate_id</code>. Without these two fields, the lookup above can't resolve the right row. Exact column names are tech's call.</p>
 
-  <h3>B15.3 Ticket-active rules</h3>
+  <h3>B15.3 Sub-flow B — Customer <code>account_id</code> resolution (IVR → Customer Service / Booking Service)</h3>
+  <p>When an inbound call hits the IVR via Exotel, the only identifier we know about the caller is their mobile (the <code>From</code> in Exotel's connect-applet webhook). To recognise the caller and route via Path 2 (Table 2 by-FROM) — or to populate <code>customer_account_id</code> on Table 2 rows at PIN allocation time — IVR has to translate that mobile into a <code>customer_account_id</code>.</p>
+
+  <h4>Why two services, not one</h4>
+  <p>The customer record is split across two systems depending on lifecycle stage:</p>
+  <table>
+    <tr><th>Stage</th><th>Where the customer's <code>account_id</code> lives</th></tr>
+    <tr><td>Pre-install (booking placed, install not yet completed)</td><td><strong>Booking Service</strong> (booking table)</td></tr>
+    <tr><td>Post-install (install completed, customer "promoted" to the customer table)</td><td><strong>Customer Service</strong> (customer table)</td></tr>
+  </table>
+  <p>A single lookup against the Customer Service alone misses every caller currently in the install flow — which is exactly the population the IVR's NBREC and Install paths most need to recognise. So IVR queries both services with a fallback chain.</p>
+
+  <h4>Sequential fallback logic (IVR side)</h4>
+  <ol style="margin:6px 0 8px 22px;">
+    <li><strong>Customer Service lookup.</strong> Call the customer-by-mobile API. If it returns 200 with a <code>customer_account_id</code>, use it and stop. If it returns 404 / empty / not-found, continue to step 2.</li>
+    <li><strong>Booking Service fallback.</strong> Call the booking-by-mobile API. If it returns 200 with a <code>customer_account_id</code>, use it and stop. If it returns 404 / empty, continue to step 3.</li>
+    <li><strong>Unknown caller.</strong> If both lookups miss, treat the caller as unrecognised. Route through the existing unknown-caller path (Switch Case → PIN gather → dead-end greeting if no PIN entered).</li>
+  </ol>
+
+  <h4>API contract — both services return <code>customer_account_id</code></h4>
+  <p>Exact API names, paths, request shapes, and response field names are <strong>engineering's call</strong>. PM-side placeholders below:</p>
+  <table>
+    <tr><th style="width:24%">PM-side label</th><th>Source of truth</th><th>Request input</th><th>Returns</th></tr>
+    <tr><td><strong>Customer Lookup API</strong></td><td>Customer Service (customer table — populated only post-install)</td><td>Caller's mobile (E.164 or 10-digit; tech to confirm format)</td><td><code>customer_account_id</code> on hit; 404 / empty on miss</td></tr>
+    <tr><td><strong>Booking Lookup API</strong></td><td>Booking Service (booking table — populated from BFP onwards, before install completion)</td><td>Caller's mobile (same format as above)</td><td><code>customer_account_id</code> on hit; 404 / empty on miss</td></tr>
+  </table>
+
+  <h4>Why sequential, not parallel</h4>
+  <p style="font-size:13px;color:var(--muted);">Both APIs hit different upstream tables. Parallel calls would shave latency but at the cost of doubled outbound load on internal services for every inbound call (and for every Table 2 row creation). Sequential gives the same answer with the Customer Service serving the majority of hits (recognised post-install callers) and the Booking Service only firing for the smaller pre-install cohort. Engineering may revisit if real-world latency profiles suggest otherwise.</p>
+
+  <h4>When this fires</h4>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><strong>At Table 2 row creation (PIN allocation).</strong> So the row is populated with the correct <code>customer_account_id</code> for later Customer App PIN-fetch (sub-flow A).</li>
+    <li><strong>At inbound-call recognition (API 1 / connect-applet handler).</strong> So Path 2 by-FROM lookups can use the resolved <code>account_id</code> to find the right Table 2 row.</li>
+  </ul>
+
+  <h4>Cache guidance (TBD by tech)</h4>
+  <p style="font-size:13px;color:var(--muted);">Mobile → <code>customer_account_id</code> is effectively immutable once a customer is "promoted" to the customer table. A short-TTL cache on this resolved mapping (per-mobile, keyed in Redis or in-memory) would cut steady-state load substantially. TTL sizing is engineering's call; recommend at least 5 minutes to cover bursty inbound-call patterns and at most a few hours to keep the eventual-consistency window short.</p>
+
+  <h4>Failure handling</h4>
+  <ul style="margin:4px 0 8px 22px;">
+    <li><strong>Customer Service down / 5xx.</strong> Skip to Booking Service. Don't fail the call.</li>
+    <li><strong>Both services down / 5xx.</strong> Treat as unknown caller (same as both-miss case). Log + alert.</li>
+    <li><strong>Both services up but both miss.</strong> Treat as unknown caller. Normal path — not an error.</li>
+  </ul>
+
+  <h3>B15.4 Ticket-active rules</h3>
   <p>At any moment, a customer can have:</p>
   <ul style="margin:4px 0 8px 22px;">
     <li>At most <strong>one</strong> active Install ticket.</li>
