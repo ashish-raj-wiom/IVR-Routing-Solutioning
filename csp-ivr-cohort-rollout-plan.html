@@ -187,6 +187,7 @@
   <div class="qc-tag">7-line summary. Reflects the body below.</div>
   <dl>
     <dt>What problem?</dt><dd>An all-CSP rollout of IVR 2.0 is too risky — we need a controlled cohort first to learn before expanding. Today's app-side kill switches are global ON/OFF; they cannot scope behaviour to specific CSPs.</dd>
+    <dt>Scope?</dt><dd><strong>Both apps, both directions, all ticket types.</strong> Applies to the Customer App (customer → CSP user) AND the CSP App / Technician App (CSP user → customer), covering every Install, Restore, and Pickup ticket for a cohort CSP.</dd>
     <dt>Primary owner?</dt><dd>IVR service team. The cohort list lives inside the IVR service.</dd>
     <dt>Migration needed?</dt><dd>No. App kill switches remain ON. No backfill. PIN flow continues as today.</dd>
     <dt>App release needed?</dt><dd><strong>No.</strong> Apps already ask the IVR for the number to dial and dial whatever they get. With this rollout the IVR just returns a different number (masked or actual) based on cohort membership — same response field, same app behaviour.</dd>
@@ -256,8 +257,14 @@
   <div class="expected"><strong>What is expected:</strong> The four cornerstone decisions that govern this rollout.</div>
   <table>
     <tr><th style="width:30%">Decision</th><th>Choice</th><th>Why</th></tr>
+    <tr><td>Scope of the rollout</td><td><strong>Both apps, both directions, all ticket types.</strong>
+      <ul style="margin:6px 0 0 18px; padding:0;">
+        <li>Customer App: when a customer taps the call CTA to reach the CSP user.</li>
+        <li>CSP App / Technician App: when a CSP user taps the call CTA to reach the customer.</li>
+        <li>Ticket types covered: Install, Restore, Pickup — every active ticket of a cohort CSP.</li>
+      </ul></td><td>The cohort decision applies uniformly. The customer of a cohort CSP and the CSP user themselves should both experience masking. Going live on one side while the other is direct would expose one party's mobile while protecting the other — defeating the purpose.</td></tr>
     <tr><td>Where does the cohort list live?</td><td><strong>Inside the IVR service.</strong> Not in apps, not in any other service.</td><td>Apps stay simple. Other teams don't need to know. Single source of truth. Changes are made by the IVR team only.</td></tr>
-    <tr><td>Granularity?</td><td><strong>Per CSP</strong>, not per ticket. If a CSP is in the cohort, every one of their tickets (Install, Restore, NBREC) uses masked routing.</td><td>Simpler mental model. CSPs are the relationship; tickets are transient. Avoids inconsistent UX where one ticket masks and another doesn't.</td></tr>
+    <tr><td>Granularity?</td><td><strong>Per CSP</strong>, not per ticket. If a CSP is in the cohort, every one of their tickets (Install, Restore, Pickup) uses masked routing — on both apps.</td><td>Simpler mental model. CSPs are the relationship; tickets are transient. Avoids inconsistent UX where one ticket masks and another doesn't.</td></tr>
     <tr><td>What decides masked vs. direct?</td><td>The IVR service decides at the moment the app asks for a number to dial. If the ticket's CSP is in the cohort, the IVR returns the masked number; otherwise it returns the other party's actual mobile. The response shape is the same in both cases — just a number to dial.</td><td>The cohort can grow or shrink without any app release. The app's existing logic already handles dialling whatever number the IVR returns.</td></tr>
     <tr><td>Any change needed on the app?</td><td><strong>No.</strong> The app already calls the IVR for the number to dial and dials it. The IVR just starts returning a different number for non-cohort tickets.</td><td>Zero release coordination with mobile teams. Rollout speed is determined by the IVR team alone.</td></tr>
     <tr><td>PIN behaviour for non-cohort CSPs?</td><td><strong>Unchanged.</strong> PINs are already created and pre-fetched today for every ticket. For non-cohort tickets, the PIN just doesn't get exercised because the call doesn't go through the masked bridge.</td><td>No coordination with upstream services. They keep working as today.</td></tr>
@@ -272,11 +279,12 @@
   <h2><span class="num">A5.</span> Cohort Behaviour (User Journey) <span class="tier what">WHAT</span></h2>
   <div class="expected"><strong>What is expected:</strong> What the CSP and customer experience differs by enrolment state.</div>
 
-  <h3>A5.1 Two parallel realities</h3>
+  <h3>A5.1 Two parallel realities — applied symmetrically on both apps</h3>
+  <p>The cohort decision applies to <strong>every call CTA</strong> a user can tap — whether that user is on the Customer App or on the CSP / Technician App, and whether the ticket is Install, Restore, or Pickup. There is no half-rollout: if a CSP is in the cohort, every call CTA on every one of their tickets, in either direction, returns the masked number.</p>
   <table>
-    <tr><th>Population</th><th>What the IVR returns at call CTA</th><th>What happens on the call</th></tr>
-    <tr><td><strong>Cohort CSPs</strong></td><td>The Wiom masked number.</td><td>The app dials the masked number; the call goes through the IVR routing layer and gets bridged to the other party. The other party's phone shows the Wiom helpline number on the dialler — never the personal mobile.</td></tr>
-    <tr><td><strong>Non-cohort CSPs (everyone else)</strong></td><td>The other party's actual mobile.</td><td>The app dials that mobile directly. The call goes through as a normal phone call. The other party's phone shows the caller's actual mobile, exactly as today.</td></tr>
+    <tr><th>Population</th><th>What the IVR returns at call CTA<br>(same answer on Customer App and CSP App)</th><th>What happens on the call</th></tr>
+    <tr><td><strong>Cohort CSPs</strong></td><td>The Wiom masked number.</td><td>The app dials the masked number; the call goes through the IVR routing layer and gets bridged to the other party. The other party's phone shows the Wiom helpline number on the dialler — never the personal mobile. Holds for both CSP-initiated and customer-initiated calls.</td></tr>
+    <tr><td><strong>Non-cohort CSPs (everyone else)</strong></td><td>The other party's actual mobile.</td><td>The app dials that mobile directly. The call goes through as a normal phone call. The other party's phone shows the caller's actual mobile, exactly as today. Same on both apps.</td></tr>
   </table>
 
   <h3>A5.2 Call-CTA flow</h3>
