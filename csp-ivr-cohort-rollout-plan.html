@@ -167,7 +167,7 @@
 <header class="doc">
   <div class="eyebrow">Wiom · IVR Rollout Plan · v1.0 · PM deliverable</div>
   <h1>CSP IVR Service — Cohort-Based Rollout Plan</h1>
-  <p class="lede">Roll out IVR 2.0 (masked-number bridging) on an opt-in cohort of CSPs instead of all-or-nothing. The IVR service owns an allow-list of enrolled CSPs and, on every call-CTA fetch, returns either a masked DID + PIN (when the CSP is enrolled) or the other party's actual mobile number (when not). Apps stay neutral — they just dial what they're given.</p>
+  <p class="lede">Roll out IVR 2.0 (masked-number bridging) on an opt-in cohort of CSPs instead of all-or-nothing. The IVR service owns an allow-list of enrolled CSPs and, when the app fetches the number to dial at call-CTA time, returns either the masked DID (when the CSP is enrolled) or the other party's actual mobile number (when not). Apps stay neutral — they just dial what they're given. PIN is fetched separately by the app well before the CTA tap; this rollout does not change the PIN-fetch contract.</p>
   <div class="meta-row">
     <span><strong>Audience:</strong> Engineering (csp-execution-platform, App teams) · Ops · Design</span>
     <span><strong>Type:</strong> PM rollout-plan spec</span>
@@ -184,8 +184,8 @@
   <dl>
     <dt>What problem?</dt><dd>An all-CSP rollout of IVR 2.0 is too risky — we need a controlled cohort first to learn before expanding. Today's app-side kill switches are global ON/OFF; they cannot scope behaviour to specific CSPs.</dd>
     <dt>Primary owner?</dt><dd>IVR service team (<code>csp-execution-platform</code>). Allow-list lives entirely inside the IVR service.</dd>
-    <dt>Migration needed?</dt><dd>No. App kill switches remain ON. No backfill of historical tickets. PIN allocation continues for every ticket as today.</dd>
-    <dt>App release needed?</dt><dd>Yes — minor. Apps add a one-branch handler on the existing call-CTA response (read <code>callType</code>: dial masked DID + PIN, or dial actual mobile).</dd>
+    <dt>Migration needed?</dt><dd>No. App kill switches remain ON. No backfill of historical tickets. PIN allocation continues for every ticket as today. PIN-fetch contract is unchanged — apps continue to pre-fetch the PIN via the existing PIN-fetch endpoints.</dd>
+    <dt>App release needed?</dt><dd>Yes — minor. Apps add a one-branch handler on the number-fetch response (read <code>callType</code>: dial the masked DID returned by IVR, or dial the actual mobile returned by IVR).</dd>
     <dt>Money flow change?</dt><dd>No.</dd>
     <dt>PII processed?</dt><dd>Yes — same classes as today (CSP / customer mobiles). No new class.</dd>
     <dt>Rollback latency?</dt><dd>≤ 30 seconds. Allow-list is in-memory cached with 30s TTL; removing a CSP propagates to all IVR instances within one cache cycle.</dd>
@@ -222,7 +222,8 @@
     <tr><td>What is the current state?</td><td>The base IVR 2.0 spec is built and partially live on prod. Both the CSP App and Customer App have a binary "IVR kill switch": when ON, the app calls the IVR service to fetch the masked-number routing target; when OFF, the app dials the other party's actual mobile directly. The kill switch is global — it affects every user simultaneously.</td></tr>
     <tr><td>What can't the kill switch do?</td><td>Scope behaviour to a subset. Either everyone gets masking or nobody does. Day-1 mass enablement carries every regression risk to every user at once, with no incremental learning.</td></tr>
     <tr><td>Why is a cohort rollout needed?</td><td>The IVR end-to-end flow involves: Exotel webhook timing, App-Bazaar Switch Case wiring, PIN allocation correctness, PIN-fetch endpoint correctness, Customer Service deserialization, sim_inventory recognition, and CleverTap notification path. Bugs in any of these silently break customer ↔ CSP communication. Recent prod incidents (CustomerClient deserialization bug, P74 PIN deallocation leak) confirm that hidden defects only surface once real traffic hits the system. We need a manageable blast radius to identify and fix these as they emerge.</td></tr>
-    <tr><td>What does this cohort plan add?</td><td>A per-CSP enrolment list inside the IVR service that decides — on every call-CTA fetch — whether to return the masked-bridge response (PIN + masked DID) or fall back to returning the other party's actual mobile. Apps stay agnostic; they just dial whatever the IVR returns.</td></tr>
+    <tr><td>What does this cohort plan add?</td><td>A per-CSP enrolment list inside the IVR service that decides — on the number-fetch call at CTA time — whether to return the masked DID (cohort path) or the other party's actual mobile (non-cohort path). Apps stay agnostic; they just dial whatever the IVR returns.</td></tr>
+    <tr><td>Relationship to PIN fetch?</td><td>The PIN-fetch endpoints (<code>/api/v1/ivr/pin-registry/customer/pin</code> and <code>/csp/pin</code>) are NOT touched by this rollout. Apps pre-fetch the PIN earlier in the ticket lifecycle (well before the call CTA is tapped), and continue to do so for all CSPs regardless of enrolment state. The PIN sits unused on the app for non-enrolled CSPs — harmless, since the number-fetch at CTA time will return DIRECT and skip the masked-bridge path entirely.</td></tr>
     <tr><td>What happens if we skip this and just turn on the kill switch for everyone?</td><td>Any defect would manifest as failed customer ↔ CSP calls across the entire base simultaneously. Reputational and operational cost of a full-base regression is materially higher than the engineering cost of building the cohort gate (~2 days of engineering work).</td></tr>
     <tr><td>Governing principle</td><td>"Crawl, walk, run" — prove correctness at small scale before exposing all users. The kill switch alone is insufficient because rolling back wholesale loses all the partial signal we've gained.</td></tr>
   </table>
@@ -253,7 +254,7 @@
     <tr><th style="width:30%">Decision</th><th>Choice</th><th>Why</th></tr>
     <tr><td>Where does the allow-list live?</td><td><strong>IVR service</strong> (not in apps, not in TAS, not in any other service).</td><td>Apps stay simple. Other services don't need to know. Single source of truth. Hot-reloadable.</td></tr>
     <tr><td>Granularity?</td><td><strong>Per CSP</strong>, not per ticket. If a CSP is in the allow-list, every one of their tickets (Install, Restore, NBREC) uses masked routing.</td><td>Simpler mental model. CSPs are the relationship; tickets are transient. Avoids weird inconsistent UX where one ticket masks and another doesn't.</td></tr>
-    <tr><td>API surface?</td><td><strong>Polymorphic response on existing endpoints.</strong> No new endpoint; existing call-CTA response gets two extra fields. App branches on <code>callType</code>.</td><td>Minimum surface change. App teams own a single handler. Backward compatible — existing <code>pin</code> field stays.</td></tr>
+    <tr><td>API surface?</td><td><strong>Polymorphic response on the existing number-fetch endpoint</strong> — the one the app calls when the user taps the call CTA. No new endpoint; the response gets a <code>callType</code> discriminator and two mutually-exclusive payload fields. PIN-fetch endpoints are unchanged.</td><td>Minimum surface change. App teams own a single handler at one call site. PIN flow stays untouched.</td></tr>
     <tr><td>PIN allocation gating?</td><td><strong>No gating.</strong> TAS continues to call <code>/allocate</code> for every Install / Restore / NBREC ticket regardless of CSP enrolment.</td><td>No TAS coordination needed. PIN pool waste is negligible (~few hundred unused PINs/day; pool has 1M). Decouples enrolment from upstream service logic.</td></tr>
     <tr><td>Inbound helpline behaviour?</td><td><strong>Bridge anyone.</strong> The helpline (<code>08047284012</code>) accepts all callers; the cohort gate only fires on outbound call-CTA fetches.</td><td>Customers who somehow reach the helpline (old SMS, saved contact) shouldn't be cut off. The helpline is shared infrastructure.</td></tr>
     <tr><td>Backfill of in-flight tickets when CSP enrols?</td><td><strong>No backfill.</strong> Tickets created after the CSP enrols use masking; tickets created before continue with direct call.</td><td>Tickets created during enrolment already get fresh PINs from the standing TAS <code>/allocate</code> calls. No retroactive PIN re-allocation needed. Simplest, safest.</td></tr>
@@ -269,24 +270,32 @@
   <h3>A5.1 Two parallel realities</h3>
   <table>
     <tr><th>Population</th><th>Customer App call CTA</th><th>CSP App call CTA</th><th>Visible to user?</th></tr>
-    <tr><td><strong>Enrolled CSPs (cohort)</strong></td><td>Returns masked DID + PIN. Customer sees the Wiom helpline number on dialer; CSP's mobile stays private.</td><td>Returns masked DID + PIN. CSP sees the Wiom helpline number on dialer; customer's mobile stays private.</td><td>No — the app dials whatever it gets. User sees a masked number on their dialer instead of a personal number.</td></tr>
-    <tr><td><strong>Not-enrolled CSPs (everyone else)</strong></td><td>Returns customer's actual mobile (for CSP-initiated direction) or CSP's actual mobile (for customer-initiated direction). Call goes direct.</td><td>Same — actual mobile, direct call.</td><td>No — identical to today's "kill switch off" behaviour.</td></tr>
+    <tr><td><strong>Enrolled CSPs (cohort)</strong></td><td>Number-fetch returns the masked DID. App dials it and sends the (already-pre-fetched) PIN as DTMF when prompted. Customer sees the Wiom helpline number on dialer; CSP's mobile stays private.</td><td>Same as left — number-fetch returns the masked DID, app dials it, sends pre-fetched PIN as DTMF. CSP sees the Wiom helpline number; customer's mobile stays private.</td><td>No — the app dials whatever the number-fetch returns. User sees a masked number on their dialer instead of a personal number.</td></tr>
+    <tr><td><strong>Not-enrolled CSPs (everyone else)</strong></td><td>Number-fetch returns the customer-side counterparty's actual mobile (i.e., the CSP's mobile). App dials directly; the pre-fetched PIN sits unused.</td><td>Same — number-fetch returns the customer's actual mobile, app dials directly, PIN unused.</td><td>No — identical to today's "kill switch off" behaviour.</td></tr>
   </table>
 
-  <h3>A5.2 Call-CTA flow (both apps, both populations)</h3>
+  <h3>A5.2 End-to-end timing — when PIN is fetched vs when the number is fetched</h3>
+  <table>
+    <tr><th>Event</th><th>Trigger</th><th>What happens</th><th>Cohort-gated?</th></tr>
+    <tr><td>Ticket appears in the app</td><td>Backend pushes / polls the ticket</td><td>App calls the PIN-fetch endpoint (<code>/customer/pin</code> or <code>/csp/pin</code>), receives the PIN, stores it locally on the ticket card.</td><td><strong>No.</strong> PIN is always returned for any ticket with a <code>pin_registry</code> row, regardless of CSP enrolment state.</td></tr>
+    <tr><td>User taps the Call CTA</td><td>User action</td><td>App calls the number-fetch endpoint. IVR consults the allow-list.</td><td><strong>Yes.</strong> This is the single decision point of the rollout.</td></tr>
+    <tr><td>App receives the number-fetch response</td><td>IVR responds</td><td>Branches on <code>callType</code>: dial the masked DID and send PIN as DTMF, OR dial the actual mobile directly.</td><td>Decision already made upstream; app just acts on it.</td></tr>
+  </table>
+
+  <h3>A5.3 Call-CTA flow (both apps, both populations)</h3>
   <div class="mermaid">
 flowchart LR
-    A[User taps Call CTA] --> B[App calls IVR<br/>customer/pin or csp/pin]
+    A[User taps Call CTA<br/>PIN is already in app state<br/>fetched earlier] --> B[App calls IVR<br/>number-fetch endpoint]
     B --> C{IVR: is the<br/>CSP enrolled?}
-    C -- YES --> D[Return masked DID<br/>+ PIN]
-    D --> E[App dials masked DID]
+    C -- YES --> D[Return masked DID]
+    D --> E[App dials masked DID<br/>sends pre-fetched PIN<br/>as DTMF]
     E --> F[Exotel bridges<br/>via IVR routing]
     C -- NO --> G[Return other party's<br/>actual mobile]
-    G --> H[App dials mobile directly]
+    G --> H[App dials mobile directly<br/>PIN unused]
     H --> I[Normal call]
   </div>
 
-  <h3>A5.3 Inbound helpline (customer / CSP dials the masked DID directly)</h3>
+  <h3>A5.4 Inbound helpline (customer / CSP dials the masked DID directly)</h3>
   <p>Unaffected by the cohort gate. Path 1 (Redis Table 1) and Path 2 (PIN-registry by-FROM) work as today regardless of who calls or what their CSP's enrolment state is. The helpline is shared infrastructure.</p>
   <hr class="sect-end">
 </section>
@@ -298,9 +307,9 @@ flowchart LR
     <tr><th style="width:18%">ID</th><th>Invariant</th></tr>
     <tr><td>INV-ROLL-01</td><td>The IVR service is the sole owner of the allow-list. Apps, TAS, and other services MUST NOT cache enrolment state independently.</td></tr>
     <tr><td>INV-ROLL-02</td><td>Enrolment is a CSP-level attribute. If CSP <code>X</code> is enrolled, every ticket whose CSP-side row in <code>pin_registry</code> has <code>user_id = X</code> is in the masking regime.</td></tr>
-    <tr><td>INV-ROLL-03</td><td>Every call-CTA endpoint response includes a <code>callType</code> field with exactly one of two values: <code>MASKED</code> or <code>DIRECT</code>. No third value, no nulls.</td></tr>
+    <tr><td>INV-ROLL-03</td><td>The number-fetch endpoint's response includes a <code>callType</code> field with exactly one of two values: <code>MASKED</code> or <code>DIRECT</code>. No third value, no nulls. The PIN-fetch endpoints' response shape is unchanged.</td></tr>
     <tr><td>INV-ROLL-04</td><td>For <code>callType = DIRECT</code>, the IVR returns the other party's actual mobile sourced from <code>pin_registry</code> (the row that was allocated by TAS at ticket creation). It does not call any external lookup at CTA time.</td></tr>
-    <tr><td>INV-ROLL-05</td><td>PIN allocation (<code>POST /allocate</code>) is uniform across all CSPs — enrolled or not. <code>pin_registry</code> remains a complete record of every Install / Restore / NBREC ticket.</td></tr>
+    <tr><td>INV-ROLL-05</td><td>PIN allocation (<code>POST /allocate</code>) is uniform across all CSPs — enrolled or not. <code>pin_registry</code> remains a complete record of every Install / Restore / NBREC ticket. PIN-fetch endpoints are likewise uniform — they return the PIN whenever a row exists, regardless of enrolment.</td></tr>
     <tr><td>INV-ROLL-06</td><td>Cohort changes propagate to all IVR instances within ≤ 30 seconds. This is the rollback SLA.</td></tr>
     <tr><td>INV-ROLL-07</td><td>The base IVR's privacy invariants (no real mobile exposed in a masked bridge; PIN-binding to ticket) are unaffected. Cohort gating is an additional layer on top, not a relaxation.</td></tr>
   </table>
@@ -317,7 +326,7 @@ flowchart LR
     <tr><td>Migrated ticket (pre-IVR-2.0 launch) for an enrolled CSP — no pin_registry row exists.</td><td>The IVR has no PIN to return. Fallback: return DIRECT with the other party's actual mobile sourced from app's local task data. Requires a small additional path in app: if IVR returns 404 / not-found for an enrolled-CSP ticket, the app uses its local mobile. <strong>Flagged for B-spec resolution.</strong></td></tr>
     <tr><td>Customer of an enrolled CSP receives a call from non-helpline number (legacy direct call from CSP).</td><td>Out of scope. The cohort gate only affects what IVR returns on app CTA. Any other channel (WhatsApp, personal SIM, etc.) is unchanged.</td></tr>
     <tr><td>Customer has tickets across two CSPs — one enrolled, one not.</td><td>Per ticket: each call CTA fetch is keyed on the ticket's CSP. The customer may experience masked calling for one ticket and direct calling for another. This is acceptable and follows from CSP-level granularity.</td></tr>
-    <tr><td>CSP App version doesn't yet support polymorphic <code>callType</code> response.</td><td>The endpoint stays backward compatible. Old app reads <code>pin</code> field as before — IVR continues to set <code>pin</code> in MASKED responses. For DIRECT responses, <code>pin</code> is absent / null; old app would interpret as "no PIN available", which is the safe failure mode (matches today's kill-switch-off behaviour). Recommended path: ship app update before / alongside enrolling that CSP's users.</td></tr>
+    <tr><td>CSP App / Customer App version doesn't yet support polymorphic <code>callType</code> response on the number-fetch endpoint.</td><td>Old apps continue to read the existing <code>maskedDid</code> field — works for MASKED responses (enrolled CSPs). For DIRECT responses (non-enrolled CSPs), the old app sees no <code>maskedDid</code> and falls back to its existing kill-switch-off branch (uses the local task data's mobile). Net behaviour matches today exactly. Recommended path: ship the app handler update before enrolling any CSP whose users are on older app versions.</td></tr>
     <tr><td>An enrolled CSP's customer dials the masked helpline but their CSP gets de-enrolled before they hang up.</td><td>The mid-call bridge continues unaffected (Exotel session already established). Next call attempt would route per the new state.</td></tr>
     <tr><td>TAS calls <code>/allocate</code> for a non-enrolled CSP's ticket.</td><td>IVR allocates as usual. Per A4 / INV-ROLL-05.</td></tr>
   </table>
@@ -385,58 +394,67 @@ flowchart LR
 <!-- B2 API Contract -->
 <section class="spec" id="s10">
   <h2><span class="num">B2.</span> API Contract — Polymorphic Response <span class="tier how">HOW</span></h2>
-  <div class="expected"><strong>What is expected:</strong> The shape of the call-CTA endpoint's response in both the MASKED and DIRECT cases.</div>
+  <div class="expected"><strong>What is expected:</strong> The shape of the number-fetch endpoint's response in both the MASKED and DIRECT cases. PIN-fetch endpoints are explicitly out of scope.</div>
 
-  <h3>B2.1 Affected endpoints</h3>
+  <h3>B2.1 Two distinct API calls, two different roles</h3>
   <table>
-    <tr><th>Endpoint</th><th>Caller</th><th>Returns the mobile of</th></tr>
-    <tr><td><code>POST /api/v1/ivr/pin-registry/customer/pin</code></td><td>Customer App</td><td>The CSP (counterparty)</td></tr>
-    <tr><td><code>POST /api/v1/ivr/pin-registry/csp/pin</code></td><td>CSP App / Technician App</td><td>The customer (counterparty)</td></tr>
+    <tr><th>When</th><th>Endpoint</th><th>Purpose</th><th>Cohort gate fires here?</th></tr>
+    <tr><td>Earlier — when the ticket loads in the app</td><td><code>POST /api/v1/ivr/pin-registry/customer/pin</code><br><code>POST /api/v1/ivr/pin-registry/csp/pin</code></td><td>Pre-fetch the PIN; app stores it locally on the ticket card. Existing behaviour — unchanged.</td><td><strong>No.</strong> These endpoints return the PIN if one exists in <code>pin_registry</code>, regardless of enrolment state.</td></tr>
+    <tr><td>At the moment the call CTA is tapped</td><td>The number-fetch endpoint <em>(name owned by tech — referred to here as "the number-fetch endpoint")</em></td><td>Return the phone number the app should dial. Today this returns the masked DID for everyone (when the kill switch is on). With cohort rollout, it returns the masked DID for enrolled CSPs and the counterparty's actual mobile for everyone else.</td><td><strong>Yes.</strong> Single decision point.</td></tr>
   </table>
 
-  <h3>B2.2 MASKED response (CSP is enrolled)</h3>
+  <h3>B2.2 MASKED response — CSP is enrolled</h3>
 <pre class="code">{
   <span class="str">"callType"</span>:  <span class="str">"MASKED"</span>,
-  <span class="str">"pin"</span>:       <span class="str">"032841"</span>,
   <span class="str">"maskedDid"</span>: <span class="str">"08047284012"</span>
 }
 </pre>
-  <p>App behaviour: dial <code>maskedDid</code>; on prompt, send <code>pin</code> as DTMF. This is today's masked-bridge flow.</p>
+  <p>App behaviour: dial <code>maskedDid</code>. When the IVR prompts for the PIN (today's flow), the app sends the already-pre-fetched PIN as DTMF from its local state. <strong>No PIN field in this response</strong> — the PIN lives on the app's local ticket state, fetched earlier.</p>
 
-  <h3>B2.3 DIRECT response (CSP is NOT enrolled)</h3>
+  <h3>B2.3 DIRECT response — CSP is NOT enrolled</h3>
 <pre class="code">{
   <span class="str">"callType"</span>:    <span class="str">"DIRECT"</span>,
   <span class="str">"phoneNumber"</span>: <span class="str">"9876543210"</span>
 }
 </pre>
-  <p>App behaviour: dial <code>phoneNumber</code> directly. Equivalent to today's "kill switch off" behaviour.</p>
+  <p>App behaviour: dial <code>phoneNumber</code> directly. The pre-fetched PIN sits unused on the app — that's fine; it's just bytes in memory. Net behaviour matches today's "kill switch off" path.</p>
 
   <h3>B2.4 Where the actual mobile comes from for DIRECT</h3>
   <table>
-    <tr><th>Endpoint</th><th>Source of <code>phoneNumber</code></th></tr>
-    <tr><td><code>customer/pin</code></td><td><code>pin_registry</code> row where <code>type = CUSTOMER</code> AND ticket matches → <code>number</code> field = CSP's mobile</td></tr>
-    <tr><td><code>csp/pin</code></td><td><code>pin_registry</code> row where <code>type = CSP</code> AND <code>execution_candidate_id</code> matches → <code>number</code> field = customer's mobile</td></tr>
+    <tr><th>Caller (the app making the number-fetch)</th><th>Source of <code>phoneNumber</code></th></tr>
+    <tr><td>Customer App</td><td>The CSP-side mobile = the <code>number</code> field of the <code>pin_registry</code> row where <code>type = CUSTOMER</code> for the ticket in question</td></tr>
+    <tr><td>CSP App / Technician App</td><td>The customer-side mobile = the <code>number</code> field of the <code>pin_registry</code> row where <code>type = CSP</code> for the ticket in question</td></tr>
   </table>
-  <p>Both endpoints already read <code>pin_registry</code> to fetch the PIN; reading the <code>number</code> column from the same row is zero extra IO. No external lookup needed.</p>
+  <p>The mobile is already stored in <code>pin_registry</code> (populated by TAS at <code>/allocate</code> time). No external lookup needed; one DB read.</p>
 
   <h3>B2.5 Backward compatibility</h3>
   <ul class="criteria">
-    <li>The <code>pin</code> field in responses stays. Old apps continue to read it and behave correctly for the MASKED case.</li>
-    <li>For DIRECT responses, <code>pin</code> is absent. Old apps interpreting "no PIN" as "fall back to local mobile" is the safe failure mode — matches the legacy kill-switch-off branch.</li>
-    <li>The new <code>callType</code> and <code>phoneNumber</code> fields are additive; old apps ignore them harmlessly.</li>
+    <li><strong>PIN-fetch endpoints are untouched.</strong> Old apps that pre-fetch the PIN continue to work without change for all CSPs.</li>
+    <li>The number-fetch endpoint today returns just <code>{maskedDid: "..."}</code>; the cohort rollout adds the <code>callType</code> discriminator and the <code>phoneNumber</code> field as the alternative payload. Old apps that don't recognise <code>callType</code> would read the <code>maskedDid</code> for MASKED responses (works) and would see no number to dial for DIRECT responses (graceful failure — equivalent to today's kill-switch-off "fallback to local mobile" branch).</li>
+    <li>Recommended path: ship app handler update covering both branches before any CSP is enrolled.</li>
   </ul>
 
-  <h3>B2.6 Decision pseudocode (IVR-side)</h3>
-<pre class="code"><span class="kw">function</span> handleCallCtaFetch(ticketContext) {
-  cspId = resolveCspId(ticketContext);              <span class="com">// from pin_registry CSP-side row</span>
+  <h3>B2.6 Decision pseudocode (IVR-side, number-fetch endpoint only)</h3>
+<pre class="code"><span class="kw">function</span> handleNumberFetch(ticketContext, callerSide) {
+  cspId = resolveCspId(ticketContext);              <span class="com">// from pin_registry row</span>
   <span class="kw">if</span> (enrolmentCache.isEnrolled(cspId)) {
-    pin       = fetchPin(ticketContext);
-    maskedDid = config.maskedDid;                   <span class="com">// "08047284012"</span>
-    <span class="kw">return</span> { callType: <span class="str">"MASKED"</span>, pin, maskedDid };
+    <span class="kw">return</span> {
+      callType:  <span class="str">"MASKED"</span>,
+      maskedDid: config.maskedDid                   <span class="com">// "08047284012"</span>
+    };
   } <span class="kw">else</span> {
-    phoneNumber = fetchCounterpartyMobile(ticketContext);
-    <span class="kw">return</span> { callType: <span class="str">"DIRECT"</span>, phoneNumber };
+    phoneNumber = fetchCounterpartyMobile(ticketContext, callerSide);
+    <span class="kw">return</span> {
+      callType:    <span class="str">"DIRECT"</span>,
+      phoneNumber: phoneNumber
+    };
   }
+}
+
+<span class="com">// PIN-fetch endpoints — UNCHANGED. Always return the PIN if one exists.</span>
+<span class="kw">function</span> handleCustomerPinFetch(customerId, ticketId, ticketType) {
+  <span class="kw">return</span> pinRegistry.findCustomerPin(customerId, ticketId, ticketType);
+  <span class="com">// no enrolment check</span>
 }
 </pre>
   <hr class="sect-end">
@@ -508,9 +526,10 @@ flowchart LR
   <div class="expected"><strong>What is expected:</strong> The minimal app-side change in both Customer App and CSP App / Technician App.</div>
   <table>
     <tr><th>Change</th><th>Detail</th></tr>
-    <tr><td>Kill switch state</td><td><strong>Remains ON permanently</strong>. Apps always call IVR's call-CTA endpoint. No code removal; just stop using the kill switch as a meaningful control.</td></tr>
-    <tr><td>Response handler</td><td>Update the call-CTA response parser to branch on <code>callType</code>:<br>• <code>MASKED</code> → dial <code>maskedDid</code>, send <code>pin</code> as DTMF (today's behaviour).<br>• <code>DIRECT</code> → dial <code>phoneNumber</code> directly.</td></tr>
-    <tr><td>Backward compatibility on rollout day</td><td>Old app versions still read <code>pin</code>. If <code>pin</code> is absent (DIRECT response), they fall back to local task data's mobile — equivalent to today's kill-switch-off path. Net: old apps still work for non-enrolled CSPs.</td></tr>
+    <tr><td>Kill switch state</td><td><strong>Remains ON permanently</strong>. Apps always call IVR for the number to dial. No code removal; just stop using the kill switch as a meaningful control.</td></tr>
+    <tr><td>PIN-fetch path</td><td><strong>Unchanged.</strong> Apps continue to pre-fetch the PIN via the existing <code>/customer/pin</code> or <code>/csp/pin</code> endpoint when the ticket loads, store it locally on the ticket card. Behaviour identical for enrolled and non-enrolled CSPs.</td></tr>
+    <tr><td>Number-fetch response handler</td><td>Update the response parser at the call-CTA call site to branch on <code>callType</code>:<br>• <code>MASKED</code> → dial <code>maskedDid</code>, send the locally-stored PIN as DTMF (today's masked-bridge flow).<br>• <code>DIRECT</code> → dial <code>phoneNumber</code> directly; ignore the locally-stored PIN.</td></tr>
+    <tr><td>Backward compatibility on rollout day</td><td>Old app versions that don't recognise <code>callType</code> still read the existing <code>maskedDid</code> field and dial it — works for MASKED. For DIRECT responses, the old app sees no <code>maskedDid</code> and would gracefully fail to set up a call — matches today's kill-switch-off "fallback to local mobile" branch. Net: old apps continue to work for non-enrolled CSPs without crashes.</td></tr>
     <tr><td>Release sequencing</td><td>Ship the app update at the start of Phase 0 (dry run). Wait until adoption ≥ 80% of CSP App + Customer App users before enrolling any CSP whose users may be on older apps.</td></tr>
     <tr><td>Lines of code</td><td>~10 lines per app for the branch + null-check. No new screens, no new permissions, no new dependencies.</td></tr>
   </table>
@@ -639,9 +658,11 @@ flowchart LR
     <tr><th>Term</th><th>Definition</th></tr>
     <tr><td>Allow-list / Cohort / Enrolment list</td><td>Used interchangeably. The set of CSPs whose tickets are currently in the masked-routing regime.</td></tr>
     <tr><td>Enrolled CSP</td><td>A CSP whose <code>csp_id</code> is present in <code>ivr_csp_enrolment</code> with <code>active = TRUE</code>.</td></tr>
-    <tr><td>MASKED response</td><td>The call-CTA endpoint's response shape when the ticket's CSP is enrolled. Contains <code>callType: "MASKED"</code>, <code>pin</code>, <code>maskedDid</code>.</td></tr>
-    <tr><td>DIRECT response</td><td>The call-CTA endpoint's response shape when the ticket's CSP is NOT enrolled. Contains <code>callType: "DIRECT"</code>, <code>phoneNumber</code>.</td></tr>
-    <tr><td>callType</td><td>The discriminator field in the call-CTA response that tells the app which branch to take. Exactly two values: <code>MASKED</code> or <code>DIRECT</code>.</td></tr>
+    <tr><td>MASKED response</td><td>The number-fetch endpoint's response shape when the ticket's CSP is enrolled. Contains <code>callType: "MASKED"</code> and <code>maskedDid</code>. No PIN field — PIN was pre-fetched separately by the app earlier.</td></tr>
+    <tr><td>DIRECT response</td><td>The number-fetch endpoint's response shape when the ticket's CSP is NOT enrolled. Contains <code>callType: "DIRECT"</code> and <code>phoneNumber</code>.</td></tr>
+    <tr><td>callType</td><td>The discriminator field in the number-fetch response that tells the app which branch to take. Exactly two values: <code>MASKED</code> or <code>DIRECT</code>.</td></tr>
+    <tr><td>Number-fetch endpoint</td><td>The IVR endpoint the app calls at the moment the call CTA is tapped, to find out what number to dial. Returns either the masked DID (enrolled) or the counterparty's actual mobile (not enrolled). Distinct from the PIN-fetch endpoints (which run earlier when the ticket loads).</td></tr>
+    <tr><td>PIN-fetch endpoint</td><td>One of <code>POST /api/v1/ivr/pin-registry/customer/pin</code> or <code>POST /api/v1/ivr/pin-registry/csp/pin</code>. Called by the app well before the call CTA is tapped, to pre-fetch the PIN. Unchanged by this rollout.</td></tr>
     <tr><td>Kill switch</td><td>The pre-existing app-side boolean that controls whether the app uses IVR routing at all. Per this plan, stays ON permanently and is effectively unused.</td></tr>
     <tr><td>Cache cycle</td><td>30-second refresh interval of the in-memory enrolment cache. Equal to the rollback propagation SLA.</td></tr>
     <tr><td>Phase 0 / 1 / 2 / 3 / 4</td><td>Dry run / Pilot / Small / Medium / Full rollout phases per B8.</td></tr>
