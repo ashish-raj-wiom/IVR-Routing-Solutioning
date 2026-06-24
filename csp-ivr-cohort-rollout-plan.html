@@ -104,6 +104,12 @@
   ul.criteria { padding-left: 20px; }
   ul.criteria li { margin: 6px 0; }
 
+  .gherkin { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--core); padding: 12px 14px; margin: 10px 0; font-size: 13.5px; border-radius: 4px; }
+  .gherkin .scenario-id { font-weight: 700; color: var(--core); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .gherkin .scenario-title { display: block; color: var(--ink); font-weight: 600; margin: 4px 0 8px; font-size: 14px; }
+  .gherkin .kw { font-weight: 700; color: var(--core); }
+  .gherkin p { margin: 4px 0; }
+
   hr.sect-end { border: none; border-top: 1px dashed var(--rule); margin: 32px 0 0; }
 
   footer.checklist { margin-top: 60px; padding-top: 30px; border-top: 2px solid var(--ink); }
@@ -147,10 +153,11 @@
     <li><a href="#s13"><span class="ix">B2.</span>Inbound Helpline Behaviour</a></li>
     <li><a href="#s14"><span class="ix">B3.</span>PIN Behaviour</a></li>
     <li><a href="#s15"><span class="ix">B4.</span>App-Side Changes</a></li>
-    <li><a href="#s16"><span class="ix">B5.</span>Rollout Phases</a></li>
-    <li><a href="#s17"><span class="ix">B6.</span>Metrics &amp; Observability</a></li>
-    <li><a href="#s18"><span class="ix">B7.</span>Rollback Plan</a></li>
-    <li><a href="#s19"><span class="ix">B8.</span>Out of Scope</a></li>
+    <li><a href="#s20"><span class="ix">B5.</span>Acceptance Criteria</a></li>
+    <li><a href="#s16"><span class="ix">B6.</span>Rollout Phases</a></li>
+    <li><a href="#s17"><span class="ix">B7.</span>Metrics &amp; Observability</a></li>
+    <li><a href="#s18"><span class="ix">B8.</span>Rollback Plan</a></li>
+    <li><a href="#s19"><span class="ix">B9.</span>Out of Scope</a></li>
   </ol>
   <h2 class="close">Closeout</h2>
   <ol>
@@ -418,9 +425,156 @@ flowchart LR
   <hr class="sect-end">
 </section>
 
-<!-- B5 Rollout Phases -->
+<!-- B5 Acceptance Criteria -->
+<section class="spec" id="s20">
+  <h2><span class="num">B5.</span> Acceptance Criteria <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Observable behaviours that must hold for the cohort rollout to be considered correct. Each scenario is testable by direct observation (placing a real call, looking at the dialler, checking the call log) — no API or DB inspection required.</div>
+
+  <h3>B5.1 Outbound calls — cohort CSPs</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-01</span>
+    <span class="scenario-title">CSP user calls customer on a cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the CSP is in the cohort,</p>
+    <p><span class="kw">When</span> a user on that CSP taps the call CTA on any ticket card,</p>
+    <p><span class="kw">Then</span> the call connects to the customer through the Wiom masked bridge,</p>
+    <p><span class="kw">And</span> the customer's phone shows the Wiom helpline number — not the CSP user's mobile,</p>
+    <p><span class="kw">And</span> a recording of the call is saved.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-02</span>
+    <span class="scenario-title">Customer calls CSP on a cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the customer's CSP is in the cohort,</p>
+    <p><span class="kw">When</span> the customer taps the call CTA on the ticket in the Customer App,</p>
+    <p><span class="kw">Then</span> the call connects to the CSP user through the Wiom masked bridge,</p>
+    <p><span class="kw">And</span> the CSP user's phone shows the Wiom helpline number — not the customer's mobile,</p>
+    <p><span class="kw">And</span> a recording of the call is saved.</p>
+  </div>
+
+  <h3>B5.2 Outbound calls — non-cohort CSPs</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-03</span>
+    <span class="scenario-title">CSP user calls customer on a non-cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the CSP is NOT in the cohort,</p>
+    <p><span class="kw">When</span> a user on that CSP taps the call CTA on any ticket card,</p>
+    <p><span class="kw">Then</span> the call goes through as a normal phone call to the customer's mobile,</p>
+    <p><span class="kw">And</span> the customer's phone shows the CSP user's actual mobile (today's behaviour),</p>
+    <p><span class="kw">And</span> no masked routing is involved.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-04</span>
+    <span class="scenario-title">Customer calls CSP on a non-cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the customer's CSP is NOT in the cohort,</p>
+    <p><span class="kw">When</span> the customer taps the call CTA on the ticket in the Customer App,</p>
+    <p><span class="kw">Then</span> the call goes through as a normal phone call to the CSP user's mobile,</p>
+    <p><span class="kw">And</span> the CSP user's phone shows the customer's actual mobile (today's behaviour).</p>
+  </div>
+
+  <h3>B5.3 Cohort membership changes</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-05</span>
+    <span class="scenario-title">CSP is added to the cohort mid-flight</span>
+    <p><span class="kw">Given</span> a CSP is not in the cohort and has open tickets,</p>
+    <p><span class="kw">When</span> the IVR team adds the CSP to the cohort,</p>
+    <p><span class="kw">Then</span> within a few seconds, the next call CTA on any of their tickets routes through the masked bridge,</p>
+    <p><span class="kw">And</span> no app release, app restart, or service restart is needed,</p>
+    <p><span class="kw">And</span> existing open tickets automatically switch to masked routing without any backfill step.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-06</span>
+    <span class="scenario-title">CSP is removed from the cohort (rollback)</span>
+    <p><span class="kw">Given</span> a CSP is in the cohort,</p>
+    <p><span class="kw">When</span> the IVR team removes the CSP from the cohort,</p>
+    <p><span class="kw">Then</span> within a few seconds, the next call CTA on their tickets routes as a direct call,</p>
+    <p><span class="kw">And</span> any call already connected through a masked bridge continues uninterrupted until the parties hang up,</p>
+    <p><span class="kw">And</span> no app release, app restart, or service restart is needed.</p>
+  </div>
+
+  <h3>B5.4 Inbound calls to the helpline</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-07</span>
+    <span class="scenario-title">Customer dials the Wiom helpline number directly</span>
+    <p><span class="kw">Given</span> a customer dials the Wiom helpline number directly (e.g., from an old SMS or saved contact), regardless of whether their CSP is in the cohort,</p>
+    <p><span class="kw">When</span> the call reaches the IVR,</p>
+    <p><span class="kw">Then</span> the IVR bridges them to the right party as today,</p>
+    <p><span class="kw">And</span> the call is not blocked, dropped, or sent to a dead-end based on cohort state.</p>
+  </div>
+
+  <h3>B5.5 PIN behaviour</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-08</span>
+    <span class="scenario-title">PIN is created and pre-fetched regardless of cohort state</span>
+    <p><span class="kw">Given</span> a new Install / Restore / Pickup ticket is created,</p>
+    <p><span class="kw">When</span> the ticket loads on the relevant app,</p>
+    <p><span class="kw">Then</span> a PIN is created in the background and the app pre-fetches it on the ticket card,</p>
+    <p><span class="kw">And</span> this happens for cohort CSPs and non-cohort CSPs alike.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-09</span>
+    <span class="scenario-title">PIN is used only when the call goes through the masked bridge</span>
+    <p><span class="kw">Given</span> a ticket has a pre-fetched PIN on the app,</p>
+    <p><span class="kw">When</span> the user taps the call CTA,</p>
+    <p><span class="kw">Then</span> if the CSP is in the cohort, the PIN is sent on the call (during the masked bridge),</p>
+    <p><span class="kw">And</span> if the CSP is not in the cohort, the PIN sits unused and no harm is done.</p>
+  </div>
+
+  <h3>B5.6 Backward compatibility with older app versions</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-10</span>
+    <span class="scenario-title">Old app version on a cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> a Customer App / CSP App on an older version that doesn't recognise the updated response,</p>
+    <p><span class="kw">When</span> a user on a cohort CSP's ticket taps the call CTA,</p>
+    <p><span class="kw">Then</span> the app reads the masked number as it does today and dials it,</p>
+    <p><span class="kw">And</span> the call still connects through the masked bridge.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-11</span>
+    <span class="scenario-title">Old app version on a non-cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> an older app version,</p>
+    <p><span class="kw">When</span> a user on a non-cohort CSP's ticket taps the call CTA,</p>
+    <p><span class="kw">Then</span> the app falls through to its existing kill-switch-off behaviour (uses the local task data's mobile),</p>
+    <p><span class="kw">And</span> no crash occurs.</p>
+  </div>
+
+  <h3>B5.7 Privacy</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-12</span>
+    <span class="scenario-title">No real mobile is exposed on a cohort call</span>
+    <p><span class="kw">Given</span> a CSP is in the cohort,</p>
+    <p><span class="kw">When</span> any call goes through their ticket via the masked bridge (either direction),</p>
+    <p><span class="kw">Then</span> the customer's call log shows only the Wiom helpline number,</p>
+    <p><span class="kw">And</span> the CSP user's call log shows only the Wiom helpline number,</p>
+    <p><span class="kw">And</span> neither party's personal mobile is exposed to the other at any point.</p>
+  </div>
+
+  <h3>B5.8 Repeat-tap consistency</h3>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-13</span>
+    <span class="scenario-title">Consecutive call CTAs are consistent</span>
+    <p><span class="kw">Given</span> a ticket card,</p>
+    <p><span class="kw">When</span> the user taps the call CTA twice within a few seconds,</p>
+    <p><span class="kw">Then</span> both attempts route the same way (both masked, or both direct),</p>
+    <p><span class="kw">And</span> the cohort decision is consistent within that short window.</p>
+  </div>
+
+  <hr class="sect-end">
+</section>
+
+<!-- B6 Rollout Phases -->
 <section class="spec" id="s16">
-  <h2><span class="num">B5.</span> Rollout Phases <span class="tier how">HOW</span></h2>
+  <h2><span class="num">B6.</span> Rollout Phases <span class="tier how">HOW</span></h2>
   <div class="expected"><strong>What is expected:</strong> Concrete phase plan with size, duration, success bar, and exit criteria.</div>
   <table>
     <tr><th style="width:14%">Phase</th><th style="width:18%">Cohort</th><th style="width:12%">Duration</th><th>Success criteria (all must hold)</th></tr>
@@ -431,7 +585,7 @@ flowchart LR
     <tr><td><strong>Phase 4 — Full rollout</strong></td><td>All remaining CSPs</td><td>Indefinite</td><td>—</td></tr>
   </table>
 
-  <h3>B8.1 Selection criteria for Pilot &amp; Phase 2 cohorts</h3>
+  <h3>B6.1 Selection criteria for Pilot &amp; Phase 2 cohorts</h3>
   <ul class="criteria">
     <li>Active ticket flow in at least 2 of {Install, Restore, NBREC} — to exercise all PIN-allocation paths.</li>
     <li>At least 2 distinct zones represented — to catch any region-specific issues (telco-routing, masked-DID coverage).</li>
@@ -439,17 +593,17 @@ flowchart LR
     <li>Not currently in any other product experiment that could confound signal.</li>
   </ul>
 
-  <h3>B5.2 Promotion gate from Phase N to Phase N+1</h3>
+  <h3>B6.2 Promotion gate from Phase N to Phase N+1</h3>
   <p>All of: (a) success criteria above met; (b) no open P0 / P1 bugs from previous phase; (c) explicit PM + Tech Lead sign-off; (d) at least 48 hours of clean data since last change.</p>
   <hr class="sect-end">
 </section>
 
-<!-- B6 Metrics -->
+<!-- B7 Metrics -->
 <section class="spec" id="s17">
-  <h2><span class="num">B6.</span> Metrics &amp; Observability <span class="tier how">HOW</span></h2>
+  <h2><span class="num">B7.</span> Metrics &amp; Observability <span class="tier how">HOW</span></h2>
   <div class="expected"><strong>What is expected:</strong> What gets measured per phase to decide whether to expand or hold.</div>
 
-  <h3>B6.1 Quantitative metrics (daily report per cohort)</h3>
+  <h3>B7.1 Quantitative metrics (daily report per cohort)</h3>
   <table>
     <tr><th>Metric</th><th>Target</th></tr>
     <tr><td>Bridge rate — share of calls from cohort CSPs that successfully reached a masked bridge attempt</td><td>≥ 85%</td></tr>
@@ -458,21 +612,21 @@ flowchart LR
     <tr><td>Cohort decision correctness — every call from a cohort CSP must take the masked path; every non-cohort call must take the direct path</td><td>100% (any miss is a bug)</td></tr>
   </table>
 
-  <h3>B6.2 Qualitative signal (per phase)</h3>
+  <h3>B7.2 Qualitative signal (per phase)</h3>
   <ul class="criteria">
     <li>CSP feedback: phone / WhatsApp check-ins with each Phase 1 / Phase 2 CSP at day 3 and day 7.</li>
     <li>Customer complaint count from CC tickets tagged "calling issue".</li>
     <li>Internal escalation log (Slack / JIRA) — count and severity of issues raised.</li>
   </ul>
 
-  <h3>B6.3 Privacy regression detection</h3>
+  <h3>B7.3 Privacy regression detection</h3>
   <p>A nightly check inspects a sample of cohort calls and confirms that the numbers exchanged between the two parties were the Wiom masked number, not their personal mobiles. Any case where a personal mobile shows up on a cohort call triggers an alert.</p>
   <hr class="sect-end">
 </section>
 
-<!-- B7 Rollback -->
+<!-- B8 Rollback -->
 <section class="spec" id="s18">
-  <h2><span class="num">B7.</span> Rollback Plan <span class="tier how">HOW</span></h2>
+  <h2><span class="num">B8.</span> Rollback Plan <span class="tier how">HOW</span></h2>
   <table>
     <tr><th style="width:30%">Scope</th><th>Action</th><th>Time to take effect</th></tr>
     <tr><td>One CSP misbehaving</td><td>Remove that CSP from the cohort list. Next call CTA from that CSP's tickets will route as direct dial.</td><td>Within seconds</td></tr>
@@ -483,9 +637,9 @@ flowchart LR
   <hr class="sect-end">
 </section>
 
-<!-- B8 Out of Scope -->
+<!-- B9 Out of Scope -->
 <section class="spec" id="s19">
-  <h2><span class="num">B8.</span> Out of Scope <span class="tier how">HOW</span></h2>
+  <h2><span class="num">B9.</span> Out of Scope <span class="tier how">HOW</span></h2>
   <ul class="criteria">
     <li><strong>Legacy customer IVR helpline</strong> — continues to operate in parallel. Not affected by this rollout.</li>
     <li><strong>Legacy CSP-app outbound calling path</strong> — older CSP app versions that use the legacy call-setup flow continue to work as today, irrespective of cohort state.</li>
@@ -515,10 +669,11 @@ flowchart LR
     <tr><td>B2</td><td>Inbound Helpline Behaviour</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
     <tr><td>B3</td><td>PIN Behaviour</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
     <tr><td>B4</td><td>App-Side Changes</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
-    <tr><td>B5</td><td>Rollout Phases</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
-    <tr><td>B6</td><td>Metrics &amp; Observability</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
-    <tr><td>B7</td><td>Rollback Plan</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
-    <tr><td>B8</td><td>Out of Scope</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B5</td><td>Acceptance Criteria</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B6</td><td>Rollout Phases</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B7</td><td>Metrics &amp; Observability</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B8</td><td>Rollback Plan</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B9</td><td>Out of Scope</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
   </table>
 
   <div class="footer note">
