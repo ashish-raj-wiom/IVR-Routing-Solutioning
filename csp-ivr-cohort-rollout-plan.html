@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSP IVR Cohort Rollout Plan — v1.0</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
+    --core: #0b6b3a; --core-bg: #e9f5ee;
+    --cond: #8a5a00; --cond-bg: #fbf1dd;
+    --what: #1f3c6e; --what-bg: #e8eef8;
+    --how: #5b2a86; --how-bg: #efe6f7;
+    --example-bg: #fffbeb; --example-rule: #f3d56a; --example-ink: #78350f;
+    --required: #b91c1c; --required-bg: #fee2e2;
+    --illustrative: #6b7280; --illustrative-bg: #f1f3f5;
+    --quickcheck-bg: #fef9c3; --quickcheck-rule: #ca8a04; --quickcheck-ink: #713f12;
+    --hint-bg: #ecfeff; --hint-rule: #0e7490; --hint-ink: #155e75;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--bg);
+  }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 24px 18px; border-right: 1px solid var(--rule); background: var(--surface); font-size: 13px;
+  }
+  nav.toc h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 18px 0 6px; }
+  nav.toc h2:first-of-type { margin-top: 0; }
+  nav.toc h2.qc { color: var(--quickcheck-ink); border-left: 3px solid var(--quickcheck-rule); padding-left: 8px; }
+  nav.toc h2.what { color: var(--what); border-left: 3px solid var(--what); padding-left: 8px; }
+  nav.toc h2.how { color: var(--how); border-left: 3px solid var(--how); padding-left: 8px; }
+  nav.toc h2.close { color: var(--muted); border-left: 3px solid var(--muted); padding-left: 8px; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; }
+  nav.toc li { margin: 4px 0; }
+  nav.toc li a { text-decoration: none; color: var(--ink); display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 4px; font-size: 12.5px; }
+  nav.toc li a:hover { background: var(--bg); }
+  nav.toc li a .ix { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 32px; font-weight: 600; }
+
+  main { padding: 40px 56px 120px; max-width: 1080px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 32px; }
+  header.doc .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  header.doc h1 { font-size: 30px; margin: 6px 0 8px; line-height: 1.2; }
+  header.doc p.lede { color: var(--muted); font-size: 15px; margin: 0; max-width: 75ch; }
+  header.doc .meta-row { display: flex; gap: 24px; margin-top: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+
+  .convention { margin-top: 14px; padding: 12px 14px; background: var(--bg); border: 1px dashed var(--rule); border-radius: 5px; font-size: 13px; }
+  .convention strong { font-weight: 700; }
+
+  .quickcheck {
+    margin: 28px 0 40px; background: var(--quickcheck-bg);
+    border: 1px solid var(--quickcheck-rule); border-left: 5px solid var(--quickcheck-rule);
+    border-radius: 6px; padding: 18px 22px;
+  }
+  .quickcheck h2 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--quickcheck-ink); }
+  .quickcheck .qc-tag { font-size: 11px; color: var(--quickcheck-ink); opacity: 0.9; margin-bottom: 12px; }
+  .quickcheck dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+  .quickcheck dt { font-weight: 600; color: var(--quickcheck-ink); }
+  .quickcheck dd { margin: 0; color: var(--ink); }
+
+  .part-divider { margin: 56px 0 32px; padding: 28px 32px; border-radius: 8px; color: white; }
+  .part-divider.what { background: var(--what); }
+  .part-divider.how { background: var(--how); }
+  .part-divider .label { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.8; }
+  .part-divider h2 { font-size: 28px; margin: 4px 0 6px; }
+  .part-divider p { margin: 0; font-size: 14px; opacity: 0.92; max-width: 75ch; }
+  .part-divider .author-note { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.25); font-size: 13px; font-style: italic; opacity: 0.92; }
+
+  section.spec { margin: 40px 0; scroll-margin-top: 24px; }
+  section.spec h2 { font-size: 21px; margin: 0 0 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  section.spec h2 .num { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  section.spec h3 { font-size: 15px; margin: 16px 0 4px; }
+  .tier { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 3px; font-weight: 600; }
+  .tier.core { background: var(--core-bg); color: var(--core); }
+  .tier.cond { background: var(--cond-bg); color: var(--cond); }
+  .tier.what { background: var(--what-bg); color: var(--what); }
+  .tier.how { background: var(--how-bg); color: var(--how); }
+
+  .expected { background: #f4f4f2; border-left: 3px solid var(--ink); padding: 10px 14px; font-size: 13px; margin: 10px 0 14px; color: #333; }
+  .expected strong { font-weight: 700; }
+  .hint { background: var(--hint-bg); border-left: 3px solid var(--hint-rule); padding: 8px 14px; font-size: 13px; margin: 8px 0 14px; color: var(--hint-ink); border-radius: 4px; }
+  .hint strong { color: var(--hint-ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+
+  .mermaid { background: var(--surface); border: 1px solid var(--rule); border-radius: 5px; padding: 14px; margin: 14px 0; text-align: center; overflow-x: auto; }
+
+  .design-note { background: #fff7ed; border: 1px solid #fed7aa; border-left: 3px solid #c2410c; padding: 10px 14px; margin: 14px 0; font-size: 13px; border-radius: 5px; }
+  .design-note strong { color: #9a3412; }
+
+  pre.code { background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 6px; font-size: 12.5px; overflow-x: auto; margin: 8px 0 14px; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  pre.code .kw { color: #c084fc; }
+  pre.code .str { color: #fde68a; }
+  pre.code .num { color: #fca5a5; }
+  pre.code .com { color: #94a3b8; font-style: italic; }
+  code { background: var(--bg); padding: 0.05em 0.35em; border-radius: 3px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+
+  ul.criteria { padding-left: 20px; }
+  ul.criteria li { margin: 6px 0; }
+
+  hr.sect-end { border: none; border-top: 1px dashed var(--rule); margin: 32px 0 0; }
+
+  footer.checklist { margin-top: 60px; padding-top: 30px; border-top: 2px solid var(--ink); }
+  footer.checklist h2 { font-size: 20px; margin-top: 0; }
+  footer.checklist table { font-size: 13.5px; }
+  footer.note { margin-top: 24px; padding: 14px; background: var(--bg); border-left: 3px solid var(--ink); font-size: 13px; }
+
+  @media print {
+    nav.toc { display: none; }
+    .layout { grid-template-columns: 1fr; }
+    main { padding: 20px; max-width: none; }
+    section.spec, .part-divider, .quickcheck { page-break-inside: avoid; }
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc" aria-label="Table of contents">
+  <h2 class="qc">Quick Check</h2>
+  <ol><li><a href="#quickcheck"><span class="ix">QC.</span>7-line summary</a></li></ol>
+  <h2 class="what">Part A — WHAT (decisions)</h2>
+  <ol>
+    <li><a href="#s1"><span class="ix">A1.</span>Document Metadata</a></li>
+    <li><a href="#s2"><span class="ix">A2.</span>Context &amp; Problem</a></li>
+    <li><a href="#s3"><span class="ix">A3.</span>Objective &amp; Definition of Success</a></li>
+    <li><a href="#s4"><span class="ix">A4.</span>Rollout Principles</a></li>
+    <li><a href="#s5"><span class="ix">A5.</span>Cohort Behaviour (User Journey)</a></li>
+    <li><a href="#s6"><span class="ix">A6.</span>Business Logic &amp; Invariants</a></li>
+    <li><a href="#s7"><span class="ix">A7.</span>Edge Cases &amp; Decisions</a></li>
+    <li><a href="#s8"><span class="ix">A8.</span>Open Questions</a></li>
+  </ol>
+  <h2 class="how">Part B — HOW (detailing)</h2>
+  <ol>
+    <li><a href="#s9"><span class="ix">B1.</span>Data Model — Allow-list</a></li>
+    <li><a href="#s10"><span class="ix">B2.</span>API Contract — Polymorphic Response</a></li>
+    <li><a href="#s11"><span class="ix">B3.</span>Allow-list Management Surface</a></li>
+    <li><a href="#s12"><span class="ix">B4.</span>In-Memory Cache &amp; Propagation</a></li>
+    <li><a href="#s13"><span class="ix">B5.</span>Inbound Helpline Behaviour</a></li>
+    <li><a href="#s14"><span class="ix">B6.</span>PIN Allocation Behaviour</a></li>
+    <li><a href="#s15"><span class="ix">B7.</span>App-Side Changes</a></li>
+    <li><a href="#s16"><span class="ix">B8.</span>Rollout Phases</a></li>
+    <li><a href="#s17"><span class="ix">B9.</span>Metrics &amp; Observability</a></li>
+    <li><a href="#s18"><span class="ix">B10.</span>Rollback Plan</a></li>
+    <li><a href="#s19"><span class="ix">B11.</span>Out of Scope</a></li>
+  </ol>
+  <h2 class="close">Closeout</h2>
+  <ol>
+    <li><a href="#checklist"><span class="ix">—</span>Completeness Checklist</a></li>
+    <li><a href="#glossary"><span class="ix">—</span>Glossary</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="doc">
+  <div class="eyebrow">Wiom · IVR Rollout Plan · v1.0 · PM deliverable</div>
+  <h1>CSP IVR Service — Cohort-Based Rollout Plan</h1>
+  <p class="lede">Roll out IVR 2.0 (masked-number bridging) on an opt-in cohort of CSPs instead of all-or-nothing. The IVR service owns an allow-list of enrolled CSPs and, on every call-CTA fetch, returns either a masked DID + PIN (when the CSP is enrolled) or the other party's actual mobile number (when not). Apps stay neutral — they just dial what they're given.</p>
+  <div class="meta-row">
+    <span><strong>Audience:</strong> Engineering (csp-execution-platform, App teams) · Ops · Design</span>
+    <span><strong>Type:</strong> PM rollout-plan spec</span>
+  </div>
+  <div class="convention">
+    <strong>Companion artefact:</strong>
+    <a href="https://ashish-raj-wiom.github.io/IVR-Routing-Solutioning/csp-ivr-service-product-spec.html">Base Product Solution Spec (v1.0)</a>. This document layers a phased rollout strategy on top of that spec; it does not modify the core IVR behaviour.
+  </div>
+</header>
+
+<aside class="quickcheck" id="quickcheck" aria-label="Quick check summary">
+  <h2>Quick Check</h2>
+  <div class="qc-tag">7-line summary. Reflects the body below.</div>
+  <dl>
+    <dt>What problem?</dt><dd>An all-CSP rollout of IVR 2.0 is too risky — we need a controlled cohort first to learn before expanding. Today's app-side kill switches are global ON/OFF; they cannot scope behaviour to specific CSPs.</dd>
+    <dt>Primary owner?</dt><dd>IVR service team (<code>csp-execution-platform</code>). Allow-list lives entirely inside the IVR service.</dd>
+    <dt>Migration needed?</dt><dd>No. App kill switches remain ON. No backfill of historical tickets. PIN allocation continues for every ticket as today.</dd>
+    <dt>App release needed?</dt><dd>Yes — minor. Apps add a one-branch handler on the existing call-CTA response (read <code>callType</code>: dial masked DID + PIN, or dial actual mobile).</dd>
+    <dt>Money flow change?</dt><dd>No.</dd>
+    <dt>PII processed?</dt><dd>Yes — same classes as today (CSP / customer mobiles). No new class.</dd>
+    <dt>Rollback latency?</dt><dd>≤ 30 seconds. Allow-list is in-memory cached with 30s TTL; removing a CSP propagates to all IVR instances within one cache cycle.</dd>
+  </dl>
+</aside>
+
+<div class="part-divider what">
+  <div class="label">Part A</div>
+  <h2>WHAT — Decisions</h2>
+  <p>The product-level rollout decisions. Stable across implementation revisions.</p>
+  <div class="author-note">Authored by the PM (Ashis Raj). Changes here trigger re-review.</div>
+</div>
+
+<!-- A1 Metadata -->
+<section class="spec" id="s1">
+  <h2><span class="num">A1.</span> Document Metadata <span class="tier what">WHAT</span></h2>
+  <table>
+    <tr><th style="width:25%">Field</th><th>Value</th></tr>
+    <tr><td>Title</td><td>CSP IVR Service — Cohort-Based Rollout Plan</td></tr>
+    <tr><td>Owner</td><td>Ashis Raj (PM, csp-execution-platform)</td></tr>
+    <tr><td>Status</td><td>Draft for review</td></tr>
+    <tr><td>Version</td><td>v1.0</td></tr>
+    <tr><td>Depends on</td><td>CSP IVR Service Product Solution Spec v1.0 (base behaviour)</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A2 Context & Problem -->
+<section class="spec" id="s2">
+  <h2><span class="num">A2.</span> Context &amp; Problem Statement <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Why a cohort rollout is needed; what today's kill switch can and can't do; cost of skipping cohort phase.</div>
+  <table>
+    <tr><th style="width:30%">Question</th><th>Answer</th></tr>
+    <tr><td>What is the current state?</td><td>The base IVR 2.0 spec is built and partially live on prod. Both the CSP App and Customer App have a binary "IVR kill switch": when ON, the app calls the IVR service to fetch the masked-number routing target; when OFF, the app dials the other party's actual mobile directly. The kill switch is global — it affects every user simultaneously.</td></tr>
+    <tr><td>What can't the kill switch do?</td><td>Scope behaviour to a subset. Either everyone gets masking or nobody does. Day-1 mass enablement carries every regression risk to every user at once, with no incremental learning.</td></tr>
+    <tr><td>Why is a cohort rollout needed?</td><td>The IVR end-to-end flow involves: Exotel webhook timing, App-Bazaar Switch Case wiring, PIN allocation correctness, PIN-fetch endpoint correctness, Customer Service deserialization, sim_inventory recognition, and CleverTap notification path. Bugs in any of these silently break customer ↔ CSP communication. Recent prod incidents (CustomerClient deserialization bug, P74 PIN deallocation leak) confirm that hidden defects only surface once real traffic hits the system. We need a manageable blast radius to identify and fix these as they emerge.</td></tr>
+    <tr><td>What does this cohort plan add?</td><td>A per-CSP enrolment list inside the IVR service that decides — on every call-CTA fetch — whether to return the masked-bridge response (PIN + masked DID) or fall back to returning the other party's actual mobile. Apps stay agnostic; they just dial whatever the IVR returns.</td></tr>
+    <tr><td>What happens if we skip this and just turn on the kill switch for everyone?</td><td>Any defect would manifest as failed customer ↔ CSP calls across the entire base simultaneously. Reputational and operational cost of a full-base regression is materially higher than the engineering cost of building the cohort gate (~2 days of engineering work).</td></tr>
+    <tr><td>Governing principle</td><td>"Crawl, walk, run" — prove correctness at small scale before exposing all users. The kill switch alone is insufficient because rolling back wholesale loses all the partial signal we've gained.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A3 Objective & Success -->
+<section class="spec" id="s3">
+  <h2><span class="num">A3.</span> Objective &amp; Definition of Success <span class="tier what">WHAT</span></h2>
+  <table>
+    <tr><th style="width:30%">Field</th><th>Value</th></tr>
+    <tr><td>Core objective</td><td>Roll IVR 2.0 to all CSPs with high confidence by progressing through size-bounded cohorts, learning from each cohort, and only expanding when metrics + qualitative signal both clear.</td></tr>
+    <tr><td>Definition of success (qualitative)</td><td>Every CSP in the enrolled cohort experiences working masked calling in both directions. CSPs outside the cohort continue to call the other party directly, unchanged. Issues discovered in a cohort are fixed before expanding to the next cohort.</td></tr>
+    <tr><td>Quantitative success bars (per cohort)</td><td>Bridge rate ≥ 85% of v2 calls (i.e., <code>to_number</code> set in <code>user_connection_call_logs</code>); Connect rate ≥ 30% of v2 calls; PIN-fetch error rate &lt; 1% of calls; zero "masked number was actual number" incidents (privacy leakage).</td></tr>
+    <tr><td>Guardrail 1</td><td>No CSP outside the enrolled cohort sees any change in behaviour. Their tickets continue to expose the other party's mobile via the existing call-CTA contract.</td></tr>
+    <tr><td>Guardrail 2</td><td>A CSP can be removed from the cohort within ≤ 30 seconds (one cache cycle). No code change or service restart.</td></tr>
+    <tr><td>Guardrail 3</td><td>Privacy invariant from the base spec is preserved: a real mobile number is never exposed to the counterparty for an enrolled CSP's tickets. Cohort gating does not weaken this contract; it only controls who is in the masking regime.</td></tr>
+    <tr><td>Rollback trigger</td><td>Any of: (a) bridge rate drops below 70% across the cohort sustained over 24h; (b) any verified privacy leak (real number returned to counterparty when it shouldn't be); (c) a new bug class that affects ≥ 5 distinct CSPs in the cohort.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A4 Rollout Principles -->
+<section class="spec" id="s4">
+  <h2><span class="num">A4.</span> Rollout Principles <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> The four cornerstone decisions that govern this rollout.</div>
+  <table>
+    <tr><th style="width:30%">Decision</th><th>Choice</th><th>Why</th></tr>
+    <tr><td>Where does the allow-list live?</td><td><strong>IVR service</strong> (not in apps, not in TAS, not in any other service).</td><td>Apps stay simple. Other services don't need to know. Single source of truth. Hot-reloadable.</td></tr>
+    <tr><td>Granularity?</td><td><strong>Per CSP</strong>, not per ticket. If a CSP is in the allow-list, every one of their tickets (Install, Restore, NBREC) uses masked routing.</td><td>Simpler mental model. CSPs are the relationship; tickets are transient. Avoids weird inconsistent UX where one ticket masks and another doesn't.</td></tr>
+    <tr><td>API surface?</td><td><strong>Polymorphic response on existing endpoints.</strong> No new endpoint; existing call-CTA response gets two extra fields. App branches on <code>callType</code>.</td><td>Minimum surface change. App teams own a single handler. Backward compatible — existing <code>pin</code> field stays.</td></tr>
+    <tr><td>PIN allocation gating?</td><td><strong>No gating.</strong> TAS continues to call <code>/allocate</code> for every Install / Restore / NBREC ticket regardless of CSP enrolment.</td><td>No TAS coordination needed. PIN pool waste is negligible (~few hundred unused PINs/day; pool has 1M). Decouples enrolment from upstream service logic.</td></tr>
+    <tr><td>Inbound helpline behaviour?</td><td><strong>Bridge anyone.</strong> The helpline (<code>08047284012</code>) accepts all callers; the cohort gate only fires on outbound call-CTA fetches.</td><td>Customers who somehow reach the helpline (old SMS, saved contact) shouldn't be cut off. The helpline is shared infrastructure.</td></tr>
+    <tr><td>Backfill of in-flight tickets when CSP enrols?</td><td><strong>No backfill.</strong> Tickets created after the CSP enrols use masking; tickets created before continue with direct call.</td><td>Tickets created during enrolment already get fresh PINs from the standing TAS <code>/allocate</code> calls. No retroactive PIN re-allocation needed. Simplest, safest.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A5 Cohort behaviour -->
+<section class="spec" id="s5">
+  <h2><span class="num">A5.</span> Cohort Behaviour (User Journey) <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> What the CSP and customer experience differs by enrolment state.</div>
+
+  <h3>A5.1 Two parallel realities</h3>
+  <table>
+    <tr><th>Population</th><th>Customer App call CTA</th><th>CSP App call CTA</th><th>Visible to user?</th></tr>
+    <tr><td><strong>Enrolled CSPs (cohort)</strong></td><td>Returns masked DID + PIN. Customer sees the Wiom helpline number on dialer; CSP's mobile stays private.</td><td>Returns masked DID + PIN. CSP sees the Wiom helpline number on dialer; customer's mobile stays private.</td><td>No — the app dials whatever it gets. User sees a masked number on their dialer instead of a personal number.</td></tr>
+    <tr><td><strong>Not-enrolled CSPs (everyone else)</strong></td><td>Returns customer's actual mobile (for CSP-initiated direction) or CSP's actual mobile (for customer-initiated direction). Call goes direct.</td><td>Same — actual mobile, direct call.</td><td>No — identical to today's "kill switch off" behaviour.</td></tr>
+  </table>
+
+  <h3>A5.2 Call-CTA flow (both apps, both populations)</h3>
+  <div class="mermaid">
+flowchart LR
+    A[User taps Call CTA] --> B[App calls IVR<br/>customer/pin or csp/pin]
+    B --> C{IVR: is the<br/>CSP enrolled?}
+    C -- YES --> D[Return masked DID<br/>+ PIN]
+    D --> E[App dials masked DID]
+    E --> F[Exotel bridges<br/>via IVR routing]
+    C -- NO --> G[Return other party's<br/>actual mobile]
+    G --> H[App dials mobile directly]
+    H --> I[Normal call]
+  </div>
+
+  <h3>A5.3 Inbound helpline (customer / CSP dials the masked DID directly)</h3>
+  <p>Unaffected by the cohort gate. Path 1 (Redis Table 1) and Path 2 (PIN-registry by-FROM) work as today regardless of who calls or what their CSP's enrolment state is. The helpline is shared infrastructure.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- A6 Business Logic & Invariants -->
+<section class="spec" id="s6">
+  <h2><span class="num">A6.</span> Business Logic &amp; Invariants <span class="tier what">WHAT</span></h2>
+  <table>
+    <tr><th style="width:18%">ID</th><th>Invariant</th></tr>
+    <tr><td>INV-ROLL-01</td><td>The IVR service is the sole owner of the allow-list. Apps, TAS, and other services MUST NOT cache enrolment state independently.</td></tr>
+    <tr><td>INV-ROLL-02</td><td>Enrolment is a CSP-level attribute. If CSP <code>X</code> is enrolled, every ticket whose CSP-side row in <code>pin_registry</code> has <code>user_id = X</code> is in the masking regime.</td></tr>
+    <tr><td>INV-ROLL-03</td><td>Every call-CTA endpoint response includes a <code>callType</code> field with exactly one of two values: <code>MASKED</code> or <code>DIRECT</code>. No third value, no nulls.</td></tr>
+    <tr><td>INV-ROLL-04</td><td>For <code>callType = DIRECT</code>, the IVR returns the other party's actual mobile sourced from <code>pin_registry</code> (the row that was allocated by TAS at ticket creation). It does not call any external lookup at CTA time.</td></tr>
+    <tr><td>INV-ROLL-05</td><td>PIN allocation (<code>POST /allocate</code>) is uniform across all CSPs — enrolled or not. <code>pin_registry</code> remains a complete record of every Install / Restore / NBREC ticket.</td></tr>
+    <tr><td>INV-ROLL-06</td><td>Cohort changes propagate to all IVR instances within ≤ 30 seconds. This is the rollback SLA.</td></tr>
+    <tr><td>INV-ROLL-07</td><td>The base IVR's privacy invariants (no real mobile exposed in a masked bridge; PIN-binding to ticket) are unaffected. Cohort gating is an additional layer on top, not a relaxation.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A7 Edge Cases & Decisions -->
+<section class="spec" id="s7">
+  <h2><span class="num">A7.</span> Edge Cases &amp; Decisions <span class="tier what">WHAT</span></h2>
+  <table>
+    <tr><th style="width:30%">Edge case</th><th>Decision</th></tr>
+    <tr><td>CSP is removed from cohort while their tickets have active PINs.</td><td>The PIN rows stay in <code>pin_registry</code> (untouched). New call-CTA fetches return DIRECT. The previously-issued masked DID + PIN combination still works if dialled (Path 2 by-FROM lookup still hits), so any in-flight ringing call completes. Net: no broken calls during transition.</td></tr>
+    <tr><td>CSP is added to cohort while they have in-flight tickets.</td><td>Per A4 — no backfill. New call-CTA fetches on those tickets now return MASKED (the PIN already exists from TAS' standing <code>/allocate</code> calls). User experience flips smoothly on the next CTA tap.</td></tr>
+    <tr><td>Migrated ticket (pre-IVR-2.0 launch) for an enrolled CSP — no pin_registry row exists.</td><td>The IVR has no PIN to return. Fallback: return DIRECT with the other party's actual mobile sourced from app's local task data. Requires a small additional path in app: if IVR returns 404 / not-found for an enrolled-CSP ticket, the app uses its local mobile. <strong>Flagged for B-spec resolution.</strong></td></tr>
+    <tr><td>Customer of an enrolled CSP receives a call from non-helpline number (legacy direct call from CSP).</td><td>Out of scope. The cohort gate only affects what IVR returns on app CTA. Any other channel (WhatsApp, personal SIM, etc.) is unchanged.</td></tr>
+    <tr><td>Customer has tickets across two CSPs — one enrolled, one not.</td><td>Per ticket: each call CTA fetch is keyed on the ticket's CSP. The customer may experience masked calling for one ticket and direct calling for another. This is acceptable and follows from CSP-level granularity.</td></tr>
+    <tr><td>CSP App version doesn't yet support polymorphic <code>callType</code> response.</td><td>The endpoint stays backward compatible. Old app reads <code>pin</code> field as before — IVR continues to set <code>pin</code> in MASKED responses. For DIRECT responses, <code>pin</code> is absent / null; old app would interpret as "no PIN available", which is the safe failure mode (matches today's kill-switch-off behaviour). Recommended path: ship app update before / alongside enrolling that CSP's users.</td></tr>
+    <tr><td>An enrolled CSP's customer dials the masked helpline but their CSP gets de-enrolled before they hang up.</td><td>The mid-call bridge continues unaffected (Exotel session already established). Next call attempt would route per the new state.</td></tr>
+    <tr><td>TAS calls <code>/allocate</code> for a non-enrolled CSP's ticket.</td><td>IVR allocates as usual. Per A4 / INV-ROLL-05.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- A8 Open Questions -->
+<section class="spec" id="s8">
+  <h2><span class="num">A8.</span> Open Questions <span class="tier what">WHAT</span></h2>
+  <table>
+    <tr><th style="width:8%">#</th><th>Question</th><th>Resolution owner</th></tr>
+    <tr><td>OQ-1</td><td>For migrated tickets (no <code>pin_registry</code> row) belonging to an enrolled CSP — should IVR (a) return 404 and let the app fall back to local mobile, or (b) call an external service to look up the actual mobile and return it as DIRECT?</td><td>Tech + PM, before Phase 1 (Pilot) kickoff.</td></tr>
+    <tr><td>OQ-2</td><td>Initial pilot cohort selection criteria — by geography (NCR + Mumbai mix?), by ticket volume (top decile?), by relationship quality (CSPs we can call for feedback?), or random sample?</td><td>PM + Ops + CSP Success.</td></tr>
+    <tr><td>OQ-3</td><td>Does the call-CTA endpoint contract need a request-side header / version flag so old app versions explicitly opt out of receiving <code>callType</code>?</td><td>Tech (App team), based on existing API versioning practice.</td></tr>
+    <tr><td>OQ-4</td><td>Should the audit log of enrolment changes be exposed externally (e.g., a daily report to Ops) or kept internal to the IVR DB?</td><td>PM.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<div class="part-divider how">
+  <div class="label">Part B</div>
+  <h2>HOW — Detailing</h2>
+  <p>Engineering-facing detail. Subject to revision as build progresses; the WHAT decisions above are the stable contract.</p>
+</div>
+
+<!-- B1 Data Model -->
+<section class="spec" id="s9">
+  <h2><span class="num">B1.</span> Data Model — Allow-list <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> The table that stores the enrolment list, plus an audit table for change tracking.</div>
+
+  <h3>B1.1 Primary table</h3>
+<pre class="code"><span class="kw">CREATE TABLE</span> ivr.ivr_csp_enrolment (
+  csp_id           VARCHAR(16) <span class="kw">PRIMARY KEY</span>,
+  enrolled_at      TIMESTAMPTZ  <span class="kw">NOT NULL DEFAULT</span> NOW(),
+  enrolled_by      VARCHAR(64),                        <span class="com">-- admin user / system</span>
+  notes            TEXT,
+  active           BOOLEAN      <span class="kw">NOT NULL DEFAULT</span> TRUE,
+  deactivated_at   TIMESTAMPTZ
+);
+
+<span class="kw">CREATE INDEX</span> idx_ivr_csp_enrolment_active
+  <span class="kw">ON</span> ivr.ivr_csp_enrolment (active)
+  <span class="kw">WHERE</span> active = TRUE;
+</pre>
+
+  <h3>B1.2 Audit table</h3>
+<pre class="code"><span class="kw">CREATE TABLE</span> ivr.ivr_csp_enrolment_audit (
+  id          BIGSERIAL    <span class="kw">PRIMARY KEY</span>,
+  csp_id      VARCHAR(16)  <span class="kw">NOT NULL</span>,
+  action      VARCHAR(16)  <span class="kw">NOT NULL</span>,  <span class="com">-- ENROLLED | DEACTIVATED | REACTIVATED</span>
+  actor       VARCHAR(64),
+  at          TIMESTAMPTZ  <span class="kw">DEFAULT</span> NOW(),
+  notes       TEXT
+);
+
+<span class="kw">CREATE INDEX</span> idx_ivr_csp_enrolment_audit_csp_at
+  <span class="kw">ON</span> ivr.ivr_csp_enrolment_audit (csp_id, at <span class="kw">DESC</span>);
+</pre>
+
+  <h3>B1.3 Why soft-delete (<code>active</code> flag) instead of physical delete?</h3>
+  <p>Removing a CSP from the cohort during rollback is a frequent operation. Soft-delete preserves historical context (when they were enrolled, who removed them, when), and re-enrolment becomes a single <code>UPDATE</code> instead of a fresh INSERT — losing audit chain. The <code>active = TRUE</code> partial index keeps reads cheap.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- B2 API Contract -->
+<section class="spec" id="s10">
+  <h2><span class="num">B2.</span> API Contract — Polymorphic Response <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> The shape of the call-CTA endpoint's response in both the MASKED and DIRECT cases.</div>
+
+  <h3>B2.1 Affected endpoints</h3>
+  <table>
+    <tr><th>Endpoint</th><th>Caller</th><th>Returns the mobile of</th></tr>
+    <tr><td><code>POST /api/v1/ivr/pin-registry/customer/pin</code></td><td>Customer App</td><td>The CSP (counterparty)</td></tr>
+    <tr><td><code>POST /api/v1/ivr/pin-registry/csp/pin</code></td><td>CSP App / Technician App</td><td>The customer (counterparty)</td></tr>
+  </table>
+
+  <h3>B2.2 MASKED response (CSP is enrolled)</h3>
+<pre class="code">{
+  <span class="str">"callType"</span>:  <span class="str">"MASKED"</span>,
+  <span class="str">"pin"</span>:       <span class="str">"032841"</span>,
+  <span class="str">"maskedDid"</span>: <span class="str">"08047284012"</span>
+}
+</pre>
+  <p>App behaviour: dial <code>maskedDid</code>; on prompt, send <code>pin</code> as DTMF. This is today's masked-bridge flow.</p>
+
+  <h3>B2.3 DIRECT response (CSP is NOT enrolled)</h3>
+<pre class="code">{
+  <span class="str">"callType"</span>:    <span class="str">"DIRECT"</span>,
+  <span class="str">"phoneNumber"</span>: <span class="str">"9876543210"</span>
+}
+</pre>
+  <p>App behaviour: dial <code>phoneNumber</code> directly. Equivalent to today's "kill switch off" behaviour.</p>
+
+  <h3>B2.4 Where the actual mobile comes from for DIRECT</h3>
+  <table>
+    <tr><th>Endpoint</th><th>Source of <code>phoneNumber</code></th></tr>
+    <tr><td><code>customer/pin</code></td><td><code>pin_registry</code> row where <code>type = CUSTOMER</code> AND ticket matches → <code>number</code> field = CSP's mobile</td></tr>
+    <tr><td><code>csp/pin</code></td><td><code>pin_registry</code> row where <code>type = CSP</code> AND <code>execution_candidate_id</code> matches → <code>number</code> field = customer's mobile</td></tr>
+  </table>
+  <p>Both endpoints already read <code>pin_registry</code> to fetch the PIN; reading the <code>number</code> column from the same row is zero extra IO. No external lookup needed.</p>
+
+  <h3>B2.5 Backward compatibility</h3>
+  <ul class="criteria">
+    <li>The <code>pin</code> field in responses stays. Old apps continue to read it and behave correctly for the MASKED case.</li>
+    <li>For DIRECT responses, <code>pin</code> is absent. Old apps interpreting "no PIN" as "fall back to local mobile" is the safe failure mode — matches the legacy kill-switch-off branch.</li>
+    <li>The new <code>callType</code> and <code>phoneNumber</code> fields are additive; old apps ignore them harmlessly.</li>
+  </ul>
+
+  <h3>B2.6 Decision pseudocode (IVR-side)</h3>
+<pre class="code"><span class="kw">function</span> handleCallCtaFetch(ticketContext) {
+  cspId = resolveCspId(ticketContext);              <span class="com">// from pin_registry CSP-side row</span>
+  <span class="kw">if</span> (enrolmentCache.isEnrolled(cspId)) {
+    pin       = fetchPin(ticketContext);
+    maskedDid = config.maskedDid;                   <span class="com">// "08047284012"</span>
+    <span class="kw">return</span> { callType: <span class="str">"MASKED"</span>, pin, maskedDid };
+  } <span class="kw">else</span> {
+    phoneNumber = fetchCounterpartyMobile(ticketContext);
+    <span class="kw">return</span> { callType: <span class="str">"DIRECT"</span>, phoneNumber };
+  }
+}
+</pre>
+  <hr class="sect-end">
+</section>
+
+<!-- B3 Allow-list Management -->
+<section class="spec" id="s11">
+  <h2><span class="num">B3.</span> Allow-list Management Surface <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> The admin-facing endpoints for managing the enrolment list at rollout time.</div>
+
+  <table>
+    <tr><th>Method &amp; Path</th><th>Purpose</th><th>Auth</th></tr>
+    <tr><td><code>POST /api/v1/ivr/admin/enrolment</code></td><td>Add a CSP to the cohort. Body: <code>{ "cspId": "a0a7b8", "notes": "Phase 1 — Delhi NCR pilot" }</code>. If row exists and inactive → reactivate.</td><td>Internal API key</td></tr>
+    <tr><td><code>DELETE /api/v1/ivr/admin/enrolment/{cspId}</code></td><td>Remove a CSP from the cohort (soft-delete: sets <code>active = FALSE</code>, stamps <code>deactivated_at</code>, writes audit row).</td><td>Internal API key</td></tr>
+    <tr><td><code>GET /api/v1/ivr/admin/enrolment</code></td><td>List all currently-enrolled CSPs. Pagination supported.</td><td>Internal API key</td></tr>
+    <tr><td><code>GET /api/v1/ivr/admin/enrolment/audit</code></td><td>Return recent enrolment changes for auditability.</td><td>Internal API key</td></tr>
+  </table>
+
+  <h3>B3.1 Bulk onboarding</h3>
+  <p>For Phase 1 → Phase 3 expansions, the cohort grows in chunks of 5 / 50 / 500 CSPs. Two acceptable mechanisms:</p>
+  <ul class="criteria">
+    <li><strong>Bulk SQL</strong> — direct INSERT with a single batch query, run via the DB admin console. Fast, low ceremony, but no per-row audit.</li>
+    <li><strong>Scripted API calls</strong> — Ops script loops the POST endpoint, one CSP at a time. Slower but writes proper audit rows.</li>
+  </ul>
+  <p>Recommendation: scripted API for any cohort growth that's part of the formal rollout phases. Direct SQL only for emergency rollback (mass remove).</p>
+  <hr class="sect-end">
+</section>
+
+<!-- B4 Cache -->
+<section class="spec" id="s12">
+  <h2><span class="num">B4.</span> In-Memory Cache &amp; Propagation <span class="tier how">HOW</span></h2>
+  <table>
+    <tr><th style="width:30%">Concern</th><th>Decision</th></tr>
+    <tr><td>Cache library</td><td>Caffeine (already in dependency tree). Holds <code>Set&lt;String&gt;</code> of active <code>csp_id</code>s.</td></tr>
+    <tr><td>Refresh policy</td><td>Time-based — refresh every <strong>30 seconds</strong> from <code>ivr_csp_enrolment WHERE active = TRUE</code>.</td></tr>
+    <tr><td>On cache miss</td><td>Single DB read; result populates the cache. Lookup latency &lt; 1 ms in steady state.</td></tr>
+    <tr><td>Multi-instance consistency</td><td>Eventual. Worst case: a CSP enrolled at T+0s is visible across all instances by T+30s. Rollback (remove) has the same ≤ 30s SLA. Acceptable per INV-ROLL-06.</td></tr>
+    <tr><td>Cache size</td><td>Cohort is bounded by the total number of CSPs (~30K max). The full set fits comfortably in memory; no eviction policy needed.</td></tr>
+    <tr><td>Manual refresh trigger</td><td>Optional <code>POST /api/v1/ivr/admin/enrolment/refresh-cache</code> endpoint for emergency hot-swap (skip the 30s wait). Nice-to-have, not required.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- B5 Inbound -->
+<section class="spec" id="s13">
+  <h2><span class="num">B5.</span> Inbound Helpline Behaviour <span class="tier how">HOW</span></h2>
+  <p>No change vs the base spec. The Connect-applet API (<code>POST /api/v1/connect-applet</code>) does not consult the cohort allow-list. All inbound calls to the masked DID (<code>08047284012</code>) flow through Path 1 (Redis Table 1) and Path 2 (pin_registry by-FROM) as today, regardless of the originating CSP's enrolment state.</p>
+  <p>Rationale: the helpline is shared infrastructure. Customers / CSPs who reach it have done so via legitimate means (in-app CTA at some prior point, or callback from an Exotel-recorded missed call). Cohort filtering at the inbound layer would create silent drops with no clean user-facing recovery path — which is the exact failure mode the base IVR spec was built to eliminate.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- B6 PIN Allocation -->
+<section class="spec" id="s14">
+  <h2><span class="num">B6.</span> PIN Allocation Behaviour <span class="tier how">HOW</span></h2>
+  <p>No change. TAS continues to call <code>POST /api/v1/ivr/pin-registry/allocate</code> for every Install / Restore / NBREC ticket at candidate creation, regardless of CSP enrolment state. The allow-list does not gate <code>/allocate</code>.</p>
+  <table>
+    <tr><th>Implication</th><th>Detail</th></tr>
+    <tr><td>PIN pool consumption</td><td>~few hundred PINs per day allocated to tickets that will never use them (non-enrolled CSPs). Pool size is 1M; negligible drain. PIN cooldown / recycle (<code>POST /recycle</code>) returns these to the pool naturally.</td></tr>
+    <tr><td><code>pin_registry</code> contents</td><td>Continues to hold a complete record of every ticket across all CSPs. Useful for observability — we can measure the size of the would-be cohort by inspecting <code>pin_registry</code>.</td></tr>
+    <tr><td>If a non-enrolled CSP gets enrolled mid-flight</td><td>Their existing tickets already have PINs allocated. Enrolment flips them to MASKED on the next call-CTA fetch without any additional allocation step.</td></tr>
+    <tr><td>TAS coordination required?</td><td>None. TAS is enrolment-agnostic.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- B7 App Changes -->
+<section class="spec" id="s15">
+  <h2><span class="num">B7.</span> App-Side Changes <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> The minimal app-side change in both Customer App and CSP App / Technician App.</div>
+  <table>
+    <tr><th>Change</th><th>Detail</th></tr>
+    <tr><td>Kill switch state</td><td><strong>Remains ON permanently</strong>. Apps always call IVR's call-CTA endpoint. No code removal; just stop using the kill switch as a meaningful control.</td></tr>
+    <tr><td>Response handler</td><td>Update the call-CTA response parser to branch on <code>callType</code>:<br>• <code>MASKED</code> → dial <code>maskedDid</code>, send <code>pin</code> as DTMF (today's behaviour).<br>• <code>DIRECT</code> → dial <code>phoneNumber</code> directly.</td></tr>
+    <tr><td>Backward compatibility on rollout day</td><td>Old app versions still read <code>pin</code>. If <code>pin</code> is absent (DIRECT response), they fall back to local task data's mobile — equivalent to today's kill-switch-off path. Net: old apps still work for non-enrolled CSPs.</td></tr>
+    <tr><td>Release sequencing</td><td>Ship the app update at the start of Phase 0 (dry run). Wait until adoption ≥ 80% of CSP App + Customer App users before enrolling any CSP whose users may be on older apps.</td></tr>
+    <tr><td>Lines of code</td><td>~10 lines per app for the branch + null-check. No new screens, no new permissions, no new dependencies.</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- B8 Rollout Phases -->
+<section class="spec" id="s16">
+  <h2><span class="num">B8.</span> Rollout Phases <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Concrete phase plan with size, duration, success bar, and exit criteria.</div>
+  <table>
+    <tr><th style="width:14%">Phase</th><th style="width:18%">Cohort</th><th style="width:12%">Duration</th><th>Success criteria (all must hold)</th></tr>
+    <tr><td><strong>Phase 0 — Dry run</strong></td><td>Internal Wiom employees only (PM + 2–3 controllable CSP accounts)</td><td>3 days</td><td>All call-CTA fetches return correct <code>callType</code>; bridges connect end-to-end on at least 10 test calls per direction; no app crashes; no privacy regressions.</td></tr>
+    <tr><td><strong>Phase 1 — Pilot</strong></td><td>5 hand-picked CSPs across NCR + Mumbai (mix of high / low volume)</td><td>7 days</td><td>Bridge rate ≥ 85%; Connect rate ≥ 30%; PIN-fetch errors &lt; 1%; zero privacy regressions; CSP feedback collected and qualitatively positive.</td></tr>
+    <tr><td><strong>Phase 2 — Small expansion</strong></td><td>50 CSPs</td><td>7 days</td><td>Phase 1 metrics hold at 10× scale; no new bug classes emerge that affect &gt; 1 CSP.</td></tr>
+    <tr><td><strong>Phase 3 — Medium expansion</strong></td><td>500 CSPs</td><td>7 days</td><td>Same as Phase 2 at 10× scale; CC support volume on calling issues stays flat or decreases.</td></tr>
+    <tr><td><strong>Phase 4 — Full rollout</strong></td><td>All remaining CSPs</td><td>Indefinite</td><td>—</td></tr>
+  </table>
+
+  <h3>B8.1 Selection criteria for Pilot &amp; Phase 2 cohorts</h3>
+  <ul class="criteria">
+    <li>Active ticket flow in at least 2 of {Install, Restore, NBREC} — to exercise all PIN-allocation paths.</li>
+    <li>At least 2 distinct zones represented — to catch any region-specific issues (telco-routing, masked-DID coverage).</li>
+    <li>Reachable for direct PM / Ops feedback (WhatsApp, calls, in-person if possible).</li>
+    <li>Not currently in any other product experiment that could confound signal.</li>
+  </ul>
+
+  <h3>B8.2 Promotion gate from Phase N to Phase N+1</h3>
+  <p>All of: (a) success criteria above met; (b) no open P0 / P1 bugs from previous phase; (c) explicit PM + Tech Lead sign-off; (d) at least 48 hours of clean data since last change.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- B9 Metrics -->
+<section class="spec" id="s17">
+  <h2><span class="num">B9.</span> Metrics &amp; Observability <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> What gets measured per phase to decide whether to expand or hold.</div>
+
+  <h3>B9.1 Quantitative metrics (daily report per cohort)</h3>
+  <table>
+    <tr><th>Metric</th><th>Source</th><th>Target</th></tr>
+    <tr><td>Bridge rate — % of v2 calls with <code>to_number</code> set</td><td><code>user_connection_call_logs</code> filtered to enrolled CSPs (joined via <code>pin_registry</code>)</td><td>≥ 85%</td></tr>
+    <tr><td>Connect rate — % of v2 calls with <code>call_status = CONNECTED</code></td><td>Same</td><td>≥ 30%</td></tr>
+    <tr><td>PIN-fetch error rate</td><td>Datadog: <code>[CustomerClient] error</code>, <code>PinNotFoundException</code>, <code>503</code>s on <code>/customer/pin</code> &amp; <code>/csp/pin</code></td><td>&lt; 1% of total CTA fetches</td></tr>
+    <tr><td>CallType distribution for enrolled CSPs</td><td>New IVR log line on every CTA: <code>[Enrolment] cspId=X decision=MASKED|DIRECT</code></td><td>100% MASKED for enrolled CSPs (anything else is a bug)</td></tr>
+    <tr><td>CallType distribution for non-enrolled CSPs</td><td>Same log line</td><td>100% DIRECT for non-enrolled CSPs</td></tr>
+    <tr><td>Allow-list cache hit rate</td><td>New IVR metric: <code>enrolment.cache.hits / total</code></td><td>≥ 99.9% (cache miss is rare)</td></tr>
+  </table>
+
+  <h3>B9.2 Qualitative signal (per phase)</h3>
+  <ul class="criteria">
+    <li>CSP feedback: phone / WhatsApp check-ins with each Phase 1 / Phase 2 CSP at day 3 and day 7.</li>
+    <li>Customer complaint count from CC tickets tagged "calling issue".</li>
+    <li>Internal escalation log (Slack / JIRA) — count and severity of issues raised.</li>
+  </ul>
+
+  <h3>B9.3 Privacy regression detection</h3>
+  <p>A nightly job inspects sampled <code>user_connection_call_logs</code> rows for enrolled CSPs and verifies that the <code>from_number</code> / <code>to_number</code> fields ARE the masked DID (<code>08047284012</code>) and not a personal mobile. Any row with a personal mobile in either field for an enrolled CSP's ticket triggers an alert.</p>
+  <hr class="sect-end">
+</section>
+
+<!-- B10 Rollback -->
+<section class="spec" id="s18">
+  <h2><span class="num">B10.</span> Rollback Plan <span class="tier how">HOW</span></h2>
+  <table>
+    <tr><th style="width:30%">Scope</th><th>Action</th><th>Propagation time</th></tr>
+    <tr><td>One CSP misbehaving</td><td><code>DELETE /api/v1/ivr/admin/enrolment/{cspId}</code> — soft-delete. Next call-CTA fetch returns DIRECT.</td><td>≤ 30s (one cache cycle)</td></tr>
+    <tr><td>Whole pilot cohort</td><td>Bulk DELETE via SQL: <code>UPDATE ivr_csp_enrolment SET active = FALSE, deactivated_at = NOW() WHERE active = TRUE;</code></td><td>≤ 30s</td></tr>
+    <tr><td>Global rollback</td><td>Set service config <code>ivr.enrolment.gate-enabled = false</code>. IVR ignores the allow-list and returns DIRECT for everyone — equivalent to today's "kill switch off" universally.</td><td>Restart-free if config is hot-loaded; else ≤ 5 min via rolling restart</td></tr>
+    <tr><td>What happens to in-flight calls during rollback?</td><td>Calls already on a masked bridge (Exotel session established) continue to completion. Calls between fetch and dial would see DIRECT and use the actual mobile. No mid-call breakage.</td><td>—</td></tr>
+    <tr><td>What about already-fetched MASKED responses cached on the app?</td><td>App-side cache on the call-CTA response, if any, is short (seconds) — next tap re-fetches and gets the current state. Worst case: one or two calls per affected user use the about-to-be-rolled-back masked path, which still works (PIN row still exists in <code>pin_registry</code>).</td><td>—</td></tr>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<!-- B11 Out of Scope -->
+<section class="spec" id="s19">
+  <h2><span class="num">B11.</span> Out of Scope <span class="tier how">HOW</span></h2>
+  <ul class="criteria">
+    <li><strong>Legacy customer IVR DID</strong> (<code>01141168600</code>) — continues to operate in parallel. Not affected by this rollout.</li>
+    <li><strong>Legacy partner <code>initiateCall</code> API</strong> (<code>service=PARTNER</code>) — continues to serve older CSP app versions for outbound calls. Not gated by enrolment.</li>
+    <li><strong>Customer-side cohort logic</strong> — there is no customer-level allow-list. Customer experience is derived from the CSP whose ticket they're calling about. Per A6.2.</li>
+    <li><strong>Notification gating</strong> — CleverTap event emission for PIN allocation is unaffected. The customer of an enrolled CSP gets the PIN SMS / push as before; non-enrolled CSPs also continue to receive CleverTap events (no harm, even though the PIN never gets used).</li>
+    <li><strong>Migrated tickets without <code>pin_registry</code> rows</strong> — flagged as OQ-1; resolved before Phase 1 kickoff.</li>
+    <li><strong>API authn / authz hardening on admin endpoints</strong> — uses existing internal API key pattern; no new auth scheme designed here.</li>
+    <li><strong>Allow-list UI / dashboard</strong> — not built. Use API + DB inspection until volume warrants tooling.</li>
+  </ul>
+  <hr class="sect-end">
+</section>
+
+<footer class="checklist" id="checklist">
+  <h2>Completeness Checklist</h2>
+  <p style="font-size:13px;color:var(--muted);margin-top:0;">All sections filled. Open items tracked in A8.</p>
+  <table>
+    <tr><th>#</th><th>Section</th><th style="width:70px">Part</th><th style="width:90px">Tier</th><th style="width:80px">Filled</th></tr>
+    <tr><td>QC</td><td>Quick Check</td><td>Header</td><td><span class="tier core">QC</span></td><td>[x]</td></tr>
+    <tr><td>A1</td><td>Document Metadata</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A2</td><td>Context &amp; Problem</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A3</td><td>Objective &amp; Success</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A4</td><td>Rollout Principles</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A5</td><td>Cohort Behaviour</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A6</td><td>Business Logic &amp; Invariants</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A7</td><td>Edge Cases &amp; Decisions</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>A8</td><td>Open Questions</td><td>WHAT</td><td><span class="tier what">WHAT</span></td><td>[x]</td></tr>
+    <tr><td>B1</td><td>Data Model — Allow-list</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B2</td><td>API Contract</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B3</td><td>Allow-list Management</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B4</td><td>Cache &amp; Propagation</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B5</td><td>Inbound Helpline Behaviour</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B6</td><td>PIN Allocation Behaviour</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B7</td><td>App-Side Changes</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B8</td><td>Rollout Phases</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B9</td><td>Metrics &amp; Observability</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B10</td><td>Rollback Plan</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+    <tr><td>B11</td><td>Out of Scope</td><td>HOW</td><td><span class="tier how">HOW</span></td><td>[x]</td></tr>
+  </table>
+
+  <div class="footer note">
+    <strong>Author rule:</strong> All sections filled. Open items in A8 carry forward to Phase 1 (Pilot) kickoff. No conditional sections N/A in this rollout plan.<br><br>
+    <strong>Reviewer rule:</strong> Confirm A4 (the four cornerstone decisions) before reviewing Part B; if disagreement on A4, halt review and re-align.
+  </div>
+</footer>
+
+<section class="spec" id="glossary" style="margin-top: 56px;">
+  <h2>Glossary</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td>Allow-list / Cohort / Enrolment list</td><td>Used interchangeably. The set of CSPs whose tickets are currently in the masked-routing regime.</td></tr>
+    <tr><td>Enrolled CSP</td><td>A CSP whose <code>csp_id</code> is present in <code>ivr_csp_enrolment</code> with <code>active = TRUE</code>.</td></tr>
+    <tr><td>MASKED response</td><td>The call-CTA endpoint's response shape when the ticket's CSP is enrolled. Contains <code>callType: "MASKED"</code>, <code>pin</code>, <code>maskedDid</code>.</td></tr>
+    <tr><td>DIRECT response</td><td>The call-CTA endpoint's response shape when the ticket's CSP is NOT enrolled. Contains <code>callType: "DIRECT"</code>, <code>phoneNumber</code>.</td></tr>
+    <tr><td>callType</td><td>The discriminator field in the call-CTA response that tells the app which branch to take. Exactly two values: <code>MASKED</code> or <code>DIRECT</code>.</td></tr>
+    <tr><td>Kill switch</td><td>The pre-existing app-side boolean that controls whether the app uses IVR routing at all. Per this plan, stays ON permanently and is effectively unused.</td></tr>
+    <tr><td>Cache cycle</td><td>30-second refresh interval of the in-memory enrolment cache. Equal to the rollback propagation SLA.</td></tr>
+    <tr><td>Phase 0 / 1 / 2 / 3 / 4</td><td>Dry run / Pilot / Small / Medium / Full rollout phases per B8.</td></tr>
+    <tr><td>OQ-N</td><td>Open Question N (see A8). Resolved before the relevant phase kicks off.</td></tr>
+  </table>
+</section>
+
+<p style="margin-top:30px;font-size:12px;color:var(--muted);text-align:center;">
+  Wiom IVR Rollout Plan v1.0 · Authored by Ashis Raj · csp-execution-platform
+</p>
+
+</main>
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { curve: 'basis' } });
+</script>
+</body>
+</html>
