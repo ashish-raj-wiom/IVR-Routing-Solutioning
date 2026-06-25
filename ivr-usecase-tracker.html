@@ -107,6 +107,18 @@
 
   .uc-desc { margin: 12px 0 16px; color: #333; font-size: 14px; }
 
+  /* Business-logic flowchart embedded inside a UC card */
+  .uc-flow {
+    background: linear-gradient(180deg, #fefefe 0%, #f9fafb 100%);
+    border: 1px solid var(--rule); border-radius: 6px;
+    padding: 12px 14px 4px; margin: 10px 0 18px;
+  }
+  .uc-flow .flow-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .uc-flow img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+
   /* UX-perspective sub-section headings inside a UC card */
   .uc-section-h {
     font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em;
@@ -362,6 +374,11 @@
   </div>
   <div class="uc-body">
     <p class="uc-desc">A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialer opens with the Wiom IVR Masked number pre-filled. The user dials, and the call is bridged seamlessly — no PIN prompt, no waiting. The customer's phone shows the Wiom IVR Masked number, never the CSP user's personal mobile.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc01.svg" alt="UC 01 business-logic flowchart: CSP user opens ticket, taps Call CTA, dialer opens with masked number, user dials, customer's phone rings with masked number; if customer picks up call connects, if not CSP hears 'call not picked' message and customer gets missed-call alert">
+    </div>
 
     <h4 class="uc-section-h">What the user does and sees</h4>
     <ol class="ux-steps">
