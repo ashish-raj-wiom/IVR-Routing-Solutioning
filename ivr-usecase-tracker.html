@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVR 2.0 — Use Case Tracker</title>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
+    --live-bg: #dcfce7; --live-ink: #14532d; --live-rule: #16a34a;
+    --partial-bg: #fef3c7; --partial-ink: #78350f; --partial-rule: #d97706;
+    --blocked-bg: #fee2e2; --blocked-ink: #7f1d1d; --blocked-rule: #dc2626;
+    --progress-bg: #dbeafe; --progress-ink: #1e3a8a; --progress-rule: #2563eb;
+    --path1: #0b6b3a; --path2: #1f3c6e; --path3: #8a5a00; --path4: #5b2a86;
+    --audio-bg: #eef2ff; --audio-rule: #6366f1;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--bg);
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 32px 28px 100px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 28px; }
+  header.doc .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  header.doc h1 { font-size: 28px; margin: 4px 0 6px; line-height: 1.2; }
+  header.doc p.lede { color: var(--muted); font-size: 14.5px; margin: 0; max-width: 75ch; }
+  header.doc .meta { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  header.doc .meta a { color: var(--progress-rule); }
+
+  /* Status summary cards */
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+  .stat { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
+  .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .stat .value { font-size: 32px; font-weight: 700; margin-top: 4px; line-height: 1; }
+  .stat.live { border-left: 4px solid var(--live-rule); }
+  .stat.live .value { color: var(--live-ink); }
+  .stat.partial { border-left: 4px solid var(--partial-rule); }
+  .stat.partial .value { color: var(--partial-ink); }
+  .stat.blocked { border-left: 4px solid var(--blocked-rule); }
+  .stat.blocked .value { color: var(--blocked-ink); }
+  .stat.total { border-left: 4px solid var(--ink); }
+  .stat.total .value { color: var(--ink); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--rule); margin-bottom: 24px; }
+  .tab {
+    background: none; border: none; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+    color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all 0.15s;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Section headings */
+  h2 { font-size: 20px; margin: 28px 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+  h2:first-of-type { margin-top: 0; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: var(--ink); }
+
+  /* Use case tree */
+  .uc-tree { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 22px; margin-bottom: 24px; }
+  .uc-tree ul { margin: 4px 0; padding-left: 22px; list-style: none; }
+  .uc-tree > ul { padding-left: 0; }
+  .uc-tree li { margin: 6px 0; font-size: 14px; line-height: 1.6; position: relative; }
+  .uc-tree li.branch::before {
+    content: ""; position: absolute; left: -16px; top: 8px; width: 8px; height: 8px;
+    border-left: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  }
+  .uc-tree .branch-label { color: var(--muted); font-style: italic; }
+  .uc-tree .uc-link { color: var(--ink); text-decoration: none; font-weight: 600; }
+  .uc-tree .uc-link:hover { text-decoration: underline; }
+
+  /* Status badge */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; vertical-align: middle; }
+  .badge.live { background: var(--live-bg); color: var(--live-ink); }
+  .badge.partial { background: var(--partial-bg); color: var(--partial-ink); }
+  .badge.blocked { background: var(--blocked-bg); color: var(--blocked-ink); }
+  .badge.progress { background: var(--progress-bg); color: var(--progress-ink); }
+  .badge.path1 { background: #e9f5ee; color: var(--path1); }
+  .badge.path2 { background: #e8eef8; color: var(--path2); }
+  .badge.path3 { background: #fbf1dd; color: var(--path3); }
+  .badge.path4 { background: #efe6f7; color: var(--path4); }
+
+  /* Use case card */
+  .uc {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    margin-bottom: 14px; overflow: hidden; transition: box-shadow 0.15s;
+  }
+  .uc:target { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3); }
+  .uc-header {
+    padding: 14px 18px; display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer; gap: 16px;
+  }
+  .uc-header:hover { background: var(--bg); }
+  .uc-header-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .uc-id { font-weight: 700; font-size: 15px; color: var(--ink); min-width: 48px; }
+  .uc-title { font-size: 15px; color: var(--ink); }
+  .uc-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .uc-toggle { font-size: 12px; color: var(--muted); user-select: none; }
+
+  .uc-body { display: none; padding: 0 18px 18px; border-top: 1px solid var(--rule); }
+  .uc.open .uc-body { display: block; }
+  .uc.open .uc-toggle::before { content: "▼ "; }
+  .uc:not(.open) .uc-toggle::before { content: "▶ "; }
+
+  .uc-desc { margin: 12px 0 16px; color: #333; font-size: 14px; }
+  .steps { list-style: none; padding: 0; margin: 8px 0; counter-reset: step; }
+  .step {
+    position: relative; padding: 10px 14px 10px 44px; margin: 6px 0;
+    background: #fafafa; border: 1px solid var(--rule); border-radius: 6px; counter-increment: step;
+  }
+  .step::before {
+    content: counter(step);
+    position: absolute; left: 12px; top: 10px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--ink); color: white; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step .actor { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 2px; }
+  .step .what { font-size: 14px; }
+
+  .audio-block {
+    background: var(--audio-bg); border-left: 3px solid var(--audio-rule);
+    padding: 10px 14px; margin: 8px 0; border-radius: 4px;
+  }
+  .audio-block .audio-label { font-size: 12px; font-weight: 700; color: var(--audio-rule); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .audio-block audio { width: 100%; height: 32px; margin-top: 4px; }
+  .audio-block .desc { font-size: 12.5px; color: #444; margin-bottom: 4px; }
+
+  .uc-deps { background: #f7f7f5; border-radius: 6px; padding: 10px 14px; margin: 14px 0 6px; font-size: 13px; }
+  .uc-deps .deps-label { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+  .uc-deps ul { margin: 4px 0; padding-left: 22px; }
+  .uc-deps li { margin: 3px 0; }
+  .uc-deps .blocker { color: var(--blocked-ink); font-weight: 600; }
+  .uc-deps .progress-note { color: var(--progress-ink); font-weight: 600; }
+
+  /* Feature table */
+  table.features { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); border-radius: 8px; overflow: hidden; }
+  table.features th, table.features td { padding: 10px 12px; border: 1px solid var(--rule); text-align: left; vertical-align: top; }
+  table.features th { background: var(--bg); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  table.features tr:hover { background: var(--bg); }
+  table.features .note { font-size: 12px; color: var(--muted); }
+
+  /* Audio library grid */
+  .audio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .audio-card {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px;
+  }
+  .audio-card .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .audio-card .when { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .audio-card audio { width: 100%; height: 36px; }
+  .audio-card .used-in { font-size: 11px; color: var(--muted); margin-top: 8px; font-style: italic; }
+
+  /* Path legend */
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin: 6px 0 14px; }
+  .legend .item { display: flex; align-items: center; gap: 4px; }
+
+  @media (max-width: 800px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    main { padding: 20px 16px 80px; }
+    .uc-header { flex-direction: column; align-items: stretch; }
+    .uc-header-right { justify-content: flex-end; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="doc">
+  <div class="eyebrow">Wiom · IVR 2.0 · Build progress tracker · v1.0</div>
+  <h1>IVR 2.0 — Use Case &amp; Feature Tracker</h1>
+  <p class="lede">All 13 use cases from the IVR routing design — from a user's point of view — with their current build status, the audio that plays at each step, and the feature-level completeness of every dependency. Click a use case to expand. Play the audio to hear what the user actually hears.</p>
+  <div class="meta">
+    Reference: <a href="ivr-routing-design.html">Design page</a> · <a href="csp-ivr-service-product-spec.html">Product Solution Spec</a> · <a href="csp-ivr-cohort-rollout-plan.html">Cohort Rollout Plan</a>
+  </div>
+</header>
+
+<div class="summary" id="summary">
+  <div class="stat live"><div class="label">Live</div><div class="value" id="stat-live">—</div></div>
+  <div class="stat partial"><div class="label">Partial</div><div class="value" id="stat-partial">—</div></div>
+  <div class="stat blocked"><div class="label">Blocked</div><div class="value" id="stat-blocked">—</div></div>
+  <div class="stat total"><div class="label">Total use cases</div><div class="value" id="stat-total">13</div></div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-panel="usecases">Use Cases (13)</button>
+  <button class="tab" data-panel="tree">Decision Tree</button>
+  <button class="tab" data-panel="features">Feature Completeness</button>
+  <button class="tab" data-panel="audio">Audio Library</button>
+</div>
+
+<!-- ================================================================ -->
+<!-- PANEL: USE CASES -->
+<!-- ================================================================ -->
+<section class="panel active" id="panel-usecases">
+
+<div class="legend">
+  <span class="item"><span class="badge path1">Path 1</span> Table 1 hit (in-app CTA)</span>
+  <span class="item"><span class="badge path2">Path 2</span> Recognised caller, single ticket</span>
+  <span class="item"><span class="badge path3">Path 3</span> Recognised caller, multi-ticket → PIN</span>
+  <span class="item"><span class="badge path4">Path 4</span> Unknown caller → PIN</span>
+</div>
+
+<h2>In-app Call CTA</h2>
+
+<div class="uc" id="UC01">
+  <div class="uc-header" onclick="toggleUC('UC01')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 01</span>
+      <span class="uc-title">CSP user taps Call CTA in the CSP App (registered SIM)</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path1">Path 1</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">The happy path. A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialler opens with the Wiom masked number pre-filled. The user dials, and the call is bridged seamlessly via the active mapping (Table 1). The customer's phone shows the Wiom helpline number, never the CSP user's mobile.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user (in CSP App)</div><div class="what">Opens a Restore / Install / Pickup ticket card.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Call CTA.</div></li>
+      <li class="step"><div class="actor">CSP App ↔ IVR</div><div class="what">App asks the IVR for the number to dial; IVR creates a short-TTL active mapping and returns the masked number.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — Table 1 cache hit, no PIN prompt.</div></li>
+      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings showing the Wiom helpline number; customer picks up; call connects.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features (all required)</div>
+      <ul>
+        <li>Exotel App Bazaar Flow ✓</li>
+        <li>API 1 (Table 1 fetch) ✓</li>
+        <li>API 4 / Webhook (call logging) ✓</li>
+        <li>CSP App integrations ✓</li>
+        <li>Remote Config kill switch ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC02">
+  <div class="uc-header" onclick="toggleUC('UC02')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 02</span>
+      <span class="uc-title">Customer taps Call CTA in the Customer App (registered SIM)</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path1">Path 1</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">Mirror of UC 01 for the customer side. Customer opens their ticket in the Customer App and taps the Call CTA to reach the CSP. Bridged via Table 1 hit. CSP user's phone shows the Wiom helpline number.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer (in Customer App)</div><div class="what">Opens a ticket card.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Taps the Call CTA.</div></li>
+      <li class="step"><div class="actor">Customer App ↔ IVR</div><div class="what">App asks for the number; IVR returns the masked number.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user via Table 1.</div></li>
+      <li class="step"><div class="actor">CSP user's phone</div><div class="what">Rings showing the Wiom helpline number; CSP picks up; call connects.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>Exotel App Bazaar Flow ✓</li>
+        <li>API 1 ✓</li>
+        <li>API 4 / Webhook ✓</li>
+        <li>Customer App integrations ✓</li>
+        <li>Remote Config ✓</li>
+        <li class="progress-note">Dialer auto-open (Customer App) — In Progress (UX nicety)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h2>Dialer-initiated callbacks — recognised caller</h2>
+
+<div class="uc" id="UC03">
+  <div class="uc-header" onclick="toggleUC('UC03')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 03</span>
+      <span class="uc-title">CSP dials back the masked number from their call log — single active ticket</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path2">Path 2</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A CSP user previously called a customer via the in-app CTA. Later they want to re-call — they tap the Wiom helpline entry in their phone's call log. Table 1's TTL has expired so the cached mapping is gone. The IVR recognises their FROM (registered SIM or sim_inventory) and finds exactly one active ticket — bridges directly.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Opens their phone's call log; finds the Wiom helpline entry; taps dial.</div></li>
+      <li class="step"><div class="actor">IVR (API 1)</div><div class="what">Looks up FROM in Table 1 → cache miss. Falls back to PIN registry by FROM.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM matches a CSP user in sim_inventory. Finds exactly 1 active ticket for that CSP → directly returns the customer's mobile as the bridge target.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — no PIN prompt needed.</div></li>
+      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings; picks up; call connects.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 (user identification) ✓ · API 4 webhook ✓</li>
+        <li>"All Recorded Voices" (covers fallback if no active ticket) ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC04">
+  <div class="uc-header" onclick="toggleUC('UC04')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 04</span>
+      <span class="uc-title">CSP dials back from call log — multiple active tickets</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path3">Path 3</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">Same as UC 03 but the CSP has 2 or more active tickets — the IVR can't tell which customer they want to reach. It asks for the 5-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App and enters it on the dialler keypad. The PIN identifies the ticket and the bridge fires.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Wiom helpline entry in their call log.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised but 2+ active tickets → can't auto-resolve.</div></li>
+      <li class="step"><div class="actor">IVR (audio prompt)</div><div class="what">Asks the caller to enter the 5-digit PIN.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <div class="desc">Played when IVR needs the caller to enter their PIN to disambiguate the ticket.</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Opens the relevant ticket in the CSP App, reads the PIN from the card, enters it on the dialler keypad.</div></li>
+      <li class="step"><div class="actor">IVR (API 3)</div><div class="what">Looks up the PIN in Table 2; finds the customer mobile.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    </ol>
+    <div class="audio-block">
+      <div class="audio-label">▶ Failure modes — wrong PIN / no PIN entered / 3 wrong attempts</div>
+      <div class="desc">If the user enters the wrong PIN, doesn't enter anything, or burns through three retries, the IVR plays one of these messages and ends the call.</div>
+      <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+      <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+      <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+    </div>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 (PIN lookup) ✓ · API 4 ✓</li>
+        <li>PIN visible on CSP App ticket card ✓</li>
+        <li>All Recorded Voices ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC05">
+  <div class="uc-header" onclick="toggleUC('UC05')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 05</span>
+      <span class="uc-title">CSP dials back on a customer-initiated masked number — single active ticket</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path2">Path 2</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A customer rang the CSP earlier (UC 02). The CSP missed it. Now the CSP dials back the masked number from their missed-call entry. FROM is recognised, single active ticket — direct bridge.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Sees a missed call from the Wiom helpline number; taps to call back.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. FROM in sim_inventory → recognised. 1 active ticket → direct bridge.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
+        <li>Missed-call PN to CSP ✓ (also drives this callback path)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC06">
+  <div class="uc-header" onclick="toggleUC('UC06')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 06</span>
+      <span class="uc-title">CSP dials back on a customer-initiated masked number — multiple active tickets</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path3">Path 3</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">Same as UC 05 but CSP has 2+ active tickets. PIN required.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Dials back from the missed-call entry.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Reads the PIN from the CSP App ticket card; enters it.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN visible on CSP App ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC07">
+  <div class="uc-header" onclick="toggleUC('UC07')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 07</span>
+      <span class="uc-title">Customer dials back on a customer-initiated masked number — single active ticket (~99% of cases)</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path2">Path 2</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A customer called the CSP earlier via UC 02. They want to call again — they redial the masked number from their call log. Their FROM is recognised (it's the registered mobile on the ticket), they have 1 active ticket, direct bridge.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom helpline number from their call log.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. FROM = customer's registered mobile → recognised. 1 active ticket → direct bridge.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC08">
+  <div class="uc-header" onclick="toggleUC('UC08')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 08</span>
+      <span class="uc-title">Customer dials back — multiple active tickets (~1%)</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path3">Path 3</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">Rare — customer has 2+ open tickets (e.g., Restore + Pickup). PIN required.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom helpline number.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS sent at ticket creation, or from the ticket card in the Customer App; enters it.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN SMS to customer ✓ · PIN visible on Customer App ✓</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC09">
+  <div class="uc-header" onclick="toggleUC('UC09')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 09</span>
+      <span class="uc-title">Customer dials back on a CSP-initiated masked number (after missed call) — single ticket</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path2">Path 2</span>
+      <span class="badge partial">⚠ Partial</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">The CSP tried to call the customer (UC 01) but the customer didn't pick up. The customer sees a missed call from the Wiom helpline number on their phone. They tap to call back. FROM is recognised, single active ticket → direct bridge.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer's phone</div><div class="what">Shows missed call from Wiom helpline number.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Taps to call back.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 1 active ticket → bridges to CSP.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
+        <li class="blocker">Missed-call PN to Customer — Blocked (waiting on CSP Flow rollout). Without the PN, the customer might not realise they missed a Wiom call. They can still call back from the call log entry; the bridge itself works.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC10">
+  <div class="uc-header" onclick="toggleUC('UC10')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 10</span>
+      <span class="uc-title">Customer dials back on a CSP-initiated masked number — multiple active tickets</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path3">Path 3</span>
+      <span class="badge partial">⚠ Partial</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">Customer with multi-ticket, calls back after missing CSP's call. PIN required.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer</div><div class="what">Calls back from missed-call entry.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS or Customer App; enters it.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the right CSP.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN SMS to customer ✓</li>
+        <li class="blocker">Missed-call PN to Customer — Blocked. As with UC 09, the bridge works; only the alert is missing.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h2>Unknown caller — unregistered SIM</h2>
+
+<div class="uc" id="UC11">
+  <div class="uc-header" onclick="toggleUC('UC11')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 11</span>
+      <span class="uc-title">Customer dials from an unregistered SIM (relative's phone, secondary SIM)</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path4">Path 4</span>
+      <span class="badge live">✓ Live</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A customer borrows a relative's phone (their own is unreachable). The masked number is on the SMS they received at ticket creation. They dial it. The IVR doesn't recognise the FROM, asks for the PIN; they read it from the same SMS and enter it.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">Customer</div><div class="what">From an unregistered SIM, dials the Wiom helpline number that was sent in their SMS.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. FROM not in sim_inventory; FROM not the registered mobile of any active ticket. Caller is unknown.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS on their own phone; enters it on the borrowed phone's keypad.</div></li>
+      <li class="step"><div class="actor">IVR (API 3)</div><div class="what">Looks up PIN → finds the CSP mobile.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP.</div></li>
+    </ol>
+    <div class="audio-block">
+      <div class="audio-label">▶ Failure modes</div>
+      <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+      <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+      <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+    </div>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN SMS to customer ✓ (load-bearing — customer can't proceed without the SMS)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC12">
+  <div class="uc-header" onclick="toggleUC('UC12')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 12</span>
+      <span class="uc-title">CSP user dials from an unregistered SIM</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path4">Path 4</span>
+      <span class="badge partial">⚠ Partial</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN from the ticket card in the CSP App (the app side works) and enters it. Note: the SMS-to-CSP fallback path is currently Blocked, so the CSP must have the app accessible to find the PIN.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom helpline number from an unregistered SIM.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM not recognised.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Opens the relevant ticket in the CSP App on their primary phone; reads the PIN; enters it on the keypad of the unregistered-SIM phone.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN visible on CSP App ✓</li>
+        <li class="blocker">PIN SMS to CSP — Blocked. The CSP must have their CSP App accessible to read the PIN. If they only have a basic phone with their unregistered SIM and no app access, they can't proceed.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="uc" id="UC13">
+  <div class="uc-header" onclick="toggleUC('UC13')">
+    <div class="uc-header-left">
+      <span class="uc-id">UC 13</span>
+      <span class="uc-title">CSP forwards the masked number to a colleague — colleague dials</span>
+    </div>
+    <div class="uc-header-right">
+      <span class="badge path4">Path 4</span>
+      <span class="badge partial">⚠ Partial</span>
+      <span class="uc-toggle"></span>
+    </div>
+  </div>
+  <div class="uc-body">
+    <p class="uc-desc">A CSP user can't take the call (signal, busy, away). They forward the masked number + PIN to a colleague (via WhatsApp / SMS — typically a screenshot of the ticket card). The colleague dials and enters the PIN.</p>
+    <ol class="steps">
+      <li class="step"><div class="actor">CSP user</div><div class="what">Takes a screenshot of the ticket card (PIN visible) and forwards it to a colleague via WhatsApp / SMS — OR copies the masked number and the PIN and shares them as text.</div></li>
+      <li class="step"><div class="actor">Colleague</div><div class="what">Receives the forward; dials the masked number from their own phone.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">FROM not recognised (colleague's phone).</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
+        <div class="audio-block">
+          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+      </li>
+      <li class="step"><div class="actor">Colleague</div><div class="what">Reads the PIN from the forwarded message; enters it on the keypad.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    </ol>
+    <div class="uc-deps">
+      <div class="deps-label">Dependent features</div>
+      <ul>
+        <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
+        <li>PIN visible on CSP App ✓ (CSP can screenshot or copy)</li>
+        <li class="blocker">PIN SMS to CSP — Blocked. The intended share mechanism (forward the SMS) doesn't work today. The CSP can still screenshot the app ticket card and forward that — workable but lossier.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h2>Edge-case audio (no active ticket on dial-back)</h2>
+<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a previously-engaged customer or CSP dials the helpline back but has no active ticket (e.g., ticket already closed), the IVR plays a dedicated message and ends the call. This is a graceful dead-end, not a use case branch on its own — but the audio is part of the contract.</p>
+
+<div class="audio-grid" style="margin-top:14px;">
+  <div class="audio-card">
+    <div class="title">No active ticket — Customer side</div>
+    <div class="when">Played when a customer dials back but has no open ticket.</div>
+    <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
+  </div>
+  <div class="audio-card">
+    <div class="title">No active ticket — CSP / Partner side</div>
+    <div class="when">Played when a CSP user dials back but has no open ticket.</div>
+    <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
+  </div>
+  <div class="audio-card">
+    <div class="title">Call not picked</div>
+    <div class="when">Played when the dialled party (customer or CSP) doesn't pick up before the timeout — call ends.</div>
+    <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+  </div>
+</div>
+
+</section>
+
+<!-- ================================================================ -->
+<!-- PANEL: DECISION TREE -->
+<!-- ================================================================ -->
+<section class="panel" id="panel-tree">
+  <p style="color: var(--muted); font-size:13.5px;">Compressed view of how the 13 use cases branch out, mirroring the design page. Click any UC to jump to its detail in the Use Cases tab.</p>
+  <div class="uc-tree">
+    <ul>
+      <li><strong>Calling from inside the app</strong> (in-app Call CTA)
+        <ul>
+          <li><a class="uc-link" href="#UC01" data-jump="UC01">UC 01</a> — CSP dials from the CSP App via registered SIM <span class="badge path1">Path 1</span> <span class="badge live">Live</span></li>
+          <li><a class="uc-link" href="#UC02" data-jump="UC02">UC 02</a> — Customer dials from the Customer App via registered SIM <span class="badge path1">Path 1</span> <span class="badge live">Live</span></li>
+        </ul>
+      </li>
+      <li><strong>Calling from the dialer</strong> (call log, saved contact, missed-call entry)
+        <ul>
+          <li><span class="branch-label">Caller identified — FROM is registered / in sim_inventory</span>
+            <ul>
+              <li><em>CSP dials back on a CSP-initiated masked number</em>
+                <ul>
+                  <li><a class="uc-link" href="#UC03" data-jump="UC03">UC 03</a> — Single active ticket <span class="badge path2">Path 2</span> <span class="badge live">Live</span></li>
+                  <li><a class="uc-link" href="#UC04" data-jump="UC04">UC 04</a> — Multiple active tickets <span class="badge path3">Path 3</span> <span class="badge live">Live</span></li>
+                </ul>
+              </li>
+              <li><em>CSP dials back on a customer-initiated masked number</em>
+                <ul>
+                  <li><a class="uc-link" href="#UC05" data-jump="UC05">UC 05</a> — Single active ticket <span class="badge path2">Path 2</span> <span class="badge live">Live</span></li>
+                  <li><a class="uc-link" href="#UC06" data-jump="UC06">UC 06</a> — Multiple active tickets <span class="badge path3">Path 3</span> <span class="badge live">Live</span></li>
+                </ul>
+              </li>
+              <li><em>Customer dials back on a customer-initiated masked number</em>
+                <ul>
+                  <li><a class="uc-link" href="#UC07" data-jump="UC07">UC 07</a> — Single active ticket (~99%) <span class="badge path2">Path 2</span> <span class="badge live">Live</span></li>
+                  <li><a class="uc-link" href="#UC08" data-jump="UC08">UC 08</a> — Multiple active tickets (~1%) <span class="badge path3">Path 3</span> <span class="badge live">Live</span></li>
+                </ul>
+              </li>
+              <li><em>Customer dials back on a CSP-initiated masked number (after missed call)</em>
+                <ul>
+                  <li><a class="uc-link" href="#UC09" data-jump="UC09">UC 09</a> — Single active ticket <span class="badge path2">Path 2</span> <span class="badge partial">Partial</span></li>
+                  <li><a class="uc-link" href="#UC10" data-jump="UC10">UC 10</a> — Multiple active tickets <span class="badge path3">Path 3</span> <span class="badge partial">Partial</span></li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+          <li><span class="branch-label">Caller not identified — FROM is an unregistered SIM</span>
+            <ul>
+              <li><a class="uc-link" href="#UC11" data-jump="UC11">UC 11</a> — Customer dials from an unregistered SIM <span class="badge path4">Path 4</span> <span class="badge live">Live</span></li>
+              <li><a class="uc-link" href="#UC12" data-jump="UC12">UC 12</a> — CSP user dials from an unregistered SIM <span class="badge path4">Path 4</span> <span class="badge partial">Partial</span></li>
+              <li><a class="uc-link" href="#UC13" data-jump="UC13">UC 13</a> — CSP forwards the masked number to a colleague <span class="badge path4">Path 4</span> <span class="badge partial">Partial</span></li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<!-- PANEL: FEATURE COMPLETENESS -->
+<!-- ================================================================ -->
+<section class="panel" id="panel-features">
+  <p style="color:var(--muted); font-size:13.5px;">Per-feature build status sourced from the IVR Completeness task list. The use-case-level statuses in the previous tab are derived from this table.</p>
+  <table class="features">
+    <thead>
+      <tr><th style="width:21%">Task</th><th style="width:30%">Description</th><th style="width:18%">Platform</th><th style="width:12%">Status</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Exotel App Bazaar Flow</td><td>End-to-end App Bazaar call flow</td><td>Exotel</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>API 1</td><td>Table 1 lookup at inbound call</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>API 2</td><td>User identification (sim_inventory + customer service)</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>API 3</td><td>Table 2 PIN-to-counterparty lookup</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>API 4 / Webhook</td><td>Call disposition logging</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>Customer App integration</td><td>Initiate-call from all three services + masked number on dialer</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>CSP App integration</td><td>Initiate-call from all three services + masked number on dialer</td><td>CSP / Technician App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>Remote Config kill switch</td><td>Customer App + CSP App</td><td>Both apps</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>All Recorded Voices</td><td>Voice prompts played by IVR (ask-PIN, wrong PIN, limit reached, no PIN, no active ticket, call not picked)</td><td>Exotel</td><td><span class="badge live">Completed</span></td><td>List shared</td></tr>
+      <tr><td>PIN Communication — PIN on Customer App</td><td>PIN visible on Customer App ticket card</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>PIN Communication — PIN on CSP App</td><td>PIN visible on CSP App ticket card</td><td>CSP / Technician App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>PIN Communication — SMS to Customer</td><td>SMS trigger to customer with PIN</td><td>SMS</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>PIN Communication — SMS to CSP</td><td>SMS trigger to CSP with PIN</td><td>SMS</td><td><span class="badge blocked">Blocked</span></td><td class="note">Will be done when CSP Flow is ON</td></tr>
+      <tr><td>DLT Whitelisting</td><td>Wiom number whitelisted on DLT</td><td>SMS / Compliance</td><td><span class="badge progress">In Progress</span></td><td class="note">Maanas to sign Number Ownership contract; ETA TBD</td></tr>
+      <tr><td>Missed-call PN to CSP</td><td>PN to CSP when customer's call wasn't picked</td><td>CSP App</td><td><span class="badge live">Completed</span></td><td class="note">Earlier bug fixed — event was missing on CSP CT</td></tr>
+      <tr><td>Missed-call PN to Customer</td><td>PN to customer when CSP's call wasn't picked</td><td>Customer App</td><td><span class="badge blocked">Blocked</span></td><td class="note">Will be done when CSP Flow is ON</td></tr>
+      <tr><td>Bug — PIN deallocation on P74</td><td>PIN not getting deallocated when booking removed after P74 hit</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/807">issues/807</a></td></tr>
+      <tr><td>Bug — Registered Number change</td><td>SIM Inventory not updating on number change</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/807">issues/807</a></td></tr>
+      <tr><td>Bug — 12 single-ticket cases not bridging</td><td>Customer Service deserialization failure ("Active" String vs int)</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/846">issues/846</a></td></tr>
+      <tr><td>Bug — call_dnp_missed_call_alert event</td><td>Event not getting triggered</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/830">issues/830</a></td></tr>
+      <tr><td>Dialer Open</td><td>Directly open the dialer on Call CTA tap (one fewer step)</td><td>Customer App</td><td><span class="badge progress">In Progress</span></td><td class="note">UX improvement, not functional gating</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ================================================================ -->
+<!-- PANEL: AUDIO LIBRARY -->
+<!-- ================================================================ -->
+<section class="panel" id="panel-audio">
+  <p style="color:var(--muted); font-size:13.5px;">All seven voice prompts the IVR can play on a call. Hit play on any clip to hear what the user actually hears.</p>
+  <div class="audio-grid">
+    <div class="audio-card">
+      <div class="title">Ask for PIN</div>
+      <div class="when">Played when the IVR needs the caller to enter their PIN — i.e., the caller has multiple active tickets, OR the caller's FROM is unrecognised.</div>
+      <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+      <div class="used-in">Used in: UC 04, UC 06, UC 08, UC 10, UC 11, UC 12, UC 13</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">Entered wrong PIN</div>
+      <div class="when">Played when the caller enters an incorrect 5-digit PIN.</div>
+      <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+      <div class="used-in">Used in: failure path of UC 04, UC 06, UC 08, UC 10, UC 11, UC 12, UC 13</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">No PIN entered</div>
+      <div class="when">Played when the caller doesn't enter any digits before the timeout.</div>
+      <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+      <div class="used-in">Used in: failure path of all PIN-prompt UCs</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">Limit reached (3 wrong attempts)</div>
+      <div class="when">Played after the caller exhausts the 3-retry cap. Call ends.</div>
+      <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+      <div class="used-in">Used in: failure path of all PIN-prompt UCs</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">No active ticket — Customer</div>
+      <div class="when">Played when a recognised customer dials back but has no active ticket.</div>
+      <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
+      <div class="used-in">Used in: dead-end path on Path 2 / Path 3 customer dial-back</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">No active ticket — CSP / Partner</div>
+      <div class="when">Played when a recognised CSP user dials back but has no active ticket.</div>
+      <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
+      <div class="used-in">Used in: dead-end path on Path 2 / Path 3 CSP dial-back</div>
+    </div>
+    <div class="audio-card">
+      <div class="title">Call not picked</div>
+      <div class="when">Played when the dialled counterparty doesn't pick up before the timeout.</div>
+      <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+      <div class="used-in">Used in: all UCs where the call gets to bridge stage and the callee doesn't answer</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+  // Stat counts
+  const ucs = Array.from(document.querySelectorAll('#panel-usecases .uc .badge.live, #panel-usecases .uc .badge.partial, #panel-usecases .uc .badge.blocked'));
+  const live = ucs.filter(b => b.classList.contains('live')).length;
+  const partial = ucs.filter(b => b.classList.contains('partial')).length;
+  const blocked = ucs.filter(b => b.classList.contains('blocked')).length;
+  document.getElementById('stat-live').textContent = live;
+  document.getElementById('stat-partial').textContent = partial;
+  document.getElementById('stat-blocked').textContent = blocked;
+
+  // Tabs
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('panel-' + t.dataset.panel).classList.add('active');
+    });
+  });
+
+  // Expand / collapse use case cards
+  function toggleUC(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('open');
+  }
+  window.toggleUC = toggleUC;
+
+  // Tree links — jump to UC card and open it
+  document.querySelectorAll('a[data-jump]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Switch to usecases tab
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      document.querySelector('.tab[data-panel="usecases"]').classList.add('active');
+      document.getElementById('panel-usecases').classList.add('active');
+      // Open the target UC + scroll
+      const target = document.getElementById(a.dataset.jump);
+      if (target) {
+        target.classList.add('open');
+        setTimeout(() => target.scrollIntoView({behavior: 'smooth', block: 'start'}), 50);
+      }
+    });
+  });
+
+  // If URL has #UCxx, auto-open that card
+  if (window.location.hash) {
+    const target = document.querySelector(window.location.hash);
+    if (target && target.classList.contains('uc')) {
+      target.classList.add('open');
+    }
+  }
+</script>
+</body>
+</html>
