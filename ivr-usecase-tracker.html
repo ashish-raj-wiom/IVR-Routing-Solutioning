@@ -157,6 +157,22 @@
   }
   .flow-card .diagram img { max-width: 100%; height: auto; }
 
+  /* Audio strip below a flowchart */
+  .flow-card .audio-strip {
+    margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--rule);
+  }
+  .flow-card .audio-strip h4 {
+    margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+  }
+  .flow-card .audio-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .flow-card .audio-item {
+    background: var(--audio-bg); border-left: 3px solid var(--audio-rule); border-radius: 4px;
+    padding: 8px 12px; font-size: 12.5px;
+  }
+  .flow-card .audio-item .label { font-weight: 700; color: var(--audio-rule); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+  .flow-card .audio-item .where { color: #444; font-size: 12px; margin-bottom: 4px; }
+  .flow-card .audio-item audio { width: 100%; height: 28px; }
+
   /* Audio library grid */
   .audio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
   .audio-card {
@@ -353,7 +369,7 @@
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
     </ol>
     <div class="audio-block">
-      <div class="audio-label">▶ Failure modes — wrong PIN / no PIN entered / 3 wrong attempts</div>
+      <div class="audio-label">▶ Failure modes — wrong PIN (one retry allowed) / no PIN entered / limit reached</div>
       <div class="desc">If the user enters the wrong PIN, doesn't enter anything, or burns through three retries, the IVR plays one of these messages and ends the call.</div>
       <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
       <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
@@ -733,13 +749,63 @@
     <div class="covers">Covers: <strong>UC 03</strong> · <strong>UC 05</strong> · <strong>UC 07</strong> · <strong>UC 09</strong> — every "dial back from call log, exactly one open ticket" scenario.</div>
     <p class="blurb">Table 1 has expired. The IVR runs the identification chain to figure out who's calling. The first step that hits (sim_inventory, Customer API, or Booking API) gives the IVR enough to look up active tickets for the caller. If there's exactly one — bridge directly, no PIN needed.</p>
     <div class="diagram"><img src="diagrams/path2.svg" alt="Path 2 flowchart: recognised caller with single active ticket - direct bridge no PIN"></div>
+    <div class="audio-strip">
+      <h4>Audio prompts in this flow</h4>
+      <div class="audio-row">
+        <div class="audio-item">
+          <div class="label">▶ Dead-end (Customer)</div>
+          <div class="where">Plays when a recognised customer dials back with zero active tickets.</div>
+          <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Dead-end (CSP / Partner)</div>
+          <div class="where">Plays when a recognised CSP user dials back with zero active tickets.</div>
+          <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Call not picked</div>
+          <div class="where">Plays when the bridged counterparty doesn't answer.</div>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="flow-card">
     <h3>Path 3 — Recognised caller, multiple active tickets → PIN</h3>
     <div class="covers">Covers: <strong>UC 04</strong> · <strong>UC 06</strong> · <strong>UC 08</strong> · <strong>UC 10</strong> — caller is identified but they have 2+ open tickets, so the IVR can't tell which counterparty they want.</div>
-    <p class="blurb">The IVR plays the "ask for PIN" audio. The caller reads the PIN from their ticket (in-app card for CSP, SMS or in-app for customer) and enters it. The PIN itself identifies the ticket; the IVR looks up the counterparty's mobile and bridges. Three wrong attempts → dead-end.</p>
+    <p class="blurb">The IVR plays the "ask for PIN" audio. The caller reads the PIN from their ticket (in-app card for CSP, SMS or in-app for customer) and enters it. The PIN itself identifies the ticket; the IVR looks up the counterparty's mobile and bridges. <strong>Retry policy:</strong> on a wrong PIN, the caller is prompted one more time; if the second attempt is also wrong, the call ends. On a timeout (no input), the caller is re-prompted up to three times before the call ends.</p>
     <div class="diagram"><img src="diagrams/path3.svg" alt="Path 3 flowchart: recognised caller with multi-ticket - PIN prompt to disambiguate"></div>
+    <div class="audio-strip">
+      <h4>Audio prompts in this flow</h4>
+      <div class="audio-row">
+        <div class="audio-item">
+          <div class="label">▶ Ask for PIN</div>
+          <div class="where">Plays when the IVR needs the caller to enter their 6-digit PIN.</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Wrong PIN (1st wrong)</div>
+          <div class="where">Plays after the first wrong PIN. Caller gets one more chance.</div>
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ No PIN entered (timeout)</div>
+          <div class="where">Plays if the caller doesn't enter anything. Re-prompted up to three times.</div>
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Limit reached (2nd wrong)</div>
+          <div class="where">Plays after the second wrong PIN. Call ends.</div>
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Call not picked</div>
+          <div class="where">Plays when the bridged counterparty doesn't answer.</div>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="flow-card">
@@ -747,6 +813,36 @@
     <div class="covers">Covers: <strong>UC 11</strong> (customer from unregistered SIM) · <strong>UC 12</strong> (CSP from unregistered SIM) · <strong>UC 13</strong> (colleague forwarding).</div>
     <p class="blurb">The caller's mobile fails all three identification lookups — IVR doesn't know who they are. The PIN serves double duty here: it both authenticates the caller (they wouldn't have it unless someone authorised gave it to them) and identifies the ticket they want.</p>
     <div class="diagram"><img src="diagrams/path4.svg" alt="Path 4 flowchart: unknown caller - PIN prompt to authenticate and identify"></div>
+    <div class="audio-strip">
+      <h4>Audio prompts in this flow</h4>
+      <div class="audio-row">
+        <div class="audio-item">
+          <div class="label">▶ Ask for PIN</div>
+          <div class="where">Plays when the unknown caller is asked to authenticate via PIN.</div>
+          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Wrong PIN (1st wrong)</div>
+          <div class="where">Plays after the first wrong PIN. Caller gets one more chance.</div>
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ No PIN entered (timeout)</div>
+          <div class="where">Plays if the caller doesn't enter anything. Re-prompted up to three times.</div>
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Limit reached (2nd wrong)</div>
+          <div class="where">Plays after the second wrong PIN. Call ends.</div>
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+        </div>
+        <div class="audio-item">
+          <div class="label">▶ Call not picked</div>
+          <div class="where">Plays when the bridged counterparty doesn't answer.</div>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+    </div>
   </div>
 
 </section>
@@ -861,14 +957,14 @@
       <div class="used-in">Used in: failure path of UC 04, UC 06, UC 08, UC 10, UC 11, UC 12, UC 13</div>
     </div>
     <div class="audio-card">
-      <div class="title">No PIN entered</div>
-      <div class="when">Played when the caller doesn't enter any digits before the timeout.</div>
+      <div class="title">No PIN entered (timeout)</div>
+      <div class="when">Played when the caller doesn't enter any digits before the timeout. Caller is re-prompted up to three times before the call ends.</div>
       <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
       <div class="used-in">Used in: failure path of all PIN-prompt UCs</div>
     </div>
     <div class="audio-card">
-      <div class="title">Limit reached (3 wrong attempts)</div>
-      <div class="when">Played after the caller exhausts the 3-retry cap. Call ends.</div>
+      <div class="title">Limit reached (2nd wrong PIN)</div>
+      <div class="when">Played after the caller enters a wrong PIN twice (1 initial attempt + 1 retry). Call ends.</div>
       <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
       <div class="used-in">Used in: failure path of all PIN-prompt UCs</div>
     </div>

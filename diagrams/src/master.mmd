@@ -11,8 +11,8 @@ flowchart TD
     P2 --> Done
     P3 -->|Correct PIN| Done
     P4 -->|Correct PIN| Done
-    P3 -->|Three wrong| EndCall[Play limit reached and end call]
-    P4 -->|Three wrong| EndCall
+    P3 -->|Second wrong PIN| EndCall[Play limit reached and end call]
+    P4 -->|Second wrong PIN| EndCall
 
     classDef hit fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
