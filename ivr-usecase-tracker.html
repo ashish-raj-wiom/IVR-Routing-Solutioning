@@ -59,6 +59,15 @@
   h2:first-of-type { margin-top: 0; }
   h3 { font-size: 15px; margin: 18px 0 8px; color: var(--ink); }
 
+  /* UC sub-category heading inside the Use Cases panel */
+  h3.uc-subcat {
+    font-size: 14px; margin: 22px 0 10px; padding: 6px 12px;
+    color: var(--ink); background: var(--bg);
+    border-left: 4px solid var(--muted); border-radius: 3px;
+    font-weight: 600;
+  }
+  h3.uc-subcat .small { font-size: 12px; color: var(--muted); font-weight: 400; font-style: italic; }
+
   /* Use case tree */
   .uc-tree { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 22px; margin-bottom: 24px; }
   .uc-tree ul { margin: 4px 0; padding-left: 22px; list-style: none; }
@@ -358,7 +367,7 @@
   <span class="item"><span class="badge path4">Path 4</span> Unknown caller → PIN</span>
 </div>
 
-<h2>In-app Call CTA</h2>
+<h2>Calling from inside the app <span style="font-size:13.5px; color:var(--muted); font-weight:400;">— in-app Call CTA, seamless bridge</span></h2>
 
 <div class="uc" id="UC01">
   <div class="uc-header" onclick="toggleUC('UC01')">
@@ -527,7 +536,9 @@
   </div>
 </div>
 
-<h2>Dialer-initiated callbacks — recognised caller</h2>
+<h2>Calling from the dialer — caller identified <span style="font-size:13.5px; color:var(--muted); font-weight:400;">— Wiom recognises the caller's mobile</span></h2>
+
+<h3 class="uc-subcat">CSP dials back on a CSP-initiated masked number <span class="small">— the original call was made from CSP App</span></h3>
 
 <div class="uc" id="UC03">
   <div class="uc-header" onclick="toggleUC('UC03')">
@@ -675,6 +686,8 @@
   </div>
 </div>
 
+<h3 class="uc-subcat">CSP dials back on a customer-initiated masked number <span class="small">— the customer called the CSP first, CSP missed it</span></h3>
+
 <div class="uc" id="UC05">
   <div class="uc-header" onclick="toggleUC('UC05')">
     <div class="uc-header-left">
@@ -819,6 +832,8 @@
   </div>
 </div>
 
+<h3 class="uc-subcat">Customer dials back on a customer-initiated masked number <span class="small">— customer is re-calling about the same ticket they called earlier</span></h3>
+
 <div class="uc" id="UC07">
   <div class="uc-header" onclick="toggleUC('UC07')">
     <div class="uc-header-left">
@@ -958,6 +973,8 @@
 
   </div>
 </div>
+
+<h3 class="uc-subcat">Customer dials back on a CSP-initiated masked number <span class="small">— the CSP called first, customer missed it</span></h3>
 
 <div class="uc" id="UC09">
   <div class="uc-header" onclick="toggleUC('UC09')">
@@ -1102,7 +1119,7 @@
   </div>
 </div>
 
-<h2>Unknown caller — unregistered SIM</h2>
+<h2>Calling from the dialer — caller not identified <span style="font-size:13.5px; color:var(--muted); font-weight:400;">— FROM is from an unregistered SIM</span></h2>
 
 <div class="uc" id="UC11">
   <div class="uc-header" onclick="toggleUC('UC11')">
