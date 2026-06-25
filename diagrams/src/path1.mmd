@@ -1,0 +1,16 @@
+flowchart LR
+    A[User taps Call CTA in app] --> B[App asks IVR for the number to dial]
+    B --> C[IVR creates Table 1 mapping]
+    C --> D[IVR returns the masked number]
+    D --> E[App opens dialer with masked number]
+    E --> F[User taps dial]
+    F --> G[Call lands at IVR via masked number]
+    G --> H{Table 1 still has the mapping}
+    H -->|YES| I[Bridge directly to counterparty]
+    H -->|NO| Fallback[Falls to Path 2 3 or 4]
+    I --> J[Call connects]
+
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+    class I,J good
+    class Fallback warn

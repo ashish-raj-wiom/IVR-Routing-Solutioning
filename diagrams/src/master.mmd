@@ -1,0 +1,22 @@
+flowchart TD
+    Call[Call arrives at masked number] --> T1{Table 1 active mapping}
+    T1 -->|HIT| P1[Path 1 in-app CTA happy path]
+    T1 -->|MISS| Chain[Identification chain runs]
+    Chain -->|Recognised| Tick{How many active tickets}
+    Tick -->|Exactly one| P2[Path 2 direct bridge no PIN]
+    Tick -->|Two or more| P3[Path 3 PIN prompt to disambiguate]
+    Tick -->|Zero| Dead[Play no active ticket and end call]
+    Chain -->|All three lookups miss| P4[Path 4 PIN prompt to authenticate]
+    P1 --> Done[Call connects]
+    P2 --> Done
+    P3 -->|Correct PIN| Done
+    P4 -->|Correct PIN| Done
+    P3 -->|Three wrong| EndCall[Play limit reached and end call]
+    P4 -->|Three wrong| EndCall
+
+    classDef hit fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    class P1,P2,Done hit
+    class Dead,EndCall bad
+    class P3,P4 neutral

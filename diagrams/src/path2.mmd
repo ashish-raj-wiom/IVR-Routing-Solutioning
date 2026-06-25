@@ -1,0 +1,23 @@
+flowchart TD
+    A[Caller dials masked number from call log] --> B[Call lands at IVR]
+    B --> C{Table 1 lookup}
+    C -->|Miss| D[Identification chain starts]
+    D --> S1{Mobile in sim inventory}
+    S1 -->|YES caller is CSP user| Find[Find active tickets for this user]
+    S1 -->|No| S2{Mobile in Customer API}
+    S2 -->|YES caller is customer| Find
+    S2 -->|No| S3{Mobile in Booking API}
+    S3 -->|YES caller is customer| Find
+    S3 -->|No| P4[Falls to Path 4]
+    Find --> Count{Active ticket count}
+    Count -->|Exactly one| Bridge[Bridge to the one counterparty]
+    Count -->|Zero| Dead[Play no active ticket and end call]
+    Count -->|Two or more| P3[Falls to Path 3]
+    Bridge --> Done[Call connects]
+
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef warn fill:#fef3c7,stroke:#d97706,color:#78350f
+    class Bridge,Done good
+    class Dead bad
+    class P3,P4 warn

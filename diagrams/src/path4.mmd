@@ -1,0 +1,23 @@
+flowchart TD
+    Start[Unknown mobile dials masked number] --> A[Call lands at IVR]
+    A --> B{Table 1 lookup}
+    B -->|Miss| C[Identification chain runs]
+    C --> D[All three lookups miss caller is Unknown]
+    D --> E[IVR plays Ask for PIN audio]
+    E --> F[Caller enters six digit PIN from SMS or forwarded share]
+    F --> G{PIN valid and maps to active ticket}
+    G -->|YES| H[API 3 returns counterparty mobile]
+    H --> I[Bridge to counterparty]
+    I --> Done[Call connects]
+    G -->|Wrong PIN| J[Play Wrong PIN audio]
+    J --> K{Attempt count}
+    K -->|Under three| E
+    K -->|Third wrong| L[Play Limit reached and end call]
+    G -->|No PIN entered| M[Play No PIN entered and end call]
+
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    class I,Done good
+    class L,M bad
+    class D neutral

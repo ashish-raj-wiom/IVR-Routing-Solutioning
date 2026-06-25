@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IVR 2.0 — Use Case Tracker</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   :root {
     --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
@@ -152,11 +151,11 @@
   .flow-card h3 { margin-top: 0; font-size: 16px; }
   .flow-card .covers { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
   .flow-card .blurb { font-size: 13.5px; color: #444; margin: 8px 0 16px; max-width: 78ch; }
-  .flow-card .mermaid {
+  .flow-card .diagram {
     background: var(--bg); border: 1px solid var(--rule); border-radius: 6px;
     padding: 14px; overflow-x: auto; text-align: center;
   }
-  .flow-card .mermaid svg { max-width: 100%; height: auto; }
+  .flow-card .diagram img { max-width: 100%; height: auto; }
 
   /* Audio library grid */
   .audio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
@@ -719,111 +718,35 @@
     <h3>Master flow — how the IVR routes any incoming call</h3>
     <div class="covers">Applies to all 13 use cases. Branches into Paths 1–4 based on what's known about the caller.</div>
     <p class="blurb">When a call arrives at the IVR (via the masked number), the very first thing it does is a Table 1 cache lookup. From there, the four paths branch out.</p>
-    <div class="mermaid">
-flowchart TD
-    Call[Call arrives at masked number] --> T1{Table 1 active mapping}
-    T1 -->|HIT| P1[Path 1 in-app CTA happy path]
-    T1 -->|MISS| Chain[Identification chain runs]
-    Chain -->|Recognised| Tick{How many active tickets}
-    Tick -->|Exactly one| P2[Path 2 direct bridge no PIN]
-    Tick -->|Two or more| P3[Path 3 PIN prompt to disambiguate]
-    Tick -->|Zero| Dead[Play no active ticket and end call]
-    Chain -->|All three lookups miss| P4[Path 4 PIN prompt to authenticate]
-    P1 --> Done[Call connects]
-    P2 --> Done
-    P3 -->|Correct PIN| Done
-    P4 -->|Correct PIN| Done
-    P3 -->|Three wrong| EndCall[Play limit reached and end call]
-    P4 -->|Three wrong| EndCall
-    </div>
+    <div class="diagram"><img src="diagrams/master.svg" alt="Master flow diagram showing how the IVR routes any incoming call through the four paths"></div>
   </div>
 
   <div class="flow-card">
     <h3>Path 1 — In-app CTA happy path</h3>
     <div class="covers">Covers: <strong>UC 01</strong> (CSP from CSP App) · <strong>UC 02</strong> (Customer from Customer App)</div>
     <p class="blurb">The user taps the in-app Call CTA on their ticket. The app pre-asks the IVR for the number to dial. The IVR writes a short-TTL mapping into Table 1 and returns the masked number. The user dials it; the IVR recognises the mapping and bridges instantly.</p>
-    <div class="mermaid">
-flowchart LR
-    A[User taps Call CTA in app] --> B[App asks IVR for the number to dial]
-    B --> C[IVR creates Table 1 mapping]
-    C --> D[IVR returns the masked number]
-    D --> E[App opens dialer with masked number]
-    E --> F[User taps dial]
-    F --> G[Call lands at IVR via masked number]
-    G --> H{Table 1 still has the mapping}
-    H -->|YES| I[Bridge directly to counterparty]
-    H -->|NO| Fallback[Falls to Path 2 3 or 4]
-    I --> J[Call connects]
-    </div>
+    <div class="diagram"><img src="diagrams/path1.svg" alt="Path 1 flowchart: in-app Call CTA happy path"></div>
   </div>
 
   <div class="flow-card">
     <h3>Path 2 — Recognised caller, single active ticket</h3>
     <div class="covers">Covers: <strong>UC 03</strong> · <strong>UC 05</strong> · <strong>UC 07</strong> · <strong>UC 09</strong> — every "dial back from call log, exactly one open ticket" scenario.</div>
     <p class="blurb">Table 1 has expired. The IVR runs the identification chain to figure out who's calling. The first step that hits (sim_inventory, Customer API, or Booking API) gives the IVR enough to look up active tickets for the caller. If there's exactly one — bridge directly, no PIN needed.</p>
-    <div class="mermaid">
-flowchart TD
-    A[Caller dials masked number from call log] --> B[Call lands at IVR]
-    B --> C{Table 1 lookup}
-    C -->|Miss| D[Identification chain starts]
-    D --> S1{Mobile in sim inventory}
-    S1 -->|YES caller is CSP user| Find[Find active tickets for this user]
-    S1 -->|No| S2{Mobile in Customer API}
-    S2 -->|YES caller is customer| Find
-    S2 -->|No| S3{Mobile in Booking API}
-    S3 -->|YES caller is customer| Find
-    S3 -->|No| P4[Falls to Path 4]
-    Find --> Count{Active ticket count}
-    Count -->|Exactly one| Bridge[Bridge to the one counterparty]
-    Count -->|Zero| Dead[Play no active ticket and end call]
-    Count -->|Two or more| P3[Falls to Path 3]
-    Bridge --> Done[Call connects]
-    </div>
+    <div class="diagram"><img src="diagrams/path2.svg" alt="Path 2 flowchart: recognised caller with single active ticket - direct bridge no PIN"></div>
   </div>
 
   <div class="flow-card">
     <h3>Path 3 — Recognised caller, multiple active tickets → PIN</h3>
     <div class="covers">Covers: <strong>UC 04</strong> · <strong>UC 06</strong> · <strong>UC 08</strong> · <strong>UC 10</strong> — caller is identified but they have 2+ open tickets, so the IVR can't tell which counterparty they want.</div>
     <p class="blurb">The IVR plays the "ask for PIN" audio. The caller reads the PIN from their ticket (in-app card for CSP, SMS or in-app for customer) and enters it. The PIN itself identifies the ticket; the IVR looks up the counterparty's mobile and bridges. Three wrong attempts → dead-end.</p>
-    <div class="mermaid">
-flowchart TD
-    Start[Caller dials masked number] --> Pre[Identification chain hits but two or more active tickets found]
-    Pre --> A[IVR plays Ask for PIN audio]
-    A --> B[Caller enters six digit PIN from ticket card or SMS]
-    B --> C{PIN valid and maps to an active ticket}
-    C -->|YES| D[API 3 returns counterparty mobile]
-    D --> E[Bridge to counterparty]
-    E --> Done[Call connects]
-    C -->|Wrong PIN| F[Play Wrong PIN audio]
-    F --> G{Attempt count}
-    G -->|Under three| A
-    G -->|Third wrong| H[Play Limit reached and end call]
-    C -->|No PIN entered| I[Play No PIN entered and end call]
-    </div>
+    <div class="diagram"><img src="diagrams/path3.svg" alt="Path 3 flowchart: recognised caller with multi-ticket - PIN prompt to disambiguate"></div>
   </div>
 
   <div class="flow-card">
     <h3>Path 4 — Unknown caller → PIN</h3>
     <div class="covers">Covers: <strong>UC 11</strong> (customer from unregistered SIM) · <strong>UC 12</strong> (CSP from unregistered SIM) · <strong>UC 13</strong> (colleague forwarding).</div>
     <p class="blurb">The caller's mobile fails all three identification lookups — IVR doesn't know who they are. The PIN serves double duty here: it both authenticates the caller (they wouldn't have it unless someone authorised gave it to them) and identifies the ticket they want.</p>
-    <div class="mermaid">
-flowchart TD
-    Start[Unknown mobile dials masked number] --> A[Call lands at IVR]
-    A --> B{Table 1 lookup}
-    B -->|Miss| C[Identification chain runs]
-    C --> D[All three lookups miss caller is Unknown]
-    D --> E[IVR plays Ask for PIN audio]
-    E --> F[Caller enters six digit PIN from SMS or forwarded share]
-    F --> G{PIN valid and maps to active ticket}
-    G -->|YES| H[API 3 returns counterparty mobile]
-    H --> I[Bridge to counterparty]
-    I --> Done[Call connects]
-    G -->|Wrong PIN| J[Play Wrong PIN audio]
-    J --> K{Attempt count}
-    K -->|Under three| E
-    K -->|Third wrong| L[Play Limit reached and end call]
-    G -->|No PIN entered| M[Play No PIN entered and end call]
-    </div>
+    <div class="diagram"><img src="diagrams/path4.svg" alt="Path 4 flowchart: unknown caller - PIN prompt to authenticate and identify"></div>
   </div>
 
 </section>
@@ -973,11 +896,6 @@ flowchart TD
 </main>
 
 <script>
-  // Mermaid init — matches the working spec page exactly
-  if (window.mermaid) {
-    mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { curve: 'basis' } });
-  }
-
   // Stat counts
   const ucs = Array.from(document.querySelectorAll('#panel-usecases .uc .badge.live, #panel-usecases .uc .badge.partial, #panel-usecases .uc .badge.blocked'));
   const live = ucs.filter(b => b.classList.contains('live')).length;

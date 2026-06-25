@@ -1,0 +1,18 @@
+flowchart TD
+    Start[Caller dials masked number] --> Pre[Identification chain hits but two or more active tickets found]
+    Pre --> A[IVR plays Ask for PIN audio]
+    A --> B[Caller enters six digit PIN from ticket card or SMS]
+    B --> C{PIN valid and maps to an active ticket}
+    C -->|YES| D[API 3 returns counterparty mobile]
+    D --> E[Bridge to counterparty]
+    E --> Done[Call connects]
+    C -->|Wrong PIN| F[Play Wrong PIN audio]
+    F --> G{Attempt count}
+    G -->|Under three| A
+    G -->|Third wrong| H[Play Limit reached and end call]
+    C -->|No PIN entered| I[Play No PIN entered and end call]
+
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    class E,Done good
+    class H,I bad
