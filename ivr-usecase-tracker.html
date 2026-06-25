@@ -106,6 +106,65 @@
   .uc:not(.open) .uc-toggle::before { content: "▶ "; }
 
   .uc-desc { margin: 12px 0 16px; color: #333; font-size: 14px; }
+
+  /* UX-perspective sub-section headings inside a UC card */
+  .uc-section-h {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); margin: 18px 0 8px; font-weight: 700;
+  }
+
+  /* Actor-typed step list: Does / Sees / Hears */
+  .ux-steps { list-style: none; padding: 0; margin: 8px 0 6px; }
+  .ux-steps li {
+    position: relative; padding: 8px 12px 8px 66px; margin: 5px 0;
+    background: #fafafa; border: 1px solid var(--rule); border-radius: 6px;
+    font-size: 13.5px; line-height: 1.55;
+  }
+  .ux-steps li::before {
+    position: absolute; left: 10px; top: 9px;
+    width: 48px; padding: 3px 0; border-radius: 3px;
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    text-align: center;
+  }
+  .ux-steps li.do::before    { content: "Does";   background: #dbeafe; color: #1e3a8a; }
+  .ux-steps li.sees::before  { content: "Sees";   background: #d1fae5; color: #064e3b; }
+  .ux-steps li.hears::before { content: "Hears";  background: #fef3c7; color: #78350f; }
+  .ux-steps li audio { display: block; width: 100%; height: 30px; margin: 6px 0 0; }
+
+  /* Scenario checklist */
+  .scenarios { display: grid; gap: 8px; margin: 8px 0 6px; }
+  .scenario {
+    border-left: 4px solid var(--rule); padding: 10px 14px; border-radius: 4px;
+    background: #fafafa;
+  }
+  .scenario.ok { border-left-color: var(--live-rule); background: #f0fdf4; }
+  .scenario.gap { border-left-color: var(--blocked-rule); background: #fef2f2; }
+  .scenario-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+  .scenario-status { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: 0.03em; }
+  .scenario.ok .scenario-status { background: var(--live-bg); color: var(--live-ink); }
+  .scenario.gap .scenario-status { background: var(--blocked-bg); color: var(--blocked-ink); }
+  .scenario-name { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .scenario-body { font-size: 13px; line-height: 1.6; color: #333; }
+  .scenario-body audio { display: block; width: 100%; height: 30px; margin: 6px 0 6px; }
+  .scenario-body code { background: rgba(0,0,0,0.05); padding: 0.05em 0.35em; border-radius: 3px; font-size: 0.9em; }
+  .scenario-body em { color: #4b5563; font-style: italic; }
+  .scenario-body .hindi-quote { background: rgba(255,255,255,0.7); border-left: 2px solid #9ca3af; padding: 6px 10px; margin: 6px 0; font-style: italic; }
+
+  /* Collapsible tech detail under a UC card */
+  details.uc-tech {
+    margin-top: 14px; padding: 8px 14px; background: #f7f7f5;
+    border-radius: 6px; font-size: 12.5px;
+  }
+  details.uc-tech summary {
+    cursor: pointer; font-weight: 700; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 4px 0;
+  }
+  details.uc-tech[open] summary { margin-bottom: 6px; border-bottom: 1px dashed #d1d5db; padding-bottom: 6px; }
+  details.uc-tech ul { margin: 4px 0; padding-left: 20px; }
+  details.uc-tech li { margin: 3px 0; }
+  details.uc-tech .blocker { color: var(--blocked-ink); font-weight: 600; }
+
   .steps { list-style: none; padding: 0; margin: 8px 0; counter-reset: step; }
   .step {
     position: relative; padding: 10px 14px 10px 44px; margin: 6px 0;
@@ -302,17 +361,68 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">The happy path. A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialler opens with the Wiom masked number pre-filled. The user dials, and the call is bridged seamlessly via the active mapping (Table 1). The customer's phone shows the Wiom IVR Masked number, never the CSP user's mobile.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user (in CSP App)</div><div class="what">Opens a Restore / Install / Pickup ticket card.</div></li>
-      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Call CTA.</div></li>
-      <li class="step"><div class="actor">CSP App ↔ IVR</div><div class="what">App asks the IVR for the number to dial; IVR creates a short-TTL active mapping and returns the masked number.</div></li>
-      <li class="step"><div class="actor">CSP user</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — Table 1 cache hit, no PIN prompt.</div></li>
-      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings showing the Wiom IVR Masked number; customer picks up; call connects.</div></li>
+    <p class="uc-desc">A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialer opens with the Wiom IVR Masked number pre-filled. The user dials, and the call is bridged seamlessly — no PIN prompt, no waiting. The customer's phone shows the Wiom IVR Masked number, never the CSP user's personal mobile.</p>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">CSP user opens a Restore / Install / Pickup ticket card in the CSP App.</li>
+      <li class="do">Taps the Call CTA.</li>
+      <li class="sees">Phone dialer opens with the Wiom IVR Masked number pre-filled.</li>
+      <li class="do">Taps dial.</li>
+      <li class="sees">Customer's phone shows the call coming from the Wiom IVR Masked number — not from the CSP user's personal mobile.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features (all required)</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head">
+          <span class="scenario-status">✓ Handled</span>
+          <span class="scenario-name">Customer picks up</span>
+        </div>
+        <div class="scenario-body">
+          Both parties talk. The call ends naturally. The call disposition and the recording are saved on the IVR backend.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head">
+          <span class="scenario-status">✓ Handled</span>
+          <span class="scenario-name">Customer doesn't pick up</span>
+        </div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          The customer then receives a push notification on the Customer App:
+          <div class="hindi-quote">आपने हमारे टीम का कॉल मिस कर दिया है। कृपया उनसे बात करने के लिए वापस कॉल करें।</div>
+          When the customer dials back, the flow continues as <a href="#UC09" data-jump="UC09">UC 09</a> (if they have one active ticket) or <a href="#UC10" data-jump="UC10">UC 10</a> (multi-ticket).
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head">
+          <span class="scenario-status">✓ Handled</span>
+          <span class="scenario-name">CSP delays dialling — short-lived in-call mapping expires</span>
+        </div>
+        <div class="scenario-body">
+          If the CSP user opens the dialer but doesn't tap dial within the short TTL window, the seamless-bridge mapping expires. When they eventually do dial, the call falls through to Path 2 and bridges via the identification chain (which still recognises the CSP from <code>sim_inventory</code>). Continues as <a href="#UC03" data-jump="UC03">UC 03</a> or <a href="#UC04" data-jump="UC04">UC 04</a>. No user-visible failure.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head">
+          <span class="scenario-status">✓ Handled</span>
+          <span class="scenario-name">CSP cancels / ends the call themselves before customer picks up</span>
+        </div>
+        <div class="scenario-body">
+          Call doesn't connect. No IVR audio plays — call never reaches the IVR backend. Behaves like any standard outbound call cancel from the phone dialer.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>Exotel App Bazaar Flow ✓</li>
         <li>API 1 (Table 1 fetch) ✓</li>
@@ -320,7 +430,8 @@
         <li>CSP App integrations ✓</li>
         <li>Remote Config kill switch ✓</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
