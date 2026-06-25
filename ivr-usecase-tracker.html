@@ -722,19 +722,19 @@
     <pre class="mermaid">
 flowchart TD
     Call([Call arrives at masked number]) --> T1{Table 1 active mapping}
-    T1 -->|HIT| P1[Path 1: In-app CTA happy path<br/>Bridge directly]
-    T1 -->|MISS| Chain[Identification chain<br/>1 sim_inventory<br/>2 Customer API<br/>3 Booking API]
-    Chain -->|Recognised| Tick{Active ticket count for this user}
-    Tick -->|Exactly 1| P2[Path 2: Direct bridge<br/>No PIN]
-    Tick -->|2 or more| P3[Path 3: PIN prompt<br/>to disambiguate]
-    Tick -->|Zero| Dead[Play no-active-ticket<br/>End call]
-    Chain -->|All 3 miss| P4[Path 4: PIN prompt<br/>to authenticate and identify]
+    T1 -->|HIT| P1[Path 1 In-app CTA happy path - bridge directly]
+    T1 -->|MISS| Chain[Identification chain runs]
+    Chain -->|Recognised| Tick{Active ticket count}
+    Tick -->|Exactly 1| P2[Path 2 Direct bridge no PIN]
+    Tick -->|Two or more| P3[Path 3 PIN prompt to disambiguate]
+    Tick -->|Zero| Dead[Play no-active-ticket and end call]
+    Chain -->|All 3 lookups miss| P4[Path 4 PIN prompt to authenticate]
     P1 --> Done([Call connects])
     P2 --> Done
     P3 -->|Correct PIN| Done
     P4 -->|Correct PIN| Done
-    P3 -->|3 wrong attempts| EndCall[Play limit-reached<br/>End call]
-    P4 -->|3 wrong attempts| EndCall
+    P3 -->|3 wrong| EndCall[Play limit-reached and end call]
+    P4 -->|3 wrong| EndCall
 
     classDef hit fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -751,15 +751,15 @@ flowchart TD
     <p class="blurb">The user taps the in-app Call CTA on their ticket. The app pre-asks the IVR for the number to dial. The IVR writes a short-TTL mapping into Table 1 and returns the masked number. The user dials it; the IVR recognises the mapping and bridges instantly.</p>
     <pre class="mermaid">
 flowchart LR
-    A([User taps Call CTA in app]) --> B[App asks IVR<br/>for the number to dial]
-    B --> C[IVR creates Table 1 mapping<br/>FROM:user to TO:counterparty]
+    A([User taps Call CTA in app]) --> B[App asks IVR for the number to dial]
+    B --> C[IVR creates Table 1 mapping]
     C --> D[IVR returns the masked number]
-    D --> E[App opens dialer<br/>with masked number]
+    D --> E[App opens dialer with masked number]
     E --> F[User taps dial]
-    F --> G[Call lands at IVR<br/>via masked number]
-    G --> H{Table 1<br/>still has mapping?}
-    H -->|YES TTL ok| I[Bridge directly<br/>to counterparty]
-    H -->|NO TTL expired| Fallback[Falls to Path 2/3/4]
+    F --> G[Call lands at IVR via masked number]
+    G --> H{Table 1 still has mapping}
+    H -->|YES TTL ok| I[Bridge directly to counterparty]
+    H -->|NO TTL expired| Fallback[Falls to Path 2 3 or 4]
     I --> J([Call connects])
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
@@ -775,20 +775,20 @@ flowchart LR
     <p class="blurb">Table 1 has expired. The IVR runs the identification chain to figure out who's calling. The first step that hits (sim_inventory, Customer API, or Booking API) gives the IVR enough to look up active tickets for the caller. If there's exactly one — bridge directly, no PIN needed.</p>
     <pre class="mermaid">
 flowchart TD
-    A([Caller dials masked number<br/>from call log/saved contact]) --> B[Call lands at IVR]
+    A([Caller dials masked number from call log]) --> B[Call lands at IVR]
     B --> C{Table 1 lookup}
     C -->|Miss| D[Identification chain starts]
-    D --> S1{sim_inventory<br/>FROM matches?}
-    S1 -->|YES CSP user<br/>returns user_id| Find[Find active tickets<br/>for this user]
-    S1 -->|No| S2{Customer API<br/>FROM matches?}
-    S2 -->|YES Customer<br/>returns customer_id| Find
-    S2 -->|No| S3{Booking API<br/>FROM matches?}
-    S3 -->|YES Customer<br/>returns account_id| Find
+    D --> S1{sim_inventory FROM matches}
+    S1 -->|YES returns user_id| Find[Find active tickets for this user]
+    S1 -->|No| S2{Customer API FROM matches}
+    S2 -->|YES returns customer_id| Find
+    S2 -->|No| S3{Booking API FROM matches}
+    S3 -->|YES returns account_id| Find
     S3 -->|No| P4[Falls to Path 4]
-    Find --> Count{Active ticket<br/>count}
-    Count -->|Exactly 1| Bridge[Bridge to the<br/>one counterparty]
-    Count -->|0| Dead[Play no-active-ticket<br/>End call]
-    Count -->|2 or more| P3[Falls to Path 3]
+    Find --> Count{Active ticket count}
+    Count -->|Exactly 1| Bridge[Bridge to the one counterparty]
+    Count -->|Zero| Dead[Play no-active-ticket and end call]
+    Count -->|Two or more| P3[Falls to Path 3]
     Bridge --> Done([Call connects])
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
@@ -806,18 +806,18 @@ flowchart TD
     <p class="blurb">The IVR plays the "ask for PIN" audio. The caller reads the PIN from their ticket (in-app card for CSP, SMS or in-app for customer) and enters it. The PIN itself identifies the ticket; the IVR looks up the counterparty's mobile and bridges. Three wrong attempts → dead-end.</p>
     <pre class="mermaid">
 flowchart TD
-    Start([Caller dials masked number]) --> Pre[Identification chain hits<br/>but 2+ active tickets found]
+    Start([Caller dials masked number]) --> Pre[Identification chain hits but 2+ active tickets found]
     Pre --> A[IVR plays Ask-for-PIN audio]
-    A --> B[Caller enters 6-digit PIN<br/>from ticket card or SMS]
-    B --> C{PIN valid and<br/>maps to an active ticket}
-    C -->|YES| D[API 3: PIN to counterparty mobile]
+    A --> B[Caller enters 6-digit PIN from ticket card or SMS]
+    B --> C{PIN valid and maps to an active ticket}
+    C -->|YES| D[API 3 returns counterparty mobile]
     D --> E[Bridge to counterparty]
     E --> Done([Call connects])
     C -->|Wrong PIN| F[Play Wrong-PIN audio]
     F --> G{Attempt count}
-    G -->|under 3| A
-    G -->|3rd wrong| H[Play Limit-reached<br/>End call]
-    C -->|No PIN entered<br/>timeout| I[Play No-PIN-entered<br/>End call]
+    G -->|Under 3| A
+    G -->|3rd wrong| H[Play Limit-reached and end call]
+    C -->|No PIN entered| I[Play No-PIN-entered and end call]
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
@@ -832,21 +832,21 @@ flowchart TD
     <p class="blurb">The caller's mobile fails all three identification lookups — IVR doesn't know who they are. The PIN serves double duty here: it both authenticates the caller (they wouldn't have it unless someone authorised gave it to them) and identifies the ticket they want.</p>
     <pre class="mermaid">
 flowchart TD
-    Start([Unknown FROM dials<br/>masked number]) --> A[Call lands at IVR]
+    Start([Unknown FROM dials masked number]) --> A[Call lands at IVR]
     A --> B{Table 1 lookup}
     B -->|Miss| C[Identification chain runs]
-    C --> D[sim_inventory no<br/>Customer API no<br/>Booking API no<br/>Result Unknown caller]
+    C --> D[All 3 lookups miss - caller is Unknown]
     D --> E[IVR plays Ask-for-PIN audio]
-    E --> F[Caller enters 6-digit PIN<br/>from SMS or forwarded share]
-    F --> G{PIN valid and<br/>maps to active ticket}
-    G -->|YES| H[API 3: PIN to counterparty mobile]
+    E --> F[Caller enters 6-digit PIN from SMS or forwarded share]
+    F --> G{PIN valid and maps to active ticket}
+    G -->|YES| H[API 3 returns counterparty mobile]
     H --> I[Bridge to counterparty]
     I --> Done([Call connects])
     G -->|Wrong PIN| J[Play Wrong-PIN audio]
     J --> K{Attempt count}
-    K -->|under 3| E
-    K -->|3rd wrong| L[Play Limit-reached<br/>End call]
-    G -->|No PIN entered<br/>timeout| M[Play No-PIN-entered<br/>End call]
+    K -->|Under 3| E
+    K -->|3rd wrong| L[Play Limit-reached and end call]
+    G -->|No PIN entered| M[Play No-PIN-entered and end call]
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
