@@ -1,0 +1,14 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
+flowchart TD
+    Start([CSP user calls a Wiom Call Center or Trust Line number]) --> Check{Does this CSP have an active ticket?}
+    Check -->|No| Audio[IVR plays 'no active ticket' message for CSP/Partner]
+    Audio --> End[Call ends]
+    Check -->|Yes| OOS[Out of scope - call routed via call-center queue / live agent]
+
+    classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef oos fill:#f1f3f5,stroke:#6b7280,color:#4b5563
+    class Start start
+    class Audio,End bad
+    class OOS oos
