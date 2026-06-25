@@ -1,18 +1,15 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
 flowchart TD
-    Start([CSP user wants to call the customer about an active ticket]) --> Open[Opens the ticket in the CSP App]
-    Open --> Tap[Taps the Call CTA]
-    Tap --> Dialer[Phone dialer opens with the Wiom IVR Masked number pre-filled]
-    Dialer --> Dial[CSP user taps dial]
-    Dial --> Ring[Customer's phone rings - shows the Wiom IVR Masked number, not the CSP's personal mobile]
-    Ring --> Pick{Customer picks up?}
-    Pick -->|Yes| Connect[Both parties talk. Call ends. Recording saved.]
-    Pick -->|No| Audio[CSP hears 'call not picked' message]
-    Audio --> Notif[Customer gets a missed-call alert on the Customer App]
-    Notif --> Followup[When customer calls back -> flow continues as UC 09 or UC 10]
+    Start([CSP wants to call the customer]) --> Tap[Taps Call CTA in CSP App<br/>Dialer opens with Wiom IVR Masked number]
+    Tap --> Dial[CSP dials<br/>Customer's phone rings showing the masked number]
+    Dial --> Pick{Customer picks up?}
+    Pick -->|Yes| Connect[Both parties talk · Call recorded]
+    Pick -->|No| Missed[CSP hears 'call not picked'<br/>Customer gets missed-call alert]
+    Missed --> Next[Customer dials back · Continues as UC 09 or UC 10]
 
     classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
     class Start start
     class Connect good
-    class Audio,Notif,Followup neutral
+    class Missed,Next neutral
