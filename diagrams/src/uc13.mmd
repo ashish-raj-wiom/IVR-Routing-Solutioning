@@ -1,0 +1,22 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
+flowchart TD
+    Start([CSP user can't take the call · wants a colleague to handle it]) --> Forward[Forwards the SMS to the colleague<br/>SMS has the PIN, ticket type, and ticket ID]
+    Forward --> Dial[Colleague dials the Wiom IVR Masked number from their own phone]
+    Dial --> NotKnown[IVR doesn't recognise the colleague's phone number]
+    NotKnown --> Ask[IVR asks for the 6-digit PIN]
+    Ask --> Enter[Colleague reads the PIN from the forwarded SMS<br/>Enters it on the keypad]
+    Enter --> Check{PIN correct?}
+    Check -->|Yes| Bridge[Bridges to the customer for that ticket]
+    Bridge --> Pick{Customer picks up?}
+    Pick -->|Yes| Connect[Both parties talk · Call recorded]
+    Pick -->|No| Missed[Colleague hears 'call not picked']
+    Check -->|No| Retry[Wrong PIN audio · Allowed one more try<br/>2nd wrong → call ends]
+
+    classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    class Start start
+    class Connect good
+    class Missed neutral
+    class Retry bad

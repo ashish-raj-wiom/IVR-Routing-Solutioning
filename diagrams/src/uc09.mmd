@@ -1,0 +1,16 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
+flowchart TD
+    Start([CSP called customer earlier · Customer missed it]) --> PN[Customer gets missed-call alert on Customer App]
+    PN --> Open[Customer taps the alert or opens call log<br/>Dials the Wiom IVR Masked number]
+    Open --> Recognise[IVR recognises the customer and finds 1 active ticket]
+    Recognise --> Bridge[Bridges to the CSP · No PIN needed]
+    Bridge --> Pick{CSP picks up?}
+    Pick -->|Yes| Connect[Both parties talk · Call recorded]
+    Pick -->|No| Missed[Customer hears 'call not picked']
+
+    classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    class Start start
+    class Connect good
+    class PN,Missed neutral

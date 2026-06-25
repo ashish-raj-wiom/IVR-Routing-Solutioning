@@ -465,26 +465,65 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Mirror of UC 01 for the customer side. Customer opens their ticket in the Customer App and taps the Call CTA to reach the CSP. Bridged via Table 1 hit. CSP user's phone shows the Wiom IVR Masked number.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer (in Customer App)</div><div class="what">Opens a ticket card.</div></li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Taps the Call CTA.</div></li>
-      <li class="step"><div class="actor">Customer App ↔ IVR</div><div class="what">App asks for the number; IVR returns the masked number.</div></li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user via Table 1.</div></li>
-      <li class="step"><div class="actor">CSP user's phone</div><div class="what">Rings showing the Wiom IVR Masked number; CSP picks up; call connects.</div></li>
+    <p class="uc-desc">A customer opens their ticket in the Customer App and taps the Call CTA to reach the CSP user. Bridged seamlessly. The CSP user's phone shows the Wiom IVR Masked number, never the customer's personal mobile.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc02.svg" alt="UC 02 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">Customer opens their ticket card in the Customer App.</li>
+      <li class="do">Taps the Call CTA.</li>
+      <li class="sees">Phone dialer opens with the Wiom IVR Masked number pre-filled.</li>
+      <li class="do">Taps dial.</li>
+      <li class="sees">CSP user's phone shows the call coming from the Wiom IVR Masked number — not from the customer's personal mobile.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>Customer hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          The CSP then receives a push notification on the CSP App:
+          <div class="hindi-quote">आपने कनेक्शन का कॉल मिस कर दिया। कृपया वापस कॉल करें।</div>
+          When the CSP dials back, the flow continues as <a href="#UC05" data-jump="UC05">UC 05</a> (single ticket) or <a href="#UC06" data-jump="UC06">UC 06</a> (multi-ticket).
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer delays dialling — seamless mapping expires</span></div>
+        <div class="scenario-body">
+          If the customer opens the dialer but doesn't dial within the short TTL window, the seamless-bridge mapping expires. When they eventually dial, the call falls through to Path 2 and bridges via the identification chain (customer is recognised by their registered mobile). Continues as <a href="#UC07" data-jump="UC07">UC 07</a> or <a href="#UC08" data-jump="UC08">UC 08</a>. No user-visible failure.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer cancels the call themselves before CSP picks up</span></div>
+        <div class="scenario-body">Call doesn't connect. Behaves like any standard outbound call cancel.</div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>Exotel App Bazaar Flow ✓</li>
-        <li>API 1 ✓</li>
-        <li>API 4 / Webhook ✓</li>
-        <li>Customer App integrations ✓</li>
-        <li>Remote Config ✓</li>
+        <li>API 1 ✓ · API 4 webhook ✓</li>
+        <li>Customer App integrations ✓ · Remote Config ✓</li>
         <li class="progress-note">Dialer auto-open (Customer App) — In Progress (UX nicety)</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -503,21 +542,47 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user previously called a customer via the in-app CTA. Later they want to re-call — they tap the Wiom IVR Masked number entry in their phone's call log. Table 1's TTL has expired so the cached mapping is gone. The IVR recognises their FROM (registered SIM or sim_inventory) and finds exactly one active ticket — bridges directly.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Opens their phone's call log; finds the Wiom IVR Masked number entry; taps dial.</div></li>
-      <li class="step"><div class="actor">IVR (API 1)</div><div class="what">Looks up FROM in Table 1 → cache miss. Falls back to PIN registry by FROM.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Identification chain — first hit: FROM matches a row in <code>sim_inventory</code> → returns the <code>user_id</code>. Finds exactly 1 active ticket for that CSP → directly returns the customer's mobile as the bridge target.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — no PIN prompt needed.</div></li>
-      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings; picks up; call connects.</div></li>
+    <p class="uc-desc">A CSP user previously called a customer via the in-app CTA. Later they want to re-call — they tap the saved Wiom IVR Masked number in their phone's call log. The IVR recognises the CSP, finds exactly one active ticket for them, and bridges directly to the customer. No PIN prompt.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc03.svg" alt="UC 03 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">CSP user opens their phone's call log.</li>
+      <li class="do">Taps the saved Wiom IVR Masked number to dial.</li>
+      <li class="sees">Customer's phone rings showing the Wiom IVR Masked number.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          Customer gets a missed-call alert on the Customer App. Continues as <a href="#UC09" data-jump="UC09">UC 09</a> when customer dials back.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 (user identification) ✓ · API 4 webhook ✓</li>
-        <li>"All Recorded Voices" (covers fallback if no active ticket) ✓</li>
+        <li>Identification: caller's mobile found in <code>sim_inventory</code> → IVR knows it's this CSP → finds 1 active ticket.</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -534,36 +599,79 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Same as UC 03 but the CSP has 2 or more active tickets — the IVR can't tell which customer they want to reach. It asks for the 6-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App and enters it on the dialler keypad. The PIN identifies the ticket and the bridge fires.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Wiom IVR Masked number entry in their call log.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised but 2+ active tickets → can't auto-resolve.</div></li>
-      <li class="step"><div class="actor">IVR (audio prompt)</div><div class="what">Asks the caller to enter the 6-digit PIN.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <div class="desc">Played when IVR needs the caller to enter their PIN to disambiguate the ticket.</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
-      </li>
-      <li class="step"><div class="actor">CSP user</div><div class="what">Opens the relevant ticket in the CSP App, reads the PIN from the card, enters it on the dialler keypad.</div></li>
-      <li class="step"><div class="actor">IVR (API 3)</div><div class="what">Looks up the PIN in Table 2; finds the customer mobile.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
-    </ol>
-    <div class="audio-block">
-      <div class="audio-label">▶ Failure modes — wrong PIN (one retry allowed) / no PIN entered / limit reached</div>
-      <div class="desc">If the user enters the wrong PIN, doesn't enter anything, or burns through three retries, the IVR plays one of these messages and ends the call.</div>
-      <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
-      <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
-      <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+    <p class="uc-desc">A CSP user has 2+ open tickets and wants to call one of those customers back. They tap the saved Wiom IVR Masked number in their call log. The IVR recognises them but can't tell which customer they want — so it asks for the 6-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App (or the SMS), enters it, and the bridge fires.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc04.svg" alt="UC 04 business-logic flowchart">
     </div>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">CSP user taps the saved Wiom IVR Masked number in their call log.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+      </li>
+      <li class="do">Looks up the ticket in the CSP App (or the SMS) to find the 6-digit PIN.</li>
+      <li class="do">Enters the PIN on the dialer keypad.</li>
+      <li class="sees">Customer's phone rings showing the Wiom IVR Masked number.</li>
+    </ol>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer picks up</span></div>
+        <div class="scenario-body">Bridge fires to the right customer for that ticket. Both parties talk. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          Customer gets a missed-call alert on the Customer App.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time. The CSP gets a second chance to enter the correct PIN.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends. The CSP has to redial and start over.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          If the caller doesn't enter anything within the timeout, they hear:
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. After three timeouts, the call ends.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 (PIN lookup) ✓ · API 4 ✓</li>
         <li>PIN visible on CSP App ticket card ✓</li>
         <li>All Recorded Voices ✓</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -580,19 +688,49 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A customer rang the CSP earlier (UC 02). The CSP missed it. Now the CSP dials back the masked number from their missed-call entry. FROM is recognised, single active ticket — direct bridge.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Sees a missed call from the Wiom IVR Masked number; taps to call back.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain — first hit: FROM in <code>sim_inventory</code> → returns <code>user_id</code>. 1 active ticket → direct bridge.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+    <p class="uc-desc">A customer rang the CSP earlier (UC 02), but the CSP missed it. The CSP sees a missed call notification on the CSP App and dials back from their call log. IVR recognises the CSP, finds 1 active ticket, and bridges directly to the customer.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc05.svg" alt="UC 05 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="sees">CSP gets a missed-call push notification on the CSP App with the text:
+        <div class="hindi-quote">आपने कनेक्शन का कॉल मिस कर दिया। कृपया वापस कॉल करें।</div>
+      </li>
+      <li class="do">Taps the notification or opens the phone's call log and taps the Wiom IVR Masked number.</li>
+      <li class="sees">Customer's phone rings showing the Wiom IVR Masked number.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          Customer gets another missed-call alert.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
-        <li>Missed-call PN to CSP ✓ (also drives this callback path)</li>
+        <li>Missed-call PN to CSP ✓ (drives this callback path)</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -609,26 +747,75 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Same as UC 05 but CSP has 2+ active tickets. PIN required.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Dials back from the missed-call entry.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
+    <p class="uc-desc">Same as UC 05 (CSP dialing back a customer's missed call) but the CSP has 2+ open tickets. IVR asks for the PIN to disambiguate which customer they want to reach.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc06.svg" alt="UC 06 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="sees">CSP gets a missed-call push notification on the CSP App.</li>
+      <li class="do">Taps the notification or opens phone's call log; dials the Wiom IVR Masked number.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
       </li>
-      <li class="step"><div class="actor">CSP user</div><div class="what">Reads the PIN from the CSP App ticket card; enters it.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+      <li class="do">Looks up the relevant ticket in the CSP App (or the SMS) to find the 6-digit PIN; enters it.</li>
+      <li class="sees">Customer's phone rings.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>CSP user hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time. CSP gets a second chance.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. After three timeouts, the call ends.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
-        <li>PIN visible on CSP App ✓</li>
+        <li>PIN visible on CSP App ✓ · PIN SMS to CSP ✓</li>
+        <li>Missed-call PN to CSP ✓</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -645,18 +832,47 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A customer called the CSP earlier via UC 02. They want to call again — they redial the masked number from their call log. Their FROM is recognised (it's the registered mobile on the ticket), they have 1 active ticket, direct bridge.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom IVR Masked number from their call log.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain runs: sim_inventory (no) → Customer API (yes — returns the <code>customer_id</code>). 1 active ticket for that customer → direct bridge.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user.</div></li>
+    <p class="uc-desc">A customer called the CSP earlier (UC 02) and now wants to call again about the same ticket. They redial the saved Wiom IVR Masked number from their call log. The IVR recognises them and finds 1 active ticket — direct bridge.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc07.svg" alt="UC 07 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">Customer opens their phone's call log.</li>
+      <li class="do">Taps the saved Wiom IVR Masked number to dial.</li>
+      <li class="sees">CSP user's phone rings showing the Wiom IVR Masked number.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>Customer hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          CSP gets a missed-call alert. Continues as <a href="#UC05" data-jump="UC05">UC 05</a>.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
+        <li>Identification: caller's mobile not in sim_inventory but found in Customer API → IVR knows it's this customer → finds 1 active ticket.</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -673,26 +889,73 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Rare — customer has 2+ open tickets (e.g., Restore + Pickup). PIN required.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom IVR Masked number.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
+    <p class="uc-desc">Rare (~1%) — customer has 2+ open tickets (e.g. Restore + Pickup) and dials back. IVR asks for the PIN to disambiguate which ticket they want.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc08.svg" alt="UC 08 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">Customer redials the Wiom IVR Masked number from their call log.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
       </li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS sent at ticket creation, or from the ticket card in the Customer App; enters it.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP.</div></li>
+      <li class="do">Reads the PIN from the SMS or from the relevant ticket card in the Customer App; enters it.</li>
+      <li class="sees">CSP user's phone rings.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP picks up</span></div>
+        <div class="scenario-body">Bridge fires to the right CSP for that ticket. Both parties talk.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          CSP gets missed-call alert.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. Call ends after the third timeout.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
         <li>PIN SMS to customer ✓ · PIN visible on Customer App ✓</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -709,19 +972,49 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">The CSP tried to call the customer (UC 01) but the customer didn't pick up. The customer sees a missed call from the Wiom IVR Masked number on their phone. They tap to call back. FROM is recognised, single active ticket → direct bridge.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer's phone</div><div class="what">Shows missed call from Wiom IVR Masked number.</div></li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Taps to call back.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 1 active ticket → bridges to CSP.</div></li>
+    <p class="uc-desc">CSP tried to call the customer (UC 01) but the customer missed it. Customer gets a missed-call notification on the Customer App and dials back. IVR recognises the customer, finds 1 active ticket, and bridges directly to the CSP.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc09.svg" alt="UC 09 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="sees">Customer gets a missed-call push notification on the Customer App with the text:
+        <div class="hindi-quote">आपने हमारे टीम का कॉल मिस कर दिया है। कृपया उनसे बात करने के लिए वापस कॉल करें।</div>
+      </li>
+      <li class="do">Taps the notification or opens the phone's call log and taps the Wiom IVR Masked number.</li>
+      <li class="sees">CSP user's phone rings showing the Wiom IVR Masked number.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP picks up</span></div>
+        <div class="scenario-body">Both parties talk. Call ends. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <strong>Customer hears:</strong>
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+          CSP gets a missed-call alert.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
-        <li>Missed-call PN to Customer ✓ Live — customer receives the alert when CSP's call wasn't picked.</li>
+        <li>Missed-call PN to Customer ✓ Live</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -738,27 +1031,74 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Customer with multi-ticket, calls back after missing CSP's call. PIN required.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">Calls back from missed-call entry.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
+    <p class="uc-desc">Customer has 2+ open tickets and dials back after missing the CSP's call. IVR asks for the PIN to disambiguate which ticket they want.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc10.svg" alt="UC 10 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="sees">Customer gets a missed-call push notification on the Customer App.</li>
+      <li class="do">Taps the notification or opens phone's call log; dials the Wiom IVR Masked number.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
       </li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS or Customer App; enters it.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the right CSP.</div></li>
+      <li class="do">Reads the PIN from the SMS or Customer App; enters it.</li>
+      <li class="sees">CSP user's phone rings.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP picks up</span></div>
+        <div class="scenario-body">Bridge fires to the right CSP. Both parties talk.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. Call ends after the third timeout.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
-        <li>PIN SMS to customer ✓</li>
-        <li>Missed-call PN to Customer ✓ Live — customer receives the alert when CSP's call wasn't picked.</li>
+        <li>PIN SMS to customer ✓ · PIN visible on Customer App ✓</li>
+        <li>Missed-call PN to Customer ✓ Live</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -777,33 +1117,72 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A customer borrows a relative's phone (their own is unreachable). The masked number is on the SMS they received at ticket creation. They dial it. The IVR doesn't recognise the FROM, asks for the PIN; they read it from the same SMS and enter it.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">From an unregistered SIM, dials the Wiom IVR Masked number that was sent in their SMS.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs: sim_inventory (no) → Customer API (no, since the borrowed SIM isn't on the customer record) → Booking API (no). Caller is unknown.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
-      </li>
-      <li class="step"><div class="actor">Customer</div><div class="what">Reads the PIN from the SMS on their own phone; enters it on the borrowed phone's keypad.</div></li>
-      <li class="step"><div class="actor">IVR (API 3)</div><div class="what">Looks up PIN → finds the CSP mobile.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP.</div></li>
-    </ol>
-    <div class="audio-block">
-      <div class="audio-label">▶ Failure modes</div>
-      <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
-      <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
-      <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+    <p class="uc-desc">A customer borrows a relative's phone (own phone is unreachable). The masked number and PIN are on the SMS they received at ticket creation. They dial the masked number, hear the PIN prompt, enter the PIN from their SMS, and the call bridges to the CSP.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc11.svg" alt="UC 11 business-logic flowchart">
     </div>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">Customer (on a borrowed phone) dials the Wiom IVR Masked number from their SMS.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
+      </li>
+      <li class="do">Reads the PIN from the SMS on their own phone; enters it on the borrowed phone's keypad.</li>
+      <li class="sees">CSP user's phone rings.</li>
+    </ol>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP picks up</span></div>
+        <div class="scenario-body">Both parties talk. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → CSP doesn't pick up</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. Call ends after the third timeout.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
         <li>PIN SMS to customer ✓ (load-bearing — customer can't proceed without the SMS)</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -820,27 +1199,72 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN either from the CSP App ticket card or from the SMS sent at ticket allocation, and enters it on the keypad.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom IVR Masked number from an unregistered SIM.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs all three steps (sim_inventory → Customer API → Booking API) and all miss. Caller is unknown.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
+    <p class="uc-desc">A CSP user is on a different SIM (own SIM out of battery, signal issues). They dial the masked number from the unregistered SIM. IVR doesn't recognise the number, asks for the PIN. CSP reads the PIN from the CSP App ticket card or the SMS, enters it.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc12.svg" alt="UC 12 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">CSP user dials the Wiom IVR Masked number from the unregistered SIM.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
       </li>
-      <li class="step"><div class="actor">CSP user</div><div class="what">Opens the relevant ticket in the CSP App on their primary phone; reads the PIN; enters it on the keypad of the unregistered-SIM phone.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+      <li class="do">Looks up the PIN on the CSP App (on their primary phone) or from the SMS; enters it.</li>
+      <li class="sees">Customer's phone rings.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer picks up</span></div>
+        <div class="scenario-body">Both parties talk. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. Call ends after the third timeout.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
-        <li>PIN visible on CSP App ✓</li>
-        <li>PIN SMS to CSP ✓ Live — CSP can read the PIN from SMS on the unregistered-SIM phone or any phone with their registered number.</li>
+        <li>PIN visible on CSP App ✓ · PIN SMS to CSP ✓</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 
@@ -857,28 +1281,74 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user can't take the call (signal, busy, away). They forward the SMS (which has the masked number reference + the PIN + the ticket type + ticket ID) to a colleague — or alternatively screenshot the ticket card. The colleague dials and enters the PIN.</p>
-    <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Forwards the PIN SMS they received from Wiom (it carries the PIN, ticket type, and ticket ID) — or screenshots the ticket card from the CSP App — and sends it to a colleague via WhatsApp / SMS.</div></li>
-      <li class="step"><div class="actor">Colleague</div><div class="what">Receives the forward; dials the masked number from their own phone.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs and all three steps miss (colleague's phone is in none of sim_inventory, Customer API, or Booking API). Caller is unknown.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
-        <div class="audio-block">
-          <div class="audio-label">▶ Audio: "Ask for PIN"</div>
-          <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
-        </div>
+    <p class="uc-desc">A CSP user can't take the call (signal, busy, away). They forward the SMS (which carries the PIN, ticket type, and ticket ID) to a colleague. The colleague dials the masked number from their own phone. IVR doesn't recognise the colleague's number, asks for the PIN. Colleague enters the PIN from the forwarded SMS.</p>
+
+    <div class="uc-flow">
+      <div class="flow-label">How it works — business flow</div>
+      <img src="diagrams/uc13.svg" alt="UC 13 business-logic flowchart">
+    </div>
+
+    <h4 class="uc-section-h">What the user does and sees</h4>
+    <ol class="ux-steps">
+      <li class="do">CSP user forwards the Wiom PIN SMS (or a screenshot of the ticket card) to a colleague over WhatsApp / SMS.</li>
+      <li class="do">Colleague receives the forward and dials the Wiom IVR Masked number from their own phone.</li>
+      <li class="hears">"Please enter your PIN" voice prompt.
+        <audio controls preload="none" src="audio-clean/ask-for-pin.mp3"></audio>
       </li>
-      <li class="step"><div class="actor">Colleague</div><div class="what">Reads the PIN from the forwarded message; enters it on the keypad.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
+      <li class="do">Colleague reads the PIN from the forwarded SMS and enters it.</li>
+      <li class="sees">Customer's phone rings.</li>
     </ol>
-    <div class="uc-deps">
-      <div class="deps-label">Dependent features</div>
+
+    <h4 class="uc-section-h">Scenarios — and how each is handled</h4>
+    <div class="scenarios">
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer picks up</span></div>
+        <div class="scenario-body">Colleague and customer talk. Recording saved.</div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Correct PIN → customer doesn't pick up</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN (1st attempt)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
+          IVR asks for the PIN one more time.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Wrong PIN twice</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/limit-reached.mp3"></audio>
+          Call ends.
+        </div>
+      </div>
+
+      <div class="scenario ok">
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No PIN entered (timeout)</span></div>
+        <div class="scenario-body">
+          <audio controls preload="none" src="audio-clean/no-pin-entered.mp3"></audio>
+          IVR re-prompts up to three times. Call ends after the third timeout.
+        </div>
+      </div>
+
+    </div>
+
+    <details class="uc-tech">
+      <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
-        <li>PIN visible on CSP App ✓ (CSP can screenshot or copy)</li>
-        <li>PIN SMS to CSP ✓ Live — the SMS itself is the natural artefact to forward; carries PIN + ticket type + ticket ID.</li>
+        <li>PIN visible on CSP App ✓ · PIN SMS to CSP ✓</li>
+        <li>The SMS itself carries PIN + ticket type + ticket ID, making it the natural artefact to forward.</li>
       </ul>
-    </div>
+    </details>
+
   </div>
 </div>
 

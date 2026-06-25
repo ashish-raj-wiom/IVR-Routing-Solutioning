@@ -1,0 +1,15 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
+flowchart TD
+    Start([Customer wants to call the CSP about their ticket]) --> Tap[Taps Call CTA in Customer App<br/>Dialer opens with Wiom IVR Masked number]
+    Tap --> Dial[Customer dials<br/>CSP's phone rings showing the masked number]
+    Dial --> Pick{CSP picks up?}
+    Pick -->|Yes| Connect[Both parties talk · Call recorded]
+    Pick -->|No| Missed[Customer hears 'call not picked'<br/>CSP gets missed-call alert on CSP App]
+    Missed --> Next[CSP dials back · Continues as UC 05 or UC 06]
+
+    classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    class Start start
+    class Connect good
+    class Missed,Next neutral

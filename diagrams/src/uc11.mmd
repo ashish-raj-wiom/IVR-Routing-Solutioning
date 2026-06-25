@@ -1,0 +1,21 @@
+%%{init: {'theme':'default', 'flowchart': {'nodeSpacing': 35, 'rankSpacing': 28}}}%%
+flowchart TD
+    Start([Customer wants to call CSP but their own phone isn't reachable]) --> Dial[Borrows a relative's phone<br/>Dials the Wiom IVR Masked number from the SMS]
+    Dial --> NotKnown[IVR doesn't recognise the phone number]
+    NotKnown --> Ask[IVR asks for the 6-digit PIN to authenticate]
+    Ask --> Enter[Customer reads the PIN from the SMS on their own phone<br/>Enters it on the borrowed phone's keypad]
+    Enter --> Check{PIN correct?}
+    Check -->|Yes| Bridge[Bridges to the CSP for that ticket]
+    Bridge --> Pick{CSP picks up?}
+    Pick -->|Yes| Connect[Both parties talk · Call recorded]
+    Pick -->|No| Missed[Customer hears 'call not picked']
+    Check -->|No| Retry[Wrong PIN audio · Allowed one more try<br/>2nd wrong → call ends]
+
+    classDef start fill:#e0e7ff,stroke:#4338ca,color:#312e81
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef neutral fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    class Start start
+    class Connect good
+    class Missed neutral
+    class Retry bad
