@@ -302,14 +302,14 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">The happy path. A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialler opens with the Wiom masked number pre-filled. The user dials, and the call is bridged seamlessly via the active mapping (Table 1). The customer's phone shows the Wiom helpline number, never the CSP user's mobile.</p>
+    <p class="uc-desc">The happy path. A CSP user opens a ticket in the CSP App and taps the Call CTA to reach the customer. The dialler opens with the Wiom masked number pre-filled. The user dials, and the call is bridged seamlessly via the active mapping (Table 1). The customer's phone shows the Wiom IVR Masked number, never the CSP user's mobile.</p>
     <ol class="steps">
       <li class="step"><div class="actor">CSP user (in CSP App)</div><div class="what">Opens a Restore / Install / Pickup ticket card.</div></li>
       <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Call CTA.</div></li>
       <li class="step"><div class="actor">CSP App ↔ IVR</div><div class="what">App asks the IVR for the number to dial; IVR creates a short-TTL active mapping and returns the masked number.</div></li>
       <li class="step"><div class="actor">CSP user</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — Table 1 cache hit, no PIN prompt.</div></li>
-      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings showing the Wiom helpline number; customer picks up; call connects.</div></li>
+      <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings showing the Wiom IVR Masked number; customer picks up; call connects.</div></li>
     </ol>
     <div class="uc-deps">
       <div class="deps-label">Dependent features (all required)</div>
@@ -337,14 +337,14 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Mirror of UC 01 for the customer side. Customer opens their ticket in the Customer App and taps the Call CTA to reach the CSP. Bridged via Table 1 hit. CSP user's phone shows the Wiom helpline number.</p>
+    <p class="uc-desc">Mirror of UC 01 for the customer side. Customer opens their ticket in the Customer App and taps the Call CTA to reach the CSP. Bridged via Table 1 hit. CSP user's phone shows the Wiom IVR Masked number.</p>
     <ol class="steps">
       <li class="step"><div class="actor">Customer (in Customer App)</div><div class="what">Opens a ticket card.</div></li>
       <li class="step"><div class="actor">Customer</div><div class="what">Taps the Call CTA.</div></li>
       <li class="step"><div class="actor">Customer App ↔ IVR</div><div class="what">App asks for the number; IVR returns the masked number.</div></li>
       <li class="step"><div class="actor">Customer</div><div class="what">Dialler opens with the masked number; user taps dial.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user via Table 1.</div></li>
-      <li class="step"><div class="actor">CSP user's phone</div><div class="what">Rings showing the Wiom helpline number; CSP picks up; call connects.</div></li>
+      <li class="step"><div class="actor">CSP user's phone</div><div class="what">Rings showing the Wiom IVR Masked number; CSP picks up; call connects.</div></li>
     </ol>
     <div class="uc-deps">
       <div class="deps-label">Dependent features</div>
@@ -375,9 +375,9 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user previously called a customer via the in-app CTA. Later they want to re-call — they tap the Wiom helpline entry in their phone's call log. Table 1's TTL has expired so the cached mapping is gone. The IVR recognises their FROM (registered SIM or sim_inventory) and finds exactly one active ticket — bridges directly.</p>
+    <p class="uc-desc">A CSP user previously called a customer via the in-app CTA. Later they want to re-call — they tap the Wiom IVR Masked number entry in their phone's call log. Table 1's TTL has expired so the cached mapping is gone. The IVR recognises their FROM (registered SIM or sim_inventory) and finds exactly one active ticket — bridges directly.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Opens their phone's call log; finds the Wiom helpline entry; taps dial.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Opens their phone's call log; finds the Wiom IVR Masked number entry; taps dial.</div></li>
       <li class="step"><div class="actor">IVR (API 1)</div><div class="what">Looks up FROM in Table 1 → cache miss. Falls back to PIN registry by FROM.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Identification chain — first hit: FROM matches a row in <code>sim_inventory</code> → returns the <code>user_id</code>. Finds exactly 1 active ticket for that CSP → directly returns the customer's mobile as the bridge target.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — no PIN prompt needed.</div></li>
@@ -408,7 +408,7 @@
   <div class="uc-body">
     <p class="uc-desc">Same as UC 03 but the CSP has 2 or more active tickets — the IVR can't tell which customer they want to reach. It asks for the 6-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App and enters it on the dialler keypad. The PIN identifies the ticket and the bridge fires.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Wiom helpline entry in their call log.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Wiom IVR Masked number entry in their call log.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised but 2+ active tickets → can't auto-resolve.</div></li>
       <li class="step"><div class="actor">IVR (audio prompt)</div><div class="what">Asks the caller to enter the 6-digit PIN.</div>
         <div class="audio-block">
@@ -454,7 +454,7 @@
   <div class="uc-body">
     <p class="uc-desc">A customer rang the CSP earlier (UC 02). The CSP missed it. Now the CSP dials back the masked number from their missed-call entry. FROM is recognised, single active ticket — direct bridge.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Sees a missed call from the Wiom helpline number; taps to call back.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Sees a missed call from the Wiom IVR Masked number; taps to call back.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain — first hit: FROM in <code>sim_inventory</code> → returns <code>user_id</code>. 1 active ticket → direct bridge.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
     </ol>
@@ -519,7 +519,7 @@
   <div class="uc-body">
     <p class="uc-desc">A customer called the CSP earlier via UC 02. They want to call again — they redial the masked number from their call log. Their FROM is recognised (it's the registered mobile on the ticket), they have 1 active ticket, direct bridge.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom helpline number from their call log.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom IVR Masked number from their call log.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain runs: sim_inventory (no) → Customer API (yes — returns the <code>customer_id</code>). 1 active ticket for that customer → direct bridge.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user.</div></li>
     </ol>
@@ -547,7 +547,7 @@
   <div class="uc-body">
     <p class="uc-desc">Rare — customer has 2+ open tickets (e.g., Restore + Pickup). PIN required.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom helpline number.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom IVR Masked number.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 2+ active tickets.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
@@ -581,9 +581,9 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">The CSP tried to call the customer (UC 01) but the customer didn't pick up. The customer sees a missed call from the Wiom helpline number on their phone. They tap to call back. FROM is recognised, single active ticket → direct bridge.</p>
+    <p class="uc-desc">The CSP tried to call the customer (UC 01) but the customer didn't pick up. The customer sees a missed call from the Wiom IVR Masked number on their phone. They tap to call back. FROM is recognised, single active ticket → direct bridge.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">Customer's phone</div><div class="what">Shows missed call from Wiom helpline number.</div></li>
+      <li class="step"><div class="actor">Customer's phone</div><div class="what">Shows missed call from Wiom IVR Masked number.</div></li>
       <li class="step"><div class="actor">Customer</div><div class="what">Taps to call back.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised, 1 active ticket → bridges to CSP.</div></li>
     </ol>
@@ -651,7 +651,7 @@
   <div class="uc-body">
     <p class="uc-desc">A customer borrows a relative's phone (their own is unreachable). The masked number is on the SMS they received at ticket creation. They dial it. The IVR doesn't recognise the FROM, asks for the PIN; they read it from the same SMS and enter it.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">Customer</div><div class="what">From an unregistered SIM, dials the Wiom helpline number that was sent in their SMS.</div></li>
+      <li class="step"><div class="actor">Customer</div><div class="what">From an unregistered SIM, dials the Wiom IVR Masked number that was sent in their SMS.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs: sim_inventory (no) → Customer API (no, since the borrowed SIM isn't on the customer record) → Booking API (no). Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
@@ -694,7 +694,7 @@
   <div class="uc-body">
     <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN either from the CSP App ticket card or from the SMS sent at ticket allocation, and enters it on the keypad.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom helpline number from an unregistered SIM.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom IVR Masked number from an unregistered SIM.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs all three steps (sim_inventory → Customer API → Booking API) and all miss. Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
@@ -755,7 +755,7 @@
 </div>
 
 <h2>Edge-case audio (no active ticket on dial-back)</h2>
-<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a previously-engaged customer or CSP dials the helpline back but has no active ticket (e.g., ticket already closed), the IVR plays a dedicated message and ends the call. This is a graceful dead-end, not a use case branch on its own — but the audio is part of the contract.</p>
+<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a previously-engaged customer or CSP dials the IVR Masked number back but has no active ticket (e.g., ticket already closed), the IVR plays a dedicated message and ends the call. This is a graceful dead-end, not a use case branch on its own — but the audio is part of the contract.</p>
 
 <div class="audio-grid" style="margin-top:14px;">
   <div class="audio-card">
