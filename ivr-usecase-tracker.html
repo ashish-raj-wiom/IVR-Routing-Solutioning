@@ -754,23 +754,23 @@
   </div>
 </div>
 
-<h2>Edge-case audio (no active ticket on dial-back)</h2>
-<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a previously-engaged customer or CSP dials the IVR Masked number back but has no active ticket (e.g., ticket already closed), the IVR plays a dedicated message and ends the call. This is a graceful dead-end, not a use case branch on its own — but the audio is part of the contract.</p>
+<h2>Edge-case audio (no active ticket)</h2>
+<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">These audios are tied to the <strong>Wiom Call Center / Trust Line numbers</strong> (e.g. <code>8880322222</code> and the trust-line number), not the IVR Masked number. The IVR Masked number is strictly for customer ↔ partner interaction on an active ticket. When a customer or CSP calls in to the call center / trust line and the IVR cannot find an active ticket against their mobile, it plays the appropriate dead-end message and ends the call.</p>
 
 <div class="audio-grid" style="margin-top:14px;">
   <div class="audio-card">
     <div class="title">No active ticket — Customer side</div>
-    <div class="when">Played when a customer dials back but has no open ticket.</div>
+    <div class="when">Played on the call center / trust line when a customer's mobile maps to no active Wiom partner ticket.</div>
     <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
   </div>
   <div class="audio-card">
     <div class="title">No active ticket — CSP / Partner side</div>
-    <div class="when">Played when a CSP user dials back but has no open ticket.</div>
+    <div class="when">Played on the call center / trust line when a CSP user's mobile maps to no active ticket.</div>
     <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
   </div>
   <div class="audio-card">
     <div class="title">Call not picked</div>
-    <div class="when">Played when the dialled party (customer or CSP) doesn't pick up before the timeout — call ends.</div>
+    <div class="when">Played on an IVR Masked number bridge when the dialled party (customer or CSP) doesn't pick up before the timeout — call ends.</div>
     <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
   </div>
 </div>
@@ -806,21 +806,12 @@
       <h4>Audio prompts in this flow</h4>
       <div class="audio-row">
         <div class="audio-item">
-          <div class="label">▶ Dead-end (Customer)</div>
-          <div class="where">Plays when a recognised customer dials back with zero active tickets.</div>
-          <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
-        </div>
-        <div class="audio-item">
-          <div class="label">▶ Dead-end (CSP / Partner)</div>
-          <div class="where">Plays when a recognised CSP user dials back with zero active tickets.</div>
-          <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
-        </div>
-        <div class="audio-item">
           <div class="label">▶ Call not picked</div>
           <div class="where">Plays when the bridged counterparty doesn't answer.</div>
           <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
         </div>
       </div>
+      <p style="margin:8px 0 0; font-size:12px; color:var(--muted);">Note: the "no active ticket" audios are tied to the Wiom Call Center / Trust Line, not to the IVR Masked number. All 13 UCs assume an active ticket exists; the 0-ticket case isn't a UC branch here.</p>
     </div>
   </div>
 
@@ -1023,15 +1014,15 @@
     </div>
     <div class="audio-card">
       <div class="title">No active ticket — Customer</div>
-      <div class="when">Played when a recognised customer dials back but has no active ticket.</div>
+      <div class="when">Played on the <strong>Wiom Call Center / Trust Line</strong> when a customer's mobile has no active Wiom partner ticket. Not played on the IVR Masked number.</div>
       <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
-      <div class="used-in">Used in: dead-end path on Path 2 / Path 3 customer dial-back</div>
+      <div class="used-in">Used in: call center / trust line dead-end (outside the 13 UCs, which all assume an active ticket)</div>
     </div>
     <div class="audio-card">
       <div class="title">No active ticket — CSP / Partner</div>
-      <div class="when">Played when a recognised CSP user dials back but has no active ticket.</div>
+      <div class="when">Played on the <strong>Wiom Call Center / Trust Line</strong> when a CSP user's mobile has no active ticket. Not played on the IVR Masked number.</div>
       <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
-      <div class="used-in">Used in: dead-end path on Path 2 / Path 3 CSP dial-back</div>
+      <div class="used-in">Used in: call center / trust line dead-end (outside the 13 UCs)</div>
     </div>
     <div class="audio-card">
       <div class="title">Call not picked</div>
