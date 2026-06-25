@@ -278,6 +278,19 @@
 
 <h2>Dialer-initiated callbacks — recognised caller</h2>
 
+<div class="audio-block" style="background:#fff7ed; border-left-color:#c2410c; margin-bottom:18px;">
+  <div class="audio-label" style="color:#9a3412;">How the IVR identifies the caller when Table 1 misses</div>
+  <div class="desc" style="font-size:13.5px; line-height:1.6;">
+    When the Table 1 (active-call mapping) lookup misses, the IVR has to figure out who the caller is from their mobile number. It walks a three-step chain, in order, and stops at the first hit:
+    <ol style="margin:8px 0 4px 22px; padding:0;">
+      <li><strong><code>sim_inventory</code> table</strong> — if the mobile is found here, the IVR knows the <code>user_id</code> (CSP owner / technician / any registered CSP user). Caller is identified as a <strong>CSP user</strong>.</li>
+      <li><strong>Customer API</strong> (<code>customer.i2e1.in/WgPolicy/GetCustomerDetails</code>) — the deserialization bug here was fixed on 24 Jun. If the mobile is found, the IVR gets the <code>customer_id</code>. Caller is identified as a <strong>customer</strong>.</li>
+      <li><strong>Booking API</strong> (legacy) — final fallback. If the mobile is found here, the IVR gets the <code>account_id</code> for a customer record that pre-dates the Customer API. Caller is identified as a <strong>customer</strong>.</li>
+    </ol>
+    If all three miss, the caller is treated as <strong>unknown</strong> and the IVR falls through to Path 4 (PIN prompt regardless of caller identity).
+  </div>
+</div>
+
 <div class="uc" id="UC03">
   <div class="uc-header" onclick="toggleUC('UC03')">
     <div class="uc-header-left">
@@ -295,7 +308,7 @@
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Opens their phone's call log; finds the Wiom helpline entry; taps dial.</div></li>
       <li class="step"><div class="actor">IVR (API 1)</div><div class="what">Looks up FROM in Table 1 → cache miss. Falls back to PIN registry by FROM.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM matches a CSP user in sim_inventory. Finds exactly 1 active ticket for that CSP → directly returns the customer's mobile as the bridge target.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Identification chain — first hit: FROM matches a row in <code>sim_inventory</code> → returns the <code>user_id</code>. Finds exactly 1 active ticket for that CSP → directly returns the customer's mobile as the bridge target.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer — no PIN prompt needed.</div></li>
       <li class="step"><div class="actor">Customer's phone</div><div class="what">Rings; picks up; call connects.</div></li>
     </ol>
@@ -322,11 +335,11 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">Same as UC 03 but the CSP has 2 or more active tickets — the IVR can't tell which customer they want to reach. It asks for the 5-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App and enters it on the dialler keypad. The PIN identifies the ticket and the bridge fires.</p>
+    <p class="uc-desc">Same as UC 03 but the CSP has 2 or more active tickets — the IVR can't tell which customer they want to reach. It asks for the 6-digit PIN. The CSP reads the PIN from the relevant ticket card in the CSP App and enters it on the dialler keypad. The PIN identifies the ticket and the bridge fires.</p>
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Taps the Wiom helpline entry in their call log.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">FROM recognised but 2+ active tickets → can't auto-resolve.</div></li>
-      <li class="step"><div class="actor">IVR (audio prompt)</div><div class="what">Asks the caller to enter the 5-digit PIN.</div>
+      <li class="step"><div class="actor">IVR (audio prompt)</div><div class="what">Asks the caller to enter the 6-digit PIN.</div>
         <div class="audio-block">
           <div class="audio-label">▶ Audio: "Ask for PIN"</div>
           <div class="desc">Played when IVR needs the caller to enter their PIN to disambiguate the ticket.</div>
@@ -371,7 +384,7 @@
     <p class="uc-desc">A customer rang the CSP earlier (UC 02). The CSP missed it. Now the CSP dials back the masked number from their missed-call entry. FROM is recognised, single active ticket — direct bridge.</p>
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Sees a missed call from the Wiom helpline number; taps to call back.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. FROM in sim_inventory → recognised. 1 active ticket → direct bridge.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain — first hit: FROM in <code>sim_inventory</code> → returns <code>user_id</code>. 1 active ticket → direct bridge.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the customer.</div></li>
     </ol>
     <div class="uc-deps">
@@ -436,7 +449,7 @@
     <p class="uc-desc">A customer called the CSP earlier via UC 02. They want to call again — they redial the masked number from their call log. Their FROM is recognised (it's the registered mobile on the ticket), they have 1 active ticket, direct bridge.</p>
     <ol class="steps">
       <li class="step"><div class="actor">Customer</div><div class="what">Redials the Wiom helpline number from their call log.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. FROM = customer's registered mobile → recognised. 1 active ticket → direct bridge.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 cache miss. Identification chain runs: sim_inventory (no) → Customer API (yes — returns the <code>customer_id</code>). 1 active ticket for that customer → direct bridge.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Bridges to the CSP user.</div></li>
     </ol>
     <div class="uc-deps">
@@ -568,7 +581,7 @@
     <p class="uc-desc">A customer borrows a relative's phone (their own is unreachable). The masked number is on the SMS they received at ticket creation. They dial it. The IVR doesn't recognise the FROM, asks for the PIN; they read it from the same SMS and enter it.</p>
     <ol class="steps">
       <li class="step"><div class="actor">Customer</div><div class="what">From an unregistered SIM, dials the Wiom helpline number that was sent in their SMS.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. FROM not in sim_inventory; FROM not the registered mobile of any active ticket. Caller is unknown.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs: sim_inventory (no) → Customer API (no, since the borrowed SIM isn't on the customer record) → Booking API (no). Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
           <div class="audio-label">▶ Audio: "Ask for PIN"</div>
@@ -611,7 +624,7 @@
     <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN from the ticket card in the CSP App (the app side works) and enters it. Note: the SMS-to-CSP fallback path is currently Blocked, so the CSP must have the app accessible to find the PIN.</p>
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom helpline number from an unregistered SIM.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM not recognised.</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs all three steps (sim_inventory → Customer API → Booking API) and all miss. Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
           <div class="audio-label">▶ Audio: "Ask for PIN"</div>
@@ -649,7 +662,7 @@
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Takes a screenshot of the ticket card (PIN visible) and forwards it to a colleague via WhatsApp / SMS — OR copies the masked number and the PIN and shares them as text.</div></li>
       <li class="step"><div class="actor">Colleague</div><div class="what">Receives the forward; dials the masked number from their own phone.</div></li>
-      <li class="step"><div class="actor">IVR</div><div class="what">FROM not recognised (colleague's phone).</div></li>
+      <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs and all three steps miss (colleague's phone is in none of sim_inventory, Customer API, or Booking API). Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
         <div class="audio-block">
           <div class="audio-label">▶ Audio: "Ask for PIN"</div>
@@ -761,7 +774,7 @@
     <tbody>
       <tr><td>Exotel App Bazaar Flow</td><td>End-to-end App Bazaar call flow</td><td>Exotel</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
       <tr><td>API 1</td><td>Table 1 lookup at inbound call</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
-      <tr><td>API 2</td><td>User identification (sim_inventory + customer service)</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
+      <tr><td>API 2</td><td>User identification chain: <code>sim_inventory</code> (returns <code>user_id</code>) → Customer API (returns <code>customer_id</code>) → Booking API (returns <code>account_id</code>)</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>Customer API deserialization fix landed 24 Jun</td></tr>
       <tr><td>API 3</td><td>Table 2 PIN-to-counterparty lookup</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
       <tr><td>API 4 / Webhook</td><td>Call disposition logging</td><td>IVR Service</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
       <tr><td>Customer App integration</td><td>Initiate-call from all three services + masked number on dialer</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
@@ -798,7 +811,7 @@
     </div>
     <div class="audio-card">
       <div class="title">Entered wrong PIN</div>
-      <div class="when">Played when the caller enters an incorrect 5-digit PIN.</div>
+      <div class="when">Played when the caller enters an incorrect 6-digit PIN.</div>
       <audio controls preload="none" src="audio-clean/wrong-pin.mp3"></audio>
       <div class="used-in">Used in: failure path of UC 04, UC 06, UC 08, UC 10, UC 11, UC 12, UC 13</div>
     </div>
