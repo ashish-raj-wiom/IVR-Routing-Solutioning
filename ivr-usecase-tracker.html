@@ -294,19 +294,6 @@
 
 <h2>Dialer-initiated callbacks — recognised caller</h2>
 
-<div class="audio-block" style="background:#fff7ed; border-left-color:#c2410c; margin-bottom:18px;">
-  <div class="audio-label" style="color:#9a3412;">How the IVR identifies the caller when Table 1 misses</div>
-  <div class="desc" style="font-size:13.5px; line-height:1.6;">
-    When the Table 1 (active-call mapping) lookup misses, the IVR has to figure out who the caller is from their mobile number. It walks a three-step chain, in order, and stops at the first hit:
-    <ol style="margin:8px 0 4px 22px; padding:0;">
-      <li><strong><code>sim_inventory</code> table</strong> — if the mobile is found here, the IVR knows the <code>user_id</code> (CSP owner / technician / any registered CSP user). Caller is identified as a <strong>CSP user</strong>.</li>
-      <li><strong>Customer API</strong> (<code>customer.i2e1.in/WgPolicy/GetCustomerDetails</code>) — the deserialization bug here was fixed on 24 Jun. If the mobile is found, the IVR gets the <code>customer_id</code>. Caller is identified as a <strong>customer</strong>.</li>
-      <li><strong>Booking API</strong> (legacy) — final fallback. If the mobile is found here, the IVR gets the <code>account_id</code> for a customer record that pre-dates the Customer API. Caller is identified as a <strong>customer</strong>.</li>
-    </ol>
-    If all three miss, the caller is treated as <strong>unknown</strong> and the IVR falls through to Path 4 (PIN prompt regardless of caller identity).
-  </div>
-</div>
-
 <div class="uc" id="UC03">
   <div class="uc-header" onclick="toggleUC('UC03')">
     <div class="uc-header-left">
@@ -735,13 +722,13 @@
     <pre class="mermaid">
 flowchart TD
     Call([Call arrives at masked number]) --> T1{Table 1<br/>active mapping?}
-    T1 -->|HIT| P1["Path 1 — In-app CTA happy path<br/>Bridge directly"]
-    T1 -->|MISS| Chain[Identification chain<br/>1 sim_inventory → user_id<br/>2 Customer API → customer_id<br/>3 Booking API → account_id]
+    T1 -->|HIT| P1["Path 1: In-app CTA happy path<br/>Bridge directly"]
+    T1 -->|MISS| Chain["Identification chain<br/>1. sim_inventory<br/>2. Customer API<br/>3. Booking API"]
     Chain -->|Recognised| Tick{Active tickets<br/>for this user?}
-    Tick -->|Exactly 1| P2["Path 2 — Direct bridge<br/>No PIN"]
-    Tick -->|2 or more| P3["Path 3 — PIN prompt<br/>to disambiguate"]
+    Tick -->|Exactly 1| P2["Path 2: Direct bridge<br/>No PIN"]
+    Tick -->|2 or more| P3["Path 3: PIN prompt<br/>to disambiguate"]
     Tick -->|0| Dead["Play 'no active ticket'<br/>End call"]
-    Chain -->|All 3 miss<br/>Unknown| P4["Path 4 — PIN prompt<br/>to authenticate &amp; identify"]
+    Chain -->|All 3 miss| P4["Path 4: PIN prompt<br/>to authenticate and identify"]
     P1 --> Done([Call connects])
     P2 --> Done
     P3 -->|Correct PIN| Done
@@ -765,7 +752,7 @@ flowchart TD
     <pre class="mermaid">
 flowchart LR
     A([User taps Call CTA in app]) --> B[App asks IVR<br/>for the number to dial]
-    B --> C[IVR creates Table 1 mapping<br/>FROM:user → TO:counterparty]
+    B --> C[IVR creates Table 1 mapping<br/>FROM:user to TO:counterparty]
     C --> D[IVR returns the masked number]
     D --> E[App opens dialer<br/>with masked number]
     E --> F[User taps dial]
@@ -792,11 +779,11 @@ flowchart TD
     B --> C{Table 1 lookup}
     C -->|Miss| D[Identification chain starts]
     D --> S1{sim_inventory<br/>FROM matches?}
-    S1 -->|YES — CSP user<br/>returns user_id| Find[Find active tickets<br/>for this user]
+    S1 -->|YES CSP user<br/>returns user_id| Find[Find active tickets<br/>for this user]
     S1 -->|No| S2{Customer API<br/>FROM matches?}
-    S2 -->|YES — Customer<br/>returns customer_id| Find
+    S2 -->|YES Customer<br/>returns customer_id| Find
     S2 -->|No| S3{Booking API<br/>FROM matches?}
-    S3 -->|YES — Customer<br/>returns account_id| Find
+    S3 -->|YES Customer<br/>returns account_id| Find
     S3 -->|No| P4[Falls to Path 4]
     Find --> Count{Active ticket<br/>count}
     Count -->|Exactly 1| Bridge[Bridge to the<br/>one counterparty]
@@ -821,15 +808,15 @@ flowchart TD
 flowchart TD
     Start([Caller dials masked number]) --> Pre[Identification chain hits<br/>but 2+ active tickets found]
     Pre --> A["IVR plays Ask for PIN audio"]
-    A --> B[Caller enters 6-digit PIN<br/>from ticket card/SMS]
-    B --> C{PIN valid &amp;<br/>maps to an active ticket?}
-    C -->|YES| D[API 3: PIN → counterparty mobile]
+    A --> B[Caller enters 6-digit PIN<br/>from ticket card or SMS]
+    B --> C{PIN valid and<br/>maps to an active ticket?}
+    C -->|YES| D[API 3: PIN to counterparty mobile]
     D --> E[Bridge to counterparty]
     E --> Done([Call connects])
     C -->|Wrong PIN| F["Play Wrong PIN audio"]
     F --> G{Attempt count}
-    G -->|"< 3"| A
-    G -->|"3rd wrong"| H["Play Limit reached<br/>End call"]
+    G -->|under 3| A
+    G -->|3rd wrong| H["Play Limit reached<br/>End call"]
     C -->|No PIN entered<br/>timeout| I["Play No PIN entered<br/>End call"]
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
@@ -848,17 +835,17 @@ flowchart TD
     Start([Unknown FROM dials<br/>masked number]) --> A[Call lands at IVR]
     A --> B{Table 1 lookup}
     B -->|Miss| C[Identification chain runs]
-    C --> D[sim_inventory: no<br/>Customer API: no<br/>Booking API: no<br/>→ Unknown caller]
+    C --> D[sim_inventory: no<br/>Customer API: no<br/>Booking API: no<br/>Result: Unknown caller]
     D --> E["IVR plays Ask for PIN audio"]
     E --> F[Caller enters 6-digit PIN<br/>from SMS or forwarded share]
-    F --> G{PIN valid &amp;<br/>maps to active ticket?}
-    G -->|YES| H[API 3: PIN → counterparty mobile]
+    F --> G{PIN valid and<br/>maps to active ticket?}
+    G -->|YES| H[API 3: PIN to counterparty mobile]
     H --> I[Bridge to counterparty]
     I --> Done([Call connects])
     G -->|Wrong PIN| J["Play Wrong PIN audio"]
     J --> K{Attempt count}
-    K -->|"< 3"| E
-    K -->|"3rd wrong"| L["Play Limit reached<br/>End call"]
+    K -->|under 3| E
+    K -->|3rd wrong| L["Play Limit reached<br/>End call"]
     G -->|No PIN entered<br/>timeout| M["Play No PIN entered<br/>End call"]
 
     classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
