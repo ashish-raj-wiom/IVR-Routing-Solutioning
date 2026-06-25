@@ -198,6 +198,26 @@
   .notif-title { font-size: 14px; font-weight: 600; color: #111827; margin: 2px 0; line-height: 1.4; }
   .notif-body-text { font-size: 13px; color: #374151; line-height: 1.5; }
   .notif-translation { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #d1d5db; font-size: 12px; color: var(--muted); font-style: italic; }
+
+  /* SMS bubble */
+  .sms-card {
+    background: #e7f3ff; border: 1px solid #b6dafe;
+    border-radius: 14px 14px 14px 4px; padding: 12px 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    position: relative;
+  }
+  .sms-sender { font-size: 11.5px; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .sms-body { font-size: 13px; color: #111827; line-height: 1.55; }
+  .sms-var {
+    display: inline-block; background: #fbbf24; color: #78350f; padding: 1px 6px;
+    border-radius: 3px; font-family: monospace; font-size: 12px; font-weight: 600;
+  }
+  .sms-translation { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #b6dafe; font-size: 12px; color: #4b5563; font-style: italic; }
+
+  /* Section sub-heading inside Notifications panel */
+  .channel-heading { margin: 18px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .channel-heading:first-child { margin-top: 0; }
   .notif-wrap .triggers {
     margin-top: 12px; font-size: 12.5px; color: #444;
   }
@@ -252,7 +272,7 @@
   <button class="tab" data-panel="tree">Decision Tree</button>
   <button class="tab" data-panel="features">Feature Completeness</button>
   <button class="tab" data-panel="audio">Audio Library</button>
-  <button class="tab" data-panel="notifications">Notifications</button>
+  <button class="tab" data-panel="notifications">Notifications &amp; SMS</button>
 </div>
 
 <!-- ================================================================ -->
@@ -1026,8 +1046,9 @@
 <!-- PANEL: NOTIFICATIONS -->
 <!-- ================================================================ -->
 <section class="panel" id="panel-notifications">
-  <p style="color:var(--muted); font-size:13.5px;">Push notifications fired by the IVR after a missed call. These are the in-flow nudges that drive the dial-back use cases (UC 03, UC 05, UC 09, UC 10).</p>
+  <p style="color:var(--muted); font-size:13.5px;">Out-of-call messages — push notifications fired after a missed call, and SMS sent on ticket creation. These are the discovery / authentication channels that feed the dial-back and unknown-caller use cases.</p>
 
+  <h3 class="channel-heading">Push notifications — missed call alerts</h3>
   <div class="notif-grid">
 
     <div class="notif-wrap">
@@ -1069,6 +1090,46 @@
         <ul>
           <li><a href="#UC09" data-jump="UC09">UC 09</a> — Customer dials back on a CSP-initiated masked number (single ticket)</li>
           <li><a href="#UC10" data-jump="UC10">UC 10</a> — Same as UC 09 with multiple tickets</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <h3 class="channel-heading">SMS — PIN delivery on ticket creation</h3>
+  <div class="notif-grid">
+
+    <div class="notif-wrap">
+      <h4>Customer PIN-sharing SMS <span class="badge live">✓ Live</span></h4>
+      <div class="meta">Sent to the customer's registered mobile when a Wiom partner is assigned (i.e., on Install / Restore / Pickup ticket creation). Carries the 6-digit PIN the customer needs if they call the IVR from an unregistered SIM.</div>
+      <div class="sms-card">
+        <div class="sms-sender">Wiom</div>
+        <div class="sms-body">आपके लिए एक Wiom पार्टनर नियुक्त किया गया है। यदि आप रजिस्टर्ड नंबर के अलावा किसी अन्य नंबर से कॉल करते हैं, तो IVR में <span class="sms-var">{#var1#}</span> दर्ज करके सत्यापन करें। Issue Type: <span class="sms-var">{#var2#}</span> - Wiom</div>
+        <div class="sms-translation">English: "A Wiom partner has been assigned to you. If you call from a number other than your registered number, verify by entering <span class="sms-var">{#var1#}</span> in the IVR. Issue Type: <span class="sms-var">{#var2#}</span> - Wiom".<br><br><strong>Placeholders:</strong> <code>{#var1#}</code> = the 6-digit PIN · <code>{#var2#}</code> = the ticket type (Install / Restore / Pickup).</div>
+      </div>
+      <div class="triggers">
+        <strong>Carries the PIN used in these use cases:</strong>
+        <ul>
+          <li><a href="#UC08" data-jump="UC08">UC 08</a> — Customer dials back, multi-ticket → enters PIN from SMS</li>
+          <li><a href="#UC10" data-jump="UC10">UC 10</a> — Customer dials back after CSP missed, multi-ticket</li>
+          <li><a href="#UC11" data-jump="UC11">UC 11</a> — Customer dials from an unregistered SIM (load-bearing — the customer literally cannot proceed without this SMS)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="notif-wrap">
+      <h4>CSP PIN-sharing SMS <span class="badge blocked">Blocked</span></h4>
+      <div class="meta">Will be sent to the CSP user's registered mobile when a ticket is allocated. Currently blocked — will go live with the CSP Flow rollout. The CSP can read the PIN from the in-app ticket card today, so this SMS is an additional/forwardable channel.</div>
+      <div class="sms-card" style="opacity:0.55; background:#f3f4f6; border-color:#d1d5db;">
+        <div class="sms-sender" style="color:#6b7280;">Wiom</div>
+        <div class="sms-body">Content TBD — to be finalised as part of the CSP Flow rollout.</div>
+      </div>
+      <div class="triggers">
+        <strong>Will carry the PIN used in these use cases (once live):</strong>
+        <ul>
+          <li><a href="#UC04" data-jump="UC04">UC 04</a> · <a href="#UC06" data-jump="UC06">UC 06</a> — CSP dials back, multi-ticket (forwardable PIN source)</li>
+          <li><a href="#UC12" data-jump="UC12">UC 12</a> — CSP from unregistered SIM (especially when CSP App isn't reachable)</li>
+          <li><a href="#UC13" data-jump="UC13">UC 13</a> — Colleague forwarding (the SMS is what gets forwarded)</li>
         </ul>
       </div>
     </div>
