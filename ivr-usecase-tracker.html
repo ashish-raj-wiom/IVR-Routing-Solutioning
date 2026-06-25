@@ -1369,14 +1369,14 @@
   </div>
 </div>
 
-<h2>Edge cases — Wiom Call Center / Trust Line dial-ins <span style="font-size:13.5px; color:var(--muted); font-weight:400;">— NOT the IVR Masked number</span></h2>
-<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a customer or CSP calls a <strong>Wiom Call Center number</strong> (e.g. <code>8880322222</code>) or the <strong>Trust Line number</strong>, the IVR first checks whether they have any active Wiom partner ticket. If they don't, the IVR plays a dedicated dead-end message and ends the call. The "has an active ticket" branch is handled by the call-center queue / live agent flow and is out of scope for the IVR 2.0 build.</p>
+<h2>Edge cases — No active ticket on the IVR Masked number <span style="font-size:13.5px; color:var(--muted); font-weight:400;">— dead-end with redirect</span></h2>
+<p style="color:var(--muted); font-size:13.5px; margin-top:-4px;">When a customer or CSP dials the IVR Masked number but the IVR finds no active ticket against their mobile (e.g. ticket already closed), the IVR plays a dedicated message that politely tells them where to call instead — the <strong>Wiom Call Center</strong> for customers, the <strong>Trustline <code>7836811111</code></strong> for CSPs — and ends the call. No bridge is attempted.</p>
 
 <div class="uc" id="UC14">
   <div class="uc-header" onclick="toggleUC('UC14')">
     <div class="uc-header-left">
       <span class="uc-id">UC 14</span>
-      <span class="uc-title">No active ticket — CSP calls Wiom Call Center / Trust Line</span>
+      <span class="uc-title">No active ticket — CSP dials the IVR Masked number</span>
     </div>
     <div class="uc-header-right">
       <span class="badge live">✓ Live</span>
@@ -1384,7 +1384,7 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user calls a Wiom Call Center number or the Trust Line, but they don't have an active ticket against their mobile. The IVR plays the partner-side "no active ticket" message and ends the call.</p>
+    <p class="uc-desc">A CSP user dials the IVR Masked number, but the IVR finds no active ticket against their mobile (most likely the last ticket has already closed). The IVR plays the partner-side dead-end message telling them to call the Trustline <code>7836811111</code> instead, and ends the call.</p>
 
     <div class="uc-flow">
       <div class="flow-label">How it works — business flow</div>
@@ -1393,8 +1393,8 @@
 
     <h4 class="uc-section-h">What the user does and sees</h4>
     <ol class="ux-steps">
-      <li class="do">CSP user dials a Wiom Call Center number or the Trust Line.</li>
-      <li class="hears">"No active ticket" message for partners.
+      <li class="do">CSP user dials the Wiom IVR Masked number.</li>
+      <li class="hears">"You have no active ticket. Please call the Trustline at 7836811111."
         <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
       </li>
       <li class="sees">Call ends.</li>
@@ -1404,13 +1404,8 @@
     <div class="scenarios">
 
       <div class="scenario ok">
-        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No active ticket → dead-end message</span></div>
-        <div class="scenario-body">CSP hears the partner-side "no active ticket" voice prompt and the call ends. No bridge attempted.</div>
-      </div>
-
-      <div class="scenario ok">
-        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">CSP has an active ticket</span></div>
-        <div class="scenario-body">Out of scope for the IVR 2.0 build — call is routed through the call center's existing queue / live agent flow. Not affected by this rollout.</div>
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No active ticket → redirect to Trustline</span></div>
+        <div class="scenario-body">CSP hears the partner-side dead-end voice prompt pointing them at the Trustline (<code>7836811111</code>) and the call ends. No bridge attempted.</div>
       </div>
 
     </div>
@@ -1419,7 +1414,7 @@
       <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>Recorded voice: <code>No active ticket — CSP / Partner</code> ✓ Live</li>
-        <li>Plays on the Wiom Call Center number(s) (e.g. <code>8880322222</code>) and Trust Line, not on the IVR Masked number used by UC 01–13.</li>
+        <li>Plays on the IVR Masked number when the identification chain recognises the caller as a CSP but finds zero active tickets for them.</li>
       </ul>
     </details>
 
@@ -1430,7 +1425,7 @@
   <div class="uc-header" onclick="toggleUC('UC15')">
     <div class="uc-header-left">
       <span class="uc-id">UC 15</span>
-      <span class="uc-title">No active ticket — Customer calls Wiom Call Center / Trust Line</span>
+      <span class="uc-title">No active ticket — Customer dials the IVR Masked number</span>
     </div>
     <div class="uc-header-right">
       <span class="badge live">✓ Live</span>
@@ -1438,7 +1433,7 @@
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A customer calls a Wiom Call Center number or the Trust Line, but their mobile doesn't map to any active Wiom partner ticket. The IVR plays the customer-side "no active ticket" message and ends the call.</p>
+    <p class="uc-desc">A customer dials the IVR Masked number, but the IVR finds no active ticket against their mobile. The IVR plays the customer-side dead-end message telling them to call the Wiom Call Center instead, and ends the call.</p>
 
     <div class="uc-flow">
       <div class="flow-label">How it works — business flow</div>
@@ -1447,8 +1442,8 @@
 
     <h4 class="uc-section-h">What the user does and sees</h4>
     <ol class="ux-steps">
-      <li class="do">Customer dials a Wiom Call Center number or the Trust Line.</li>
-      <li class="hears">"No active ticket" message for customers.
+      <li class="do">Customer dials the Wiom IVR Masked number.</li>
+      <li class="hears">"You have no active ticket. Please call the Wiom Call Center."
         <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
       </li>
       <li class="sees">Call ends.</li>
@@ -1458,13 +1453,8 @@
     <div class="scenarios">
 
       <div class="scenario ok">
-        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No active ticket → dead-end message</span></div>
-        <div class="scenario-body">Customer hears the customer-side "no active ticket" voice prompt and the call ends. No bridge attempted.</div>
-      </div>
-
-      <div class="scenario ok">
-        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">Customer has an active ticket</span></div>
-        <div class="scenario-body">Out of scope for the IVR 2.0 build — call is routed through the call center's existing queue / live agent flow.</div>
+        <div class="scenario-head"><span class="scenario-status">✓ Handled</span><span class="scenario-name">No active ticket → redirect to Call Center</span></div>
+        <div class="scenario-body">Customer hears the customer-side dead-end voice prompt pointing them at the Wiom Call Center and the call ends. No bridge attempted.</div>
       </div>
 
     </div>
@@ -1473,7 +1463,7 @@
       <summary>Behind the scenes — tech detail</summary>
       <ul>
         <li>Recorded voice: <code>No active ticket — Customer</code> ✓ Live</li>
-        <li>Plays on the Wiom Call Center number(s) and Trust Line — not on the IVR Masked number.</li>
+        <li>Plays on the IVR Masked number when the identification chain recognises the caller as a customer but finds zero active tickets for them.</li>
       </ul>
     </details>
 
@@ -1648,10 +1638,10 @@
           </li>
         </ul>
       </li>
-      <li><strong>Wiom Call Center / Trust Line dial-ins</strong> <span class="branch-label">— separate number(s); IVR plays a dead-end message when no active ticket exists</span>
+      <li><strong>No active ticket on the IVR Masked number</strong> <span class="branch-label">— caller recognised but has 0 active tickets; IVR plays a dead-end message and redirects them elsewhere</span>
         <ul>
-          <li><a class="uc-link" href="#UC14" data-jump="UC14">UC 14</a> — No active ticket: CSP calls the call center <span class="badge live">Live</span></li>
-          <li><a class="uc-link" href="#UC15" data-jump="UC15">UC 15</a> — No active ticket: Customer calls the call center <span class="badge live">Live</span></li>
+          <li><a class="uc-link" href="#UC14" data-jump="UC14">UC 14</a> — CSP dials in with no active ticket → redirected to Trustline <code>7836811111</code> <span class="badge live">Live</span></li>
+          <li><a class="uc-link" href="#UC15" data-jump="UC15">UC 15</a> — Customer dials in with no active ticket → redirected to Wiom Call Center <span class="badge live">Live</span></li>
         </ul>
       </li>
     </ul>
@@ -1725,15 +1715,15 @@
     </div>
     <div class="audio-card">
       <div class="title">No active ticket — Customer</div>
-      <div class="when">Played on the <strong>Wiom Call Center / Trust Line</strong> when a customer's mobile has no active Wiom partner ticket. Not played on the IVR Masked number.</div>
+      <div class="when">Played on the <strong>IVR Masked number</strong> when a recognised customer dials in but has no active ticket. The message directs them to call the Wiom Call Center.</div>
       <audio controls preload="none" src="audio-clean/no-ticket-customer.mp3"></audio>
-      <div class="used-in">Used in: call center / trust line dead-end (outside the 13 UCs, which all assume an active ticket)</div>
+      <div class="used-in">Used in: <a href="#UC15" data-jump="UC15">UC 15</a></div>
     </div>
     <div class="audio-card">
       <div class="title">No active ticket — CSP / Partner</div>
-      <div class="when">Played on the <strong>Wiom Call Center / Trust Line</strong> when a CSP user's mobile has no active ticket. Not played on the IVR Masked number.</div>
+      <div class="when">Played on the <strong>IVR Masked number</strong> when a recognised CSP user dials in but has no active ticket. The message directs them to call the Trustline (<code>7836811111</code>).</div>
       <audio controls preload="none" src="audio-clean/no-ticket-csp.mp3"></audio>
-      <div class="used-in">Used in: call center / trust line dead-end (outside the 13 UCs)</div>
+      <div class="used-in">Used in: <a href="#UC14" data-jump="UC14">UC 14</a></div>
     </div>
     <div class="audio-card">
       <div class="title">Call not picked</div>
