@@ -173,6 +173,38 @@
   .flow-card .audio-item .where { color: #444; font-size: 12px; margin-bottom: 4px; }
   .flow-card .audio-item audio { width: 100%; height: 28px; }
 
+  /* Phone-notification card mockup */
+  .notif-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+  .notif-wrap {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 20px;
+  }
+  .notif-wrap > h4 { margin: 0 0 4px; font-size: 14px; }
+  .notif-wrap > .meta { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+  .notif-card {
+    background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+    border: 1px solid #d1d5db; border-radius: 14px; padding: 12px 14px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .notif-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .notif-icon {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+    color: white; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; letter-spacing: -0.03em;
+  }
+  .notif-app { font-size: 11.5px; font-weight: 600; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; }
+  .notif-time { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+  .notif-title { font-size: 14px; font-weight: 600; color: #111827; margin: 2px 0; line-height: 1.4; }
+  .notif-body-text { font-size: 13px; color: #374151; line-height: 1.5; }
+  .notif-translation { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #d1d5db; font-size: 12px; color: var(--muted); font-style: italic; }
+  .notif-wrap .triggers {
+    margin-top: 12px; font-size: 12.5px; color: #444;
+  }
+  .notif-wrap .triggers strong { color: var(--ink); }
+  .notif-wrap .triggers ul { margin: 4px 0 0 18px; padding: 0; }
+  .notif-wrap .triggers li { margin: 3px 0; }
+
   /* Audio library grid */
   .audio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
   .audio-card {
@@ -220,6 +252,7 @@
   <button class="tab" data-panel="tree">Decision Tree</button>
   <button class="tab" data-panel="features">Feature Completeness</button>
   <button class="tab" data-panel="audio">Audio Library</button>
+  <button class="tab" data-panel="notifications">Notifications</button>
 </div>
 
 <!-- ================================================================ -->
@@ -986,6 +1019,60 @@
       <audio controls preload="none" src="audio-clean/call-not-picked.mp3"></audio>
       <div class="used-in">Used in: all UCs where the call gets to bridge stage and the callee doesn't answer</div>
     </div>
+  </div>
+</section>
+
+<!-- ================================================================ -->
+<!-- PANEL: NOTIFICATIONS -->
+<!-- ================================================================ -->
+<section class="panel" id="panel-notifications">
+  <p style="color:var(--muted); font-size:13.5px;">Push notifications fired by the IVR after a missed call. These are the in-flow nudges that drive the dial-back use cases (UC 03, UC 05, UC 09, UC 10).</p>
+
+  <div class="notif-grid">
+
+    <div class="notif-wrap">
+      <h4>CSP missed-call notification <span class="badge live">✓ Live</span></h4>
+      <div class="meta">Pushed to the CSP App when the customer's call was not picked up by the CSP user.</div>
+      <div class="notif-card">
+        <div class="notif-head">
+          <div class="notif-icon">W</div>
+          <div class="notif-app">Wiom CSP App</div>
+          <div class="notif-time">now</div>
+        </div>
+        <div class="notif-title">आपने कनेक्शन का कॉल मिस कर दिया।</div>
+        <div class="notif-body-text">कृपया वापस कॉल करें।</div>
+        <div class="notif-translation">English: "You missed the customer's call. Please call back."</div>
+      </div>
+      <div class="triggers">
+        <strong>Triggers in these use cases:</strong>
+        <ul>
+          <li><a href="#UC05" data-jump="UC05">UC 05</a> — CSP dials back on a customer-initiated masked number (single ticket)</li>
+          <li><a href="#UC06" data-jump="UC06">UC 06</a> — Same as UC 05 with multiple tickets</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="notif-wrap">
+      <h4>Customer missed-call notification <span class="badge blocked">Blocked</span></h4>
+      <div class="meta">Pushed to the Customer App when the CSP user's call was not picked up by the customer. Currently blocked — will go live with the CSP Flow rollout.</div>
+      <div class="notif-card" style="opacity:0.55;">
+        <div class="notif-head">
+          <div class="notif-icon">W</div>
+          <div class="notif-app">Wiom Customer App</div>
+          <div class="notif-time">—</div>
+        </div>
+        <div class="notif-title">Content TBD</div>
+        <div class="notif-body-text">Customer-side PN copy will be finalised as part of the CSP Flow rollout.</div>
+      </div>
+      <div class="triggers">
+        <strong>Will trigger in these use cases (once live):</strong>
+        <ul>
+          <li><a href="#UC09" data-jump="UC09">UC 09</a> — Customer dials back on a CSP-initiated masked number (single ticket)</li>
+          <li><a href="#UC10" data-jump="UC10">UC 10</a> — Same as UC 09 with multiple tickets</li>
+        </ul>
+      </div>
+    </div>
+
   </div>
 </section>
 
