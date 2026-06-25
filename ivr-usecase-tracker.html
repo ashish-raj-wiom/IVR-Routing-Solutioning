@@ -687,12 +687,12 @@
     </div>
     <div class="uc-header-right">
       <span class="badge path4">Path 4</span>
-      <span class="badge partial">⚠ Partial</span>
+      <span class="badge live">✓ Live</span>
       <span class="uc-toggle"></span>
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN from the ticket card in the CSP App (the app side works) and enters it. Note: the SMS-to-CSP fallback path is currently Blocked, so the CSP must have the app accessible to find the PIN.</p>
+    <p class="uc-desc">A CSP user is on the field using a different SIM (own SIM out of battery, signal issues). They dial the masked number from a non-registered SIM. FROM is unknown, PIN required. The CSP reads the PIN either from the CSP App ticket card or from the SMS sent at ticket allocation, and enters it on the keypad.</p>
     <ol class="steps">
       <li class="step"><div class="actor">CSP user</div><div class="what">Dials the Wiom helpline number from an unregistered SIM.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs all three steps (sim_inventory → Customer API → Booking API) and all miss. Caller is unknown.</div></li>
@@ -710,7 +710,7 @@
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
         <li>PIN visible on CSP App ✓</li>
-        <li class="blocker">PIN SMS to CSP — Blocked. The CSP must have their CSP App accessible to read the PIN. If they only have a basic phone with their unregistered SIM and no app access, they can't proceed.</li>
+        <li>PIN SMS to CSP ✓ Live — CSP can read the PIN from SMS on the unregistered-SIM phone or any phone with their registered number.</li>
       </ul>
     </div>
   </div>
@@ -724,14 +724,14 @@
     </div>
     <div class="uc-header-right">
       <span class="badge path4">Path 4</span>
-      <span class="badge partial">⚠ Partial</span>
+      <span class="badge live">✓ Live</span>
       <span class="uc-toggle"></span>
     </div>
   </div>
   <div class="uc-body">
-    <p class="uc-desc">A CSP user can't take the call (signal, busy, away). They forward the masked number + PIN to a colleague (via WhatsApp / SMS — typically a screenshot of the ticket card). The colleague dials and enters the PIN.</p>
+    <p class="uc-desc">A CSP user can't take the call (signal, busy, away). They forward the SMS (which has the masked number reference + the PIN + the ticket type + ticket ID) to a colleague — or alternatively screenshot the ticket card. The colleague dials and enters the PIN.</p>
     <ol class="steps">
-      <li class="step"><div class="actor">CSP user</div><div class="what">Takes a screenshot of the ticket card (PIN visible) and forwards it to a colleague via WhatsApp / SMS — OR copies the masked number and the PIN and shares them as text.</div></li>
+      <li class="step"><div class="actor">CSP user</div><div class="what">Forwards the PIN SMS they received from Wiom (it carries the PIN, ticket type, and ticket ID) — or screenshots the ticket card from the CSP App — and sends it to a colleague via WhatsApp / SMS.</div></li>
       <li class="step"><div class="actor">Colleague</div><div class="what">Receives the forward; dials the masked number from their own phone.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Table 1 miss. Identification chain runs and all three steps miss (colleague's phone is in none of sim_inventory, Customer API, or Booking API). Caller is unknown.</div></li>
       <li class="step"><div class="actor">IVR</div><div class="what">Plays the PIN prompt.</div>
@@ -748,7 +748,7 @@
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
         <li>PIN visible on CSP App ✓ (CSP can screenshot or copy)</li>
-        <li class="blocker">PIN SMS to CSP — Blocked. The intended share mechanism (forward the SMS) doesn't work today. The CSP can still screenshot the app ticket card and forward that — workable but lossier.</li>
+        <li>PIN SMS to CSP ✓ Live — the SMS itself is the natural artefact to forward; carries PIN + ticket type + ticket ID.</li>
       </ul>
     </div>
   </div>
@@ -946,8 +946,8 @@
           <li><span class="branch-label">Caller not identified — FROM is an unregistered SIM</span>
             <ul>
               <li><a class="uc-link" href="#UC11" data-jump="UC11">UC 11</a> — Customer dials from an unregistered SIM <span class="badge path4">Path 4</span> <span class="badge live">Live</span></li>
-              <li><a class="uc-link" href="#UC12" data-jump="UC12">UC 12</a> — CSP user dials from an unregistered SIM <span class="badge path4">Path 4</span> <span class="badge partial">Partial</span></li>
-              <li><a class="uc-link" href="#UC13" data-jump="UC13">UC 13</a> — CSP forwards the masked number to a colleague <span class="badge path4">Path 4</span> <span class="badge partial">Partial</span></li>
+              <li><a class="uc-link" href="#UC12" data-jump="UC12">UC 12</a> — CSP user dials from an unregistered SIM <span class="badge path4">Path 4</span> <span class="badge live">Live</span></li>
+              <li><a class="uc-link" href="#UC13" data-jump="UC13">UC 13</a> — CSP forwards the masked number to a colleague <span class="badge path4">Path 4</span> <span class="badge live">Live</span></li>
             </ul>
           </li>
         </ul>
@@ -978,7 +978,7 @@
       <tr><td>PIN Communication — PIN on Customer App</td><td>PIN visible on Customer App ticket card</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
       <tr><td>PIN Communication — PIN on CSP App</td><td>PIN visible on CSP App ticket card</td><td>CSP / Technician App</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
       <tr><td>PIN Communication — SMS to Customer</td><td>SMS trigger to customer with PIN</td><td>SMS</td><td><span class="badge live">Completed</span></td><td>—</td></tr>
-      <tr><td>PIN Communication — SMS to CSP</td><td>SMS trigger to CSP with PIN</td><td>SMS</td><td><span class="badge blocked">Blocked</span></td><td class="note">Will be done when CSP Flow is ON</td></tr>
+      <tr><td>PIN Communication — SMS to CSP</td><td>SMS trigger to CSP with PIN, ticket type, and ticket ID</td><td>SMS</td><td><span class="badge live">Completed</span></td><td>Live — carries <code>csp_pin</code> + <code>ticket_type</code> + <code>execution_candidate_id</code>.</td></tr>
       <tr><td>DLT Whitelisting</td><td>Wiom number whitelisted on DLT</td><td>SMS / Compliance</td><td><span class="badge progress">In Progress</span></td><td class="note">Maanas to sign Number Ownership contract; ETA TBD</td></tr>
       <tr><td>Missed-call PN to CSP</td><td>PN to CSP when customer's call wasn't picked</td><td>CSP App</td><td><span class="badge live">Completed</span></td><td class="note">Earlier bug fixed — event was missing on CSP CT</td></tr>
       <tr><td>Missed-call PN to Customer</td><td>PN to customer when CSP's call wasn't picked</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>Trigger fires and PN lands on customer devices. End-to-end working.</td></tr>
@@ -1105,8 +1105,8 @@
       <div class="meta">Sent to the customer's registered mobile when a Wiom partner is assigned (i.e., on Install / Restore / Pickup ticket creation). Carries the 6-digit PIN the customer needs if they call the IVR from an unregistered SIM.</div>
       <div class="sms-card">
         <div class="sms-sender">Wiom</div>
-        <div class="sms-body">आपके लिए एक Wiom पार्टनर नियुक्त किया गया है। यदि आप रजिस्टर्ड नंबर के अलावा किसी अन्य नंबर से कॉल करते हैं, तो IVR में <span class="sms-var">{#var1#}</span> दर्ज करके सत्यापन करें। Issue Type: <span class="sms-var">{#var2#}</span> - Wiom</div>
-        <div class="sms-translation">English: "A Wiom partner has been assigned to you. If you call from a number other than your registered number, verify by entering <span class="sms-var">{#var1#}</span> in the IVR. Issue Type: <span class="sms-var">{#var2#}</span> - Wiom".<br><br><strong>Placeholders:</strong> <code>{#var1#}</code> = the 6-digit PIN · <code>{#var2#}</code> = the ticket type (Install / Restore / Pickup).</div>
+        <div class="sms-body">आपके लिए एक Wiom पार्टनर नियुक्त किया गया है।<br>यदि आप रजिस्टर्ड नंबर के अलावा किसी अन्य नंबर से कॉल करते हैं, तो IVR में <span class="sms-var">{{ Event.customer_pin }}</span> दर्ज करके सत्यापन करें।<br>Issue Type: <span class="sms-var">{{ Event.ticket_type }}</span><br><br>- Wiom</div>
+        <div class="sms-translation">English: "A Wiom partner has been assigned to you. If you call from a number other than your registered number, verify by entering <span class="sms-var">customer_pin</span> in the IVR. Issue Type: <span class="sms-var">ticket_type</span>".<br><br><strong>Variables:</strong> <code>customer_pin</code> = the customer's 6-digit PIN · <code>ticket_type</code> = Install / Restore / Pickup.</div>
       </div>
       <div class="triggers">
         <strong>Carries the PIN used in these use cases:</strong>
@@ -1119,17 +1119,18 @@
     </div>
 
     <div class="notif-wrap">
-      <h4>CSP PIN-sharing SMS <span class="badge blocked">Blocked</span></h4>
-      <div class="meta">Will be sent to the CSP user's registered mobile when a ticket is allocated. Currently blocked — will go live with the CSP Flow rollout. The CSP can read the PIN from the in-app ticket card today, so this SMS is an additional/forwardable channel.</div>
-      <div class="sms-card" style="opacity:0.55; background:#f3f4f6; border-color:#d1d5db;">
-        <div class="sms-sender" style="color:#6b7280;">Wiom</div>
-        <div class="sms-body">Content TBD — to be finalised as part of the CSP Flow rollout.</div>
+      <h4>CSP PIN-sharing SMS <span class="badge live">✓ Live</span></h4>
+      <div class="meta">Sent to the CSP user's registered mobile when a ticket is allocated. Carries the CSP-side PIN — needed when the CSP dials in from an unregistered SIM or forwards the SMS to a colleague who will take the call. Also includes the ticket type and ticket ID so the CSP knows which ticket the PIN belongs to.</div>
+      <div class="sms-card">
+        <div class="sms-sender">Wiom</div>
+        <div class="sms-body">आपको एक टिकट मिली है।<br>यदि आप रजिस्टर्ड नंबर के अलावा किसी अन्य नंबर से कॉल करते हैं, तो IVR में <span class="sms-var">{{ Event.csp_pin }}</span> दर्ज करके बात करें।<br>Issue Type: <span class="sms-var">{{ Event.ticket_type }}</span><br>Ticket ID: <span class="sms-var">{{ Event.execution_candidate_id }}</span><br><br>- Wiom</div>
+        <div class="sms-translation">English: "You have received a ticket. If you call from a number other than your registered number, talk by entering <span class="sms-var">csp_pin</span> in the IVR. Issue Type: <span class="sms-var">ticket_type</span>. Ticket ID: <span class="sms-var">execution_candidate_id</span>".<br><br><strong>Variables:</strong> <code>csp_pin</code> = the CSP-side 6-digit PIN · <code>ticket_type</code> = Install / Restore / Pickup · <code>execution_candidate_id</code> = the unique ticket identifier.</div>
       </div>
       <div class="triggers">
-        <strong>Will carry the PIN used in these use cases (once live):</strong>
+        <strong>Carries the PIN used in these use cases:</strong>
         <ul>
-          <li><a href="#UC04" data-jump="UC04">UC 04</a> · <a href="#UC06" data-jump="UC06">UC 06</a> — CSP dials back, multi-ticket (forwardable PIN source)</li>
-          <li><a href="#UC12" data-jump="UC12">UC 12</a> — CSP from unregistered SIM (especially when CSP App isn't reachable)</li>
+          <li><a href="#UC04" data-jump="UC04">UC 04</a> · <a href="#UC06" data-jump="UC06">UC 06</a> — CSP dials back, multi-ticket (forwardable PIN source as alternative to the in-app card)</li>
+          <li><a href="#UC12" data-jump="UC12">UC 12</a> — CSP from unregistered SIM (load-bearing if the CSP App isn't reachable)</li>
           <li><a href="#UC13" data-jump="UC13">UC 13</a> — Colleague forwarding (the SMS is what gets forwarded)</li>
         </ul>
       </div>
