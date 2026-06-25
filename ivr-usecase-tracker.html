@@ -576,7 +576,7 @@
     </div>
     <div class="uc-header-right">
       <span class="badge path2">Path 2</span>
-      <span class="badge partial">⚠ Partial</span>
+      <span class="badge live">✓ Live</span>
       <span class="uc-toggle"></span>
     </div>
   </div>
@@ -591,7 +591,7 @@
       <div class="deps-label">Dependent features</div>
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 4 ✓</li>
-        <li class="blocker">Missed-call PN to Customer — bug: trigger is firing on the IVR side, but the PNs aren't landing on customer devices (likely a CleverTap profile / FCM-token issue, under investigation). Without the PN, the customer might not realise they missed a Wiom call. They can still call back from the call log entry; the bridge itself works.</li>
+        <li>Missed-call PN to Customer ✓ Live — customer receives the alert when CSP's call wasn't picked.</li>
       </ul>
     </div>
   </div>
@@ -605,7 +605,7 @@
     </div>
     <div class="uc-header-right">
       <span class="badge path3">Path 3</span>
-      <span class="badge partial">⚠ Partial</span>
+      <span class="badge live">✓ Live</span>
       <span class="uc-toggle"></span>
     </div>
   </div>
@@ -628,7 +628,7 @@
       <ul>
         <li>API 1 ✓ · API 2 ✓ · API 3 ✓ · API 4 ✓ · Recorded voices ✓</li>
         <li>PIN SMS to customer ✓</li>
-        <li class="blocker">Missed-call PN to Customer — bug: trigger fires but PNs aren't reaching customer devices (same root cause as UC 09; under investigation). The bridge itself works; only the alert is missing.</li>
+        <li>Missed-call PN to Customer ✓ Live — customer receives the alert when CSP's call wasn't picked.</li>
       </ul>
     </div>
   </div>
@@ -937,8 +937,8 @@
               </li>
               <li><em>Customer dials back on a CSP-initiated masked number (after missed call)</em>
                 <ul>
-                  <li><a class="uc-link" href="#UC09" data-jump="UC09">UC 09</a> — Single active ticket <span class="badge path2">Path 2</span> <span class="badge partial">Partial</span></li>
-                  <li><a class="uc-link" href="#UC10" data-jump="UC10">UC 10</a> — Multiple active tickets <span class="badge path3">Path 3</span> <span class="badge partial">Partial</span></li>
+                  <li><a class="uc-link" href="#UC09" data-jump="UC09">UC 09</a> — Single active ticket <span class="badge path2">Path 2</span> <span class="badge live">Live</span></li>
+                  <li><a class="uc-link" href="#UC10" data-jump="UC10">UC 10</a> — Multiple active tickets <span class="badge path3">Path 3</span> <span class="badge live">Live</span></li>
                 </ul>
               </li>
             </ul>
@@ -981,7 +981,7 @@
       <tr><td>PIN Communication — SMS to CSP</td><td>SMS trigger to CSP with PIN</td><td>SMS</td><td><span class="badge blocked">Blocked</span></td><td class="note">Will be done when CSP Flow is ON</td></tr>
       <tr><td>DLT Whitelisting</td><td>Wiom number whitelisted on DLT</td><td>SMS / Compliance</td><td><span class="badge progress">In Progress</span></td><td class="note">Maanas to sign Number Ownership contract; ETA TBD</td></tr>
       <tr><td>Missed-call PN to CSP</td><td>PN to CSP when customer's call wasn't picked</td><td>CSP App</td><td><span class="badge live">Completed</span></td><td class="note">Earlier bug fixed — event was missing on CSP CT</td></tr>
-      <tr><td>Missed-call PN to Customer</td><td>PN to customer when CSP's call wasn't picked</td><td>Customer App</td><td><span class="badge blocked">Bug</span></td><td class="note">Copy ready, trigger firing on IVR side, but PNs not landing on customer devices — likely CleverTap profile / FCM-token issue. Under investigation.</td></tr>
+      <tr><td>Missed-call PN to Customer</td><td>PN to customer when CSP's call wasn't picked</td><td>Customer App</td><td><span class="badge live">Completed</span></td><td>Trigger fires and PN lands on customer devices. End-to-end working.</td></tr>
       <tr><td>Bug — PIN deallocation on P74</td><td>PIN not getting deallocated when booking removed after P74 hit</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/807">issues/807</a></td></tr>
       <tr><td>Bug — Registered Number change</td><td>SIM Inventory not updating on number change</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/807">issues/807</a></td></tr>
       <tr><td>Bug — 12 single-ticket cases not bridging</td><td>Customer Service deserialization failure ("Active" String vs int)</td><td>IVR Service</td><td><span class="badge live">Fixed 24 Jun</span></td><td><a href="https://github.com/wiom-tech/csp-os-yaml/issues/846">issues/846</a></td></tr>
@@ -1074,8 +1074,8 @@
     </div>
 
     <div class="notif-wrap">
-      <h4>Customer missed-call notification <span class="badge blocked">Bug — not reaching customers</span></h4>
-      <div class="meta">Pushed to the Customer App when the CSP user's call wasn't picked up by the customer. Copy is finalised and the trigger is firing on the IVR side, but the PNs aren't actually landing on customer devices — under investigation (likely a CleverTap profile / FCM-token issue).</div>
+      <h4>Customer missed-call notification <span class="badge live">✓ Live</span></h4>
+      <div class="meta">Pushed to the Customer App when the CSP user's call wasn't picked up by the customer. Trigger fires on the IVR side and the PN lands on the customer's device — fully working end-to-end.</div>
       <div class="notif-card">
         <div class="notif-head">
           <div class="notif-icon">W</div>
