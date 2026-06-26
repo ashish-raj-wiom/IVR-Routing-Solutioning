@@ -266,8 +266,11 @@
     <tr><td>Where does the cohort list live?</td><td><strong>Inside the IVR service.</strong> Not in apps, not in any other service.</td><td>Apps stay simple. Other teams don't need to know. Single source of truth. Changes are made by the IVR team only.</td></tr>
     <tr><td>Granularity?</td><td><strong>Per CSP</strong>, not per ticket. If a CSP is in the cohort, every one of their tickets (Install, Restore, Pickup) uses masked routing — on both apps.</td><td>Simpler mental model. CSPs are the relationship; tickets are transient. Avoids inconsistent UX where one ticket masks and another doesn't.</td></tr>
     <tr><td>What decides masked vs. direct?</td><td>The IVR service decides at the moment the app asks for a number to dial. If the ticket's CSP is in the cohort, the IVR returns the masked number; otherwise it returns the other party's actual mobile. The response shape is the same in both cases — just a number to dial.</td><td>The cohort can grow or shrink without any app release. The app's existing logic already handles dialling whatever number the IVR returns.</td></tr>
-    <tr><td>Any change needed on the app?</td><td><strong>No.</strong> The app already calls the IVR for the number to dial and dials it. The IVR just starts returning a different number for non-cohort tickets.</td><td>Zero release coordination with mobile teams. Rollout speed is determined by the IVR team alone.</td></tr>
-    <tr><td>PIN behaviour for non-cohort CSPs?</td><td><strong>Unchanged.</strong> PINs are already created and pre-fetched today for every ticket. For non-cohort tickets, the PIN just doesn't get exercised because the call doesn't go through the masked bridge.</td><td>No coordination with upstream services. They keep working as today.</td></tr>
+    <tr><td>Any change needed on the app?</td><td><strong>No — zero frontend release.</strong> The Customer App, CSP App and Technician App all stay on whatever version they're on. They already call the IVR for the number to dial and for the PIN to display; the IVR is the only side that changes what it returns. Even PIN visibility and PIN SMS are controlled server-side (see rows below) so nothing in the apps needs to be re-shipped.</td><td>Zero release coordination with mobile teams. Rollout speed is determined by the IVR team alone.</td></tr>
+    <tr><td>Where is the cohort gate actually applied?</td><td>A single <strong>visibility flag in the <code>pin_registry</code> table</strong>, set per row at ticket creation based on whether the ticket's CSP is in the cohort. The IVR's PIN-fetch endpoint reads this flag, and the PIN-comms event emission checks this flag. One flag, two consequences (app display + outbound comms).</td><td>One mechanism, no scattered conditionals. Adding/removing CSPs becomes a re-stamping of the flag rather than a code change.</td></tr>
+    <tr><td>PIN visible in app for non-cohort CSPs?</td><td><strong>No.</strong> The Customer App and CSP App must not show the PIN if the ticket's CSP is not in the cohort. Mechanism: the IVR's PIN-fetch endpoint returns "no PIN" for those tickets (driven by the visibility flag). The app's existing render logic naturally skips the PIN block when there is nothing to show — no app code change required.</td><td>Symmetry with the masking decision. If the call won't use the PIN, neither party should be looking at it.</td></tr>
+    <tr><td>PIN education comms (SMS + push) for non-cohort CSPs?</td><td><strong>Not sent.</strong> Today a CleverTap event is fired when a PIN is created, and CT fans this out to SMS + push. For non-cohort tickets the IVR (or the upstream emitter) <strong>does not fire the event</strong>, so CT never receives anything, so no SMS and no push notification reach the customer or the CSP.</td><td>Suppression at the source — not at delivery. No risk of half-suppressed comms or accidental sends from cached events.</td></tr>
+    <tr><td>PIN creation for non-cohort CSPs?</td><td><strong>Unchanged.</strong> A PIN row is still created in <code>pin_registry</code> for every Install / Restore / Pickup ticket. For non-cohort tickets the visibility flag on that row is set to OFF; the row exists but is invisible to apps and silent to comms.</td><td>No coordination with upstream services for the creation path. Flipping cohort membership just flips flags.</td></tr>
     <tr><td>Inbound helpline behaviour?</td><td><strong>Bridge anyone.</strong> The IVR helpline number accepts all callers; the cohort decision only applies when the app fetches a number to dial.</td><td>Customers who somehow reach the helpline (old SMS, saved contact) shouldn't be cut off. The helpline is shared infrastructure.</td></tr>
     <tr><td>What about a CSP's in-flight tickets when they join the cohort?</td><td><strong>No backfill.</strong> Going forward from the moment the CSP joins the cohort, every call CTA on every one of their tickets (including ones created earlier) will return the masked number. No retroactive change to the tickets themselves.</td><td>Simplest. The cohort decision is made fresh on every call CTA, so adding a CSP is enough — nothing has to be re-stamped on existing tickets.</td></tr>
   </table>
@@ -280,12 +283,15 @@
   <div class="expected"><strong>What is expected:</strong> What the CSP and customer experience differs by enrolment state.</div>
 
   <h3>A5.1 Two parallel realities — applied symmetrically on both apps</h3>
-  <p>The cohort decision applies to <strong>every call CTA</strong> a user can tap — whether that user is on the Customer App or on the CSP / Technician App, and whether the ticket is Install, Restore, or Pickup. There is no half-rollout: if a CSP is in the cohort, every call CTA on every one of their tickets, in either direction, returns the masked number.</p>
+  <p>The cohort decision applies to <strong>every surface</strong> the PIN can show up on, not just the call. If a CSP is in the cohort, all four user-facing surfaces (the number that gets dialled, the PIN displayed on each app, the PIN SMS, the PIN push notification) light up for every one of their tickets — on both Customer App and CSP App, every direction. If they are not in the cohort, none of those four light up.</p>
   <table>
-    <tr><th>Population</th><th>What the IVR returns at call CTA<br>(same answer on Customer App and CSP App)</th><th>What happens on the call</th></tr>
-    <tr><td><strong>Cohort CSPs</strong></td><td>The Wiom masked number.</td><td>The app dials the masked number; the call goes through the IVR routing layer and gets bridged to the other party. The other party's phone shows the Wiom helpline number on the dialler — never the personal mobile. Holds for both CSP-initiated and customer-initiated calls.</td></tr>
-    <tr><td><strong>Non-cohort CSPs (everyone else)</strong></td><td>The other party's actual mobile.</td><td>The app dials that mobile directly. The call goes through as a normal phone call. The other party's phone shows the caller's actual mobile, exactly as today. Same on both apps.</td></tr>
+    <tr><th style="width:18%">Surface</th><th>Cohort CSPs <span style="font-weight:400; color:var(--muted);">(all four ON)</span></th><th>Non-cohort CSPs <span style="font-weight:400; color:var(--muted);">(all four OFF)</span></th></tr>
+    <tr><td><strong>What IVR returns at call CTA</strong> <span style="font-size:11px; color:var(--muted);">— same answer on both apps</span></td><td>The Wiom <strong>masked number</strong>. App dials it → call goes through the IVR bridge → other party's phone shows the Wiom helpline number, never the personal mobile.</td><td>The other party's <strong>actual mobile</strong>. App dials it directly → normal phone call → other party's phone shows the caller's actual mobile. Exactly as today.</td></tr>
+    <tr><td><strong>PIN visible on the ticket card</strong> <span style="font-size:11px; color:var(--muted);">— Customer App and CSP App</span></td><td>PIN is shown on the ticket card to both the customer and the CSP user.</td><td><strong>No PIN shown.</strong> IVR returns "no PIN" for the ticket; the app's existing render logic skips the PIN block. No app change.</td></tr>
+    <tr><td><strong>PIN SMS</strong></td><td>The customer receives the customer-PIN SMS; the CSP user receives the CSP-PIN SMS.</td><td><strong>No SMS sent</strong> to either party. The CleverTap event that drives the SMS is not emitted, so CT never fans it out.</td></tr>
+    <tr><td><strong>PIN push notification / in-app education</strong></td><td>Standard PIN-related comms reach both parties via CleverTap.</td><td><strong>No push, no in-app education.</strong> Same source — the CT event is suppressed at the emitter, so nothing flows downstream.</td></tr>
   </table>
+  <div class="hint" style="margin-top:6px;"><strong>One switch, four consequences.</strong> All four surfaces are gated by the same <code>visible</code> flag in the <code>pin_registry</code> row for the ticket. When a CSP is added to the cohort, every active ticket's row gets the flag flipped ON (or new tickets get created with it ON); when removed, OFF. Nothing else moves.</div>
 
   <h3>A5.2 Call-CTA flow</h3>
   <div class="mermaid">
@@ -314,9 +320,12 @@ flowchart LR
     <tr><td>INV-ROLL-02</td><td>Cohort membership is a CSP-level fact. If a CSP is in the cohort, every one of their tickets (Install, Restore, NBREC) is in the masking regime.</td></tr>
     <tr><td>INV-ROLL-03</td><td>The IVR returns one of two outcomes when the app asks for a number to dial: the masked number (for cohort CSPs) or the other party's actual number (for everyone else). There is no third outcome.</td></tr>
     <tr><td>INV-ROLL-04</td><td>When the IVR returns the actual number of the other party, it uses the mobile that's already on file from when the ticket was created. No extra lookup at the moment of the call.</td></tr>
-    <tr><td>INV-ROLL-05</td><td>PIN creation and PIN pre-fetch by the app are uniform across all CSPs — cohort or not. For non-cohort CSPs the PIN simply isn't used.</td></tr>
+    <tr><td>INV-ROLL-05</td><td><strong>PIN creation</strong> in <code>pin_registry</code> remains uniform across all CSPs — a row exists for every Install / Restore / Pickup ticket regardless of cohort state. What differs is the row's <code>visible</code> flag: ON for cohort tickets, OFF for everyone else.</td></tr>
     <tr><td>INV-ROLL-06</td><td>Adding or removing a CSP from the cohort takes effect across the IVR service within seconds, without an app release and without a service restart.</td></tr>
     <tr><td>INV-ROLL-07</td><td>The base IVR's privacy guarantees (no real mobile exposed when the call goes through the masked bridge; PIN is bound to one ticket only) are unaffected. The cohort decision is an additional layer on top, not a relaxation.</td></tr>
+    <tr><td>INV-ROLL-08</td><td><strong>No frontend release is required at any phase of this rollout.</strong> The Customer App, CSP App, and Technician App are all kept on whatever version they're currently shipping; the IVR service is the sole locus of change.</td></tr>
+    <tr><td>INV-ROLL-09</td><td>The <code>visible</code> flag in <code>pin_registry</code> is the sole gate for PIN exposure. It governs (a) whether the IVR's PIN-fetch endpoint returns a PIN to the app, and (b) whether the PIN-created CleverTap event is emitted (which in turn governs the PIN SMS and PIN push). No other surface independently checks cohort state.</td></tr>
+    <tr><td>INV-ROLL-10</td><td>For a non-cohort CSP's ticket, <strong>no PIN reaches either party on any channel</strong>: not on the Customer App ticket card, not on the CSP App ticket card, not via SMS, not via push notification.</td></tr>
   </table>
   <hr class="sect-end">
 </section>
@@ -364,26 +373,32 @@ flowchart LR
   <h3>B1.1 The cohort list</h3>
   <p>The IVR service holds a list of CSPs that are currently in the masking regime. The list is maintained by the IVR team; nobody else has direct access. A CSP can be added or removed at any time, and the change takes effect across the IVR service within seconds — no app release, no service restart, no coordination with other teams.</p>
 
-  <h3>B1.2 The single decision the IVR makes</h3>
-  <p>Every time the app asks the IVR for a number to dial at the moment the user taps the call CTA, the IVR does one check: <em>is the ticket's CSP in the cohort list?</em></p>
+  <h3>B1.2 The single gate: a visibility flag on the PIN row</h3>
+  <p>For every Install / Restore / Pickup ticket, a row is created in <code>pin_registry</code> as today. The IVR adds one new column on that row — a <strong><code>visible</code> flag</strong> — and sets it based on the ticket's CSP:</p>
   <ul class="criteria">
-    <li><strong>Yes</strong> → return the masked number. The app dials the masked number; the call goes through the IVR routing layer and gets bridged to the other party.</li>
-    <li><strong>No</strong> → return the other party's actual mobile number. The app dials it directly; the call goes through as a normal phone call. The IVR is not involved in routing.</li>
+    <li>CSP is in the cohort → <code>visible = true</code>.</li>
+    <li>CSP is not in the cohort → <code>visible = false</code>.</li>
   </ul>
-  <p>This is the only place the cohort decision is consulted in the entire system. Everything else — PIN creation, PIN pre-fetch, inbound calls to the helpline number, allocation triggers from upstream services — continues to behave identically for cohort and non-cohort CSPs.</p>
+  <p>That single flag is the gate for everything visible to the user:</p>
+  <ul class="criteria">
+    <li><strong>Call CTA — number to dial.</strong> When the app asks the IVR for the number, the IVR consults the flag. <code>visible=true</code> → return the masked number. <code>visible=false</code> → return the other party's actual mobile.</li>
+    <li><strong>PIN-fetch endpoint.</strong> When the app pre-fetches the PIN for the ticket card, the IVR consults the flag. <code>visible=true</code> → return the PIN. <code>visible=false</code> → return "no PIN" (the app's existing render logic naturally hides the PIN block; no app change needed).</li>
+    <li><strong>PIN-created event to CleverTap.</strong> The event that drives the PIN SMS and the PIN push notification is emitted only when <code>visible=true</code>. When the flag is OFF, no event reaches CleverTap, so no SMS and no push reach either party.</li>
+  </ul>
+  <p>This is the only place the cohort decision is consulted. Everything else — PIN creation itself, inbound calls to the helpline number, allocation triggers from upstream services — continues to behave identically for cohort and non-cohort CSPs.</p>
 
   <h3>B1.3 Where the IVR gets the actual number for non-cohort CSPs</h3>
   <p>Both parties' mobile numbers are already known to the IVR at ticket creation time (the upstream service that creates the ticket also tells the IVR who the customer and CSP are). So when a non-cohort CSP's ticket triggers a number-fetch, the IVR can return the right "actual" number immediately, without calling any other service in the middle of the call CTA flow.</p>
 
   <h3>B1.4 Managing the cohort list</h3>
-  <p>The IVR team needs to be able to: add a CSP to the cohort, remove a CSP from the cohort, and view the current list and recent changes. These operations are internal-only (no public surface) and happen at human-managed frequency (a few times a day during early rollout; less often later).</p>
+  <p>The IVR team needs to be able to: add a CSP to the cohort, remove a CSP from the cohort, and view the current list and recent changes. These operations are internal-only (no public surface) and happen at human-managed frequency (a few times a day during early rollout; less often later). Each change cascades to the <code>visible</code> flag on every active PIN row for that CSP — so flipping cohort membership is one operational step, not many.</p>
 
   <h3>B1.5 What is NOT changing in the IVR service</h3>
   <ul class="criteria">
-    <li>PIN creation logic for new tickets.</li>
-    <li>PIN-fetch endpoints used by apps to pre-fetch the PIN earlier in the ticket lifecycle.</li>
+    <li>PIN <em>creation</em> logic for new tickets — a row still appears in <code>pin_registry</code> for every Install / Restore / Pickup, regardless of cohort state.</li>
+    <li>The PIN-fetch endpoint contract — same URL, same response shape; only the value of the PIN field changes (a PIN or null) based on the flag.</li>
     <li>Inbound call routing on the helpline number (callers always reach a bridge as today).</li>
-    <li>The masked DID configuration, PIN registry, sim inventory.</li>
+    <li>The masked DID configuration, sim inventory.</li>
     <li>Privacy guarantees: when a call does go through the masked bridge, no real mobile is exposed to the counterparty.</li>
   </ul>
   <hr class="sect-end">
@@ -400,9 +415,16 @@ flowchart LR
 <!-- B3 PIN Behaviour -->
 <section class="spec" id="s14">
   <h2><span class="num">B3.</span> PIN Behaviour <span class="tier how">HOW</span></h2>
-  <p>PINs are already created today for every Install / Restore / Pickup ticket. Apps already pre-fetch them when the ticket loads. <strong>None of this changes</strong> with the cohort rollout.</p>
-  <p>The cohort decision sits entirely at call CTA time, after the PIN is already pre-fetched. The PIN is used when the call goes through the masked bridge (cohort CSPs), and it's not used when the call goes direct (non-cohort CSPs). In the non-cohort case the PIN simply sits unused on the app — no harm.</p>
-  <p>The consequence: when a CSP moves into the cohort, their already-in-flight tickets automatically start routing through the masked bridge on the very next call CTA tap. Nothing has to be rebuilt or backfilled — the data was always being created.</p>
+  <p>Three things to keep separate: PIN <strong>creation</strong>, PIN <strong>visibility</strong>, and PIN <strong>comms</strong>. Creation is uniform across all CSPs. Visibility and comms are gated by the cohort, via the <code>visible</code> flag on the PIN row.</p>
+  <table>
+    <tr><th style="width:18%">Behaviour</th><th>Cohort CSPs</th><th>Non-cohort CSPs</th></tr>
+    <tr><td><strong>PIN creation</strong> <span style="font-size:11px; color:var(--muted);">— in <code>pin_registry</code></span></td><td colspan="2" style="text-align:center;">Unchanged — a row is created for every Install / Restore / Pickup ticket as today.</td></tr>
+    <tr><td><strong><code>visible</code> flag on that row</strong></td><td><code>true</code></td><td><code>false</code></td></tr>
+    <tr><td><strong>PIN-fetch endpoint response</strong> <span style="font-size:11px; color:var(--muted);">— what the app gets</span></td><td>Returns the PIN. The app displays it on the ticket card on both Customer App and CSP App.</td><td>Returns no PIN. The app's existing "if no PIN, hide the block" branch fires — naturally no PIN is shown. No app code change.</td></tr>
+    <tr><td><strong>PIN-created CleverTap event</strong> <span style="font-size:11px; color:var(--muted);">— drives SMS + push</span></td><td>Emitted as today. CleverTap fans out the customer-PIN SMS, CSP-PIN SMS, and the push notifications.</td><td><strong>Not emitted.</strong> Nothing reaches CleverTap → no SMS, no push, no in-app education for either party.</td></tr>
+    <tr><td><strong>Call CTA use of the PIN</strong></td><td>PIN is sent on the masked-bridge call to authenticate the ticket.</td><td>N/A — call goes direct, no bridge, no PIN needed.</td></tr>
+  </table>
+  <p>When a CSP <strong>moves into the cohort</strong>, the visibility flag is flipped ON for every active PIN row of theirs. From that moment, all four user-facing surfaces (call routing, app PIN, SMS, push) light up. When a CSP is <strong>removed from the cohort</strong>, the flag is flipped OFF for active rows and the same four surfaces go dark — without any rebuild, backfill, or comms cleanup.</p>
   <hr class="sect-end">
 </section>
 
@@ -410,13 +432,16 @@ flowchart LR
 <section class="spec" id="s15">
   <h2><span class="num">B4.</span> App-Side Changes <span class="tier how">HOW</span></h2>
   <div class="expected"><strong>What is expected:</strong> Confirmation of which side of the system needs to change for this rollout.</div>
-  <p><strong>No app-side change is required.</strong> Both the Customer App and the CSP App / Technician App already do what they need to do:</p>
-  <ul class="criteria">
-    <li>The app asks the IVR for the number to dial when the user taps the call CTA.</li>
-    <li>The app dials whatever number the IVR returns.</li>
-  </ul>
-  <p>With this rollout, the IVR simply starts returning a different number for tickets that belong to non-cohort CSPs (the other party's actual mobile, instead of the masked number). The response field is the same; the app doesn't need to know which case it got. PIN pre-fetch behaviour is also unchanged — PINs continue to be created and pre-fetched as today for every ticket.</p>
-  <p>No release coordination is needed with the mobile teams to roll out the cohort. The IVR team can add or remove CSPs from the cohort independently.</p>
+  <p><strong>No frontend release is required. Not one. Not for any phase, not for any cohort change.</strong> The Customer App, CSP App and Technician App stay on whatever version they're currently shipping. The IVR service is the sole locus of change.</p>
+  <p>This works because, for each of the four surfaces a user sees, the gating happens server-side before the app gets involved:</p>
+  <table>
+    <tr><th style="width:30%">Surface</th><th>Why no app change is needed</th></tr>
+    <tr><td>Number to dial on Call CTA</td><td>App already calls the IVR for the number and dials whatever comes back. IVR returns masked or actual based on the <code>visible</code> flag. App is none the wiser.</td></tr>
+    <tr><td>PIN shown on the ticket card</td><td>App already calls the IVR's PIN-fetch endpoint and renders the PIN if one comes back. For non-cohort tickets the endpoint returns no PIN, so the app's existing "render nothing if empty" branch fires.</td></tr>
+    <tr><td>PIN SMS</td><td>SMS is fanned out by CleverTap on a PIN-created event. The IVR (the emitter) suppresses the event for non-cohort tickets — no event, no SMS. CleverTap config doesn't change. App doesn't change.</td></tr>
+    <tr><td>PIN push notification / in-app education</td><td>Same path as SMS — CleverTap-driven, gated at the event emitter. No change anywhere on the client.</td></tr>
+  </table>
+  <p>No release coordination is needed with the mobile teams to roll out the cohort. The IVR team can add or remove CSPs from the cohort independently — and that single action propagates through all four surfaces automatically.</p>
   <hr class="sect-end">
 </section>
 
@@ -521,6 +546,38 @@ flowchart LR
     <p><span class="kw">And</span> if the CSP is not in the cohort, the PIN sits unused and no harm is done.</p>
   </div>
 
+  <div class="gherkin">
+    <span class="scenario-id">AC-09a</span>
+    <span class="scenario-title">PIN is not shown in either app for a non-cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the ticket's CSP is NOT in the cohort,</p>
+    <p><span class="kw">When</span> the customer opens the ticket in the Customer App, and when a CSP user opens the ticket in the CSP App,</p>
+    <p><span class="kw">Then</span> the PIN block does not appear on either ticket card,</p>
+    <p><span class="kw">And</span> the literal string <code>PIN_NOT_AVAILABLE</code> (or any placeholder) is not rendered anywhere on the card,</p>
+    <p><span class="kw">And</span> no app release was needed to achieve this — the IVR's PIN-fetch endpoint returned no PIN and the apps' existing "hide if empty" logic took care of the rest.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-09b</span>
+    <span class="scenario-title">No PIN SMS or push notification is sent for a non-cohort CSP's ticket</span>
+    <p><span class="kw">Given</span> the ticket's CSP is NOT in the cohort,</p>
+    <p><span class="kw">When</span> the ticket is created and the PIN row appears in <code>pin_registry</code> with <code>visible=false</code>,</p>
+    <p><span class="kw">Then</span> the PIN-created CleverTap event is not emitted,</p>
+    <p><span class="kw">And</span> the customer does not receive the customer-PIN SMS,</p>
+    <p><span class="kw">And</span> the CSP user does not receive the CSP-PIN SMS,</p>
+    <p><span class="kw">And</span> neither party receives a PIN-related push notification or in-app education message for that ticket.</p>
+  </div>
+
+  <div class="gherkin">
+    <span class="scenario-id">AC-09c</span>
+    <span class="scenario-title">All four user-facing surfaces light up together when a CSP joins the cohort</span>
+    <p><span class="kw">Given</span> a CSP is added to the cohort,</p>
+    <p><span class="kw">When</span> the <code>visible</code> flag on their active PIN rows flips to <code>true</code>,</p>
+    <p><span class="kw">Then</span> the IVR's PIN-fetch endpoint starts returning the PIN for those tickets,</p>
+    <p><span class="kw">And</span> the call CTA on those tickets starts returning the masked number,</p>
+    <p><span class="kw">And</span> the PIN-created CleverTap event starts firing for newly created tickets of that CSP,</p>
+    <p><span class="kw">And</span> the customer and CSP user start receiving the PIN SMS + push for those new tickets.</p>
+  </div>
+
   <h3>B5.6 Privacy</h3>
 
   <div class="gherkin">
@@ -548,11 +605,12 @@ flowchart LR
 
   <div class="gherkin">
     <span class="scenario-id">AC-12</span>
-    <span class="scenario-title">No app release is needed at any stage of the rollout</span>
+    <span class="scenario-title">No frontend release is needed at any stage of the rollout</span>
     <p><span class="kw">Given</span> any version of the Customer App / CSP App / Technician App currently in the field,</p>
     <p><span class="kw">When</span> CSPs are added to or removed from the cohort, and when the cohort grows from Phase 1 through Phase 4,</p>
     <p><span class="kw">Then</span> none of these app versions need an update for the cohort change to take effect,</p>
-    <p><span class="kw">And</span> the app's existing logic (ask the IVR for a number and dial it) handles both masked and direct numbers correctly.</p>
+    <p><span class="kw">And</span> the app's existing logic — ask the IVR for the number, ask the IVR for the PIN, render the PIN if returned, dial whatever number comes back — handles every combination of cohort and non-cohort tickets correctly,</p>
+    <p><span class="kw">And</span> the same applies to the SMS / push notification surfaces, which are gated server-side via the CleverTap event emitter and require no client change.</p>
   </div>
 
   <hr class="sect-end">
