@@ -705,7 +705,7 @@ flowchart LR
   <p>Existing tickets of a CSP who is added to the cohort will use masked routing on the very next Call CTA (per A4 / A7). But the customer never received the PIN via chat, SMS, or push, because those three comms are <strong>event-driven</strong> — they fire once at ticket creation. At creation time the CSP was not in the cohort, so the CleverTap PIN-created event was suppressed and no PIN chat message was posted to the Customer App. Later flipping the <code>visible</code> flag makes the state-driven surfaces (IVR PIN-fetch endpoint, CSP App ticket card) catch up automatically, but the event-only surfaces cannot fill retroactively. Result without a catch-up: the customer is PIN-blind for any dial-back flow that prompts for a PIN.</p>
 
   <h3>B10.2 What the IVR service does on every enrol call</h3>
-  <p>On <code>POST /api/v1/ivr/cohort/enroll</code>, for every CSP in the request body, the IVR service performs the following per active PIN row belonging to that CSP:</p>
+  <p>Whenever a CSP is enrolled into the cohort, for every CSP in that enrol operation, the IVR service performs the following per active PIN row belonging to that CSP:</p>
   <ol class="criteria">
     <li>Flip the <code>visible</code> flag on the <code>pin_registry</code> row from <code>false</code> to <code>true</code>.</li>
     <li>Fire two catch-up triggers for that row:
@@ -719,15 +719,15 @@ flowchart LR
   <h3>B10.3 Scope of the catch-up</h3>
   <table>
     <tr><th style="width:24%">Dimension</th><th>In scope for the catch-up</th></tr>
-    <tr><td>Ticket type</td><td>Install, Restore, Pickup — the ticket types that carry a PIN.</td></tr>
-    <tr><td>Ticket state</td><td>Any non-terminal state (not closed, not cancelled). Terminal tickets are skipped — they will not be called again.</td></tr>
+    <tr><td>Ticket type</td><td>Install, Restore, Pickup — the ticket types that carry a PIN — <strong>and</strong> the ticket must be active with the PIN in the allocated state.</td></tr>
+    <tr><td>Ticket state</td><td>Active tickets only. Closed, cancelled, or otherwise terminal tickets are strictly skipped — no PIN chat, no PIN SMS, no PIN push is issued for a ticket the customer no longer needs to act on.</td></tr>
     <tr><td>Granularity</td><td>One catch-up execution per PIN row, not per CSP. A CSP with 12 active tickets triggers 12 chat calls + 12 CleverTap events.</td></tr>
     <tr><td>Timing</td><td>Runs immediately after the <code>visible</code> flag is flipped for that row, within the same enrol operation's async work.</td></tr>
   </table>
 
   <h3>B10.4 Behaviour rules</h3>
   <ul class="criteria">
-    <li><strong>Async.</strong> The enrol API returns <code>204 No Content</code> immediately after validating input and initiating the flag flip. The catch-up work runs behind the response — the caller does not wait for chat posts and CT events to complete.</li>
+    <li><strong>Async.</strong> The enrol operation returns immediately after validating input and initiating the flag flip. The catch-up work runs behind the response — the caller does not wait for chat posts and CT events to complete.</li>
     <li><strong>Idempotent.</strong> Each <code>pin_registry</code> row tracks whether its PIN catch-up has already fired (a boolean on the row is sufficient). If a CSP is removed and later re-enrolled, rows that already have the catch-up flag set are skipped — no duplicate chat message, no duplicate SMS / push.</li>
     <li><strong>Applies on every enrol operation, not only at Phase 2.</strong> Every future cohort expansion (Phase 3, Phase 4, ad-hoc additions) uses the same catch-up path. Phase 2 is the first time it runs at scale.</li>
     <li><strong>Per-row failure isolation.</strong> A failure on any single chat post or CT event must be logged and retried without blocking the rest of the catch-up work and without failing the enrol operation.</li>
@@ -738,14 +738,14 @@ flowchart LR
   <p>The CSP App ticket card is state-driven — it displays the PIN by reading the IVR PIN-fetch endpoint. As soon as the <code>visible</code> flag flips ON, the endpoint starts returning the PIN, and the ticket card renders it on the next fetch. No catch-up trigger is needed for the CSP App. The CSP SMS and CSP push are covered by the same CleverTap event fired in B10.2 above.</p>
 
   <h3>B10.6 Removal side</h3>
-  <p>When a CSP is removed from the cohort via <code>DELETE /api/v1/ivr/cohort</code>, no cleanup is performed on previously-sent comms. Chat messages remain in the customer's Customer App history; SMS and push notifications remain in the customer's device notification history. They simply become irrelevant. No cancellation message, no reversal event.</p>
+  <p>When a CSP is removed from the cohort, no cleanup is performed on previously-sent comms. Chat messages remain in the customer's Customer App history; SMS and push notifications remain in the customer's device notification history. They simply become irrelevant. No cancellation message, no reversal event.</p>
 
   <h3>B10.7 Acceptance criteria</h3>
   <div class="gherkin">
     <span class="scenario-id">AC-CJ-01</span>
     <span class="scenario-title">Every in-flight ticket of a newly-enrolled CSP receives the PIN catch-up</span>
     <p><span class="kw">Given</span> a CSP has 3 active in-flight Install / Restore / Pickup tickets and is not in the cohort,</p>
-    <p><span class="kw">When</span> the CSP is enrolled via the enrol API,</p>
+    <p><span class="kw">When</span> the CSP is enrolled into the cohort,</p>
     <p><span class="kw">Then</span> the <code>visible</code> flag flips to <code>true</code> on all 3 PIN rows,</p>
     <p><span class="kw">And</span> each of those 3 tickets has a PIN chat message posted in the customer's Customer App chat,</p>
     <p><span class="kw">And</span> each of those 3 customers receives the customer-PIN SMS + push,</p>
@@ -763,10 +763,10 @@ flowchart LR
 
   <div class="gherkin">
     <span class="scenario-id">AC-CJ-03</span>
-    <span class="scenario-title">Enrol API responds without waiting for catch-up to complete</span>
-    <p><span class="kw">Given</span> the enrol API is called with 50 CSPs, each with an average of 10 active tickets,</p>
-    <p><span class="kw">When</span> the API is invoked,</p>
-    <p><span class="kw">Then</span> the API returns <code>204</code> within normal request latency,</p>
+    <span class="scenario-title">Enrol operation responds without waiting for catch-up to complete</span>
+    <p><span class="kw">Given</span> the enrol operation is invoked with 50 CSPs, each with an average of 10 active tickets,</p>
+    <p><span class="kw">When</span> the operation runs,</p>
+    <p><span class="kw">Then</span> it returns within normal request latency after the flag flip is initiated,</p>
     <p><span class="kw">And</span> the ~500 chat posts + ~500 CT events run asynchronously behind the response,</p>
     <p><span class="kw">And</span> a failure on any individual row is logged and retried without blocking the rest of the catch-up work.</p>
   </div>
