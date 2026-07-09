@@ -144,7 +144,7 @@
     <dt>Evidence</dt><dd>20 of 66 unbridged calls (30%) in Phase-1 cohort 2–7 Jul are attributable to this. 3,107 of 36,873 RESTORE ticket_ids in the last 30 days have ≥ 2 execution candidates (8.4%). One ticket_id has 26 ECs.</dd>
     <dt>Root cause</dt><dd>PIN allocation is scoped to <code>execution_candidate_id</code>, not to <code>ticket_id</code>. New EC → fresh PIN, previous EC's PIN deallocated instantly.</dd>
     <dt>Fix</dt><dd>On new EC allocate, look up prior rows in <code>ivr_pin_registry</code> for the same <code>ticket_id</code>. If found and the PINs are currently free, reuse them. Else, allocate fresh.</dd>
-    <dt>Scope</dt><dd>RESTORE only (verified — other ticket_types don't exhibit multi-EC-per-ticket_id).</dd>
+    <dt>Scope</dt><dd>RESTORE only. Non-RESTORE execution candidates do not carry a <code>ticket_id</code> at all, so the reuse lookup naturally has no key to match on for them — the fresh-mint path continues as today.</dd>
     <dt>Frontend</dt><dd>Zero change. Apps and Exotel see the same PIN across ECs — that's the whole point.</dd>
     <dt>Impact</dt><dd>Bridge rate 96.1% → ~97.3% just from this. Kills the churn root cause across Buckets 1 / 2 / 3 of the current RCA.</dd>
   </dl>
@@ -336,18 +336,19 @@
 
   <div class="gherkin">
     <div class="id">LOGIC-3</div>
-    <div class="title">Non-RESTORE execution candidate always allocates fresh, even with a matching ticket_id</div>
-    <div class="real">An INSTALL or PICKUP EC arrives whose ticket_id coincidentally already exists on a prior row (extremely rare given today's data, but must not silently reuse).</div>
+    <div class="title">Non-RESTORE execution candidates continue to allocate fresh (unchanged path)</div>
+    <div class="real">INSTALL, PICKUP and NBREC execution candidates do not carry a <code>ticket_id</code>. The reuse lookup has no key to fire on, so allocation runs the existing fresh-mint path exactly as today.</div>
     <dl>
-      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row in <code>ivr_pin_registry</code>,</dd>
-      <dt>When</dt><dd>a new EC arrives for <code>T</code> with <code>ticket_type IN ('INSTALL', 'PICKUP', 'NBREC')</code>,</dd>
-      <dt>Then</dt><dd>allocation mints fresh PINs (does not enter the reuse branch),</dd>
+      <dt>Given</dt><dd>an execution candidate arrives with <code>ticket_type</code> IN (<code>INSTALL</code>, <code>PICKUP</code>, <code>NBREC</code>),</dd>
+      <dt>When</dt><dd>allocation runs,</dd>
+      <dt>Then</dt><dd>the ticket_id lookup returns nothing (the field is absent on non-RESTORE ECs),</dd>
+      <dt>And</dt><dd>a fresh PIN pair is minted from the pool as today,</dd>
       <dt>And</dt><dd>the counter <code>ivr.pin.allocated.fresh</code> increments; <code>ivr.pin.allocated.reused</code> does not.</dd>
     </dl>
     <div class="verify"><strong>Verify:</strong>
       <ul>
-        <li>Unit test: pass a mocked EC with ticket_type != RESTORE and a matching prior row — assert the reuse path is not taken.</li>
-        <li>Metric — no <code>ivr.pin.allocated.reused</code> emission for non-RESTORE.</li>
+        <li>Unit test — pass an INSTALL / PICKUP / NBREC EC; assert fresh PINs are minted and the reuse branch is not entered.</li>
+        <li>Metric — <code>ivr.pin.allocated.reused</code> emissions on non-RESTORE remain zero over the observation window.</li>
       </ul>
     </div>
   </div>
@@ -371,179 +372,6 @@
     </div>
   </div>
 
-  <h3>Edge cases</h3>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-1</div>
-    <div class="title">Prior ticket_id row has PINs that are currently ALLOCATED to a DIFFERENT execution candidate</div>
-    <div class="real">Rare — the prior EC on this ticket_id was deallocated, but in the interim the PIN was recycled back to the pool and reissued to a different (unrelated) ticket_id. If we reused it now, two tickets would claim the same PIN.</div>
-    <dl>
-      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior deallocated row with customer_pin <code>P_c</code>,</dd>
-      <dt>And</dt><dd>PIN <code>P_c</code> is currently <code>ALLOCATED</code> to a different execution candidate (ticket_id ≠ T),</dd>
-      <dt>When</dt><dd>a new EC arrives for <code>T</code>,</dd>
-      <dt>Then</dt><dd>allocation falls back to minting a fresh PIN pair (does not reuse <code>P_c</code>),</dd>
-      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.fresh</code> increments (with a debug log line noting the fallback reason).</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Unit test: seed a state where the prior ticket_id's PIN is now allocated elsewhere. Assert the new EC gets a fresh PIN, not the conflicted one.</li>
-        <li>Log line emitted with reason <code>pin_reuse_skipped:conflict</code>.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-2</div>
-    <div class="title">Two execution candidates arrive concurrently for the same ticket_id</div>
-    <div class="real">Upstream produces EC2 and EC3 within milliseconds for the same ticket_id (a re-drive burst). Both allocation paths run in parallel.</div>
-    <dl>
-      <dt>Given</dt><dd>ticket_id <code>T</code> has one prior deallocated row with customer_pin <code>P_c</code>,</dd>
-      <dt>When</dt><dd>EC2 and EC3 for <code>T</code> arrive at the allocation service at the same moment (interleaved transactions),</dd>
-      <dt>Then</dt><dd>the advisory lock on <code>ticket_id</code> serialises them,</dd>
-      <dt>And</dt><dd>the first-to-commit inserts a row with <code>customer_pin = P_c</code> for its EC,</dd>
-      <dt>And</dt><dd>the second-to-commit either <strong>(a)</strong> observes that <code>P_c</code> is now allocated to the first EC and falls back to a fresh PIN (per EDGE-1's rule), OR <strong>(b)</strong> if the design allows two ECs to share a PIN simultaneously, inserts with the same <code>P_c</code>. The chosen design must be one or the other — not both. See design note below.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Load test — 50 concurrent EC-creation calls for the same synthetic ticket_id. All 50 must succeed without deadlock. Inspect the resulting rows: consistent with the chosen design.</li>
-        <li>No orphaned rows, no duplicated allocated_at with the same execution_candidate_id.</li>
-      </ul>
-    </div>
-    <div class="hint"><strong>Design decision to lock in:</strong> can two concurrent active ECs for the same ticket_id share a PIN? Recommendation — <em>yes</em>, because the IVR bridge on that PIN reaches the counterparty on the most recent EC (the ticket the customer / CSP is actually talking about). Any policy that forbids this creates fresh-PIN churn on the second concurrent EC and defeats the fix.</div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-3</div>
-    <div class="title">Historical row exists for ticket_id but the PINs are days old and the pool would ordinarily have recycled them</div>
-    <div class="real">A ticket_id had its first EC 2 weeks ago; the customer restarts the RESTORE journey and a new EC is created. The old PIN is technically still in the registry (deallocated).</div>
-    <dl>
-      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row from 14 days ago with <code>P_c</code>, currently deallocated, and <code>P_c</code> is not currently ALLOCATED elsewhere,</dd>
-      <dt>When</dt><dd>a new EC arrives for <code>T</code>,</dd>
-      <dt>Then</dt><dd>reuse still applies — <code>P_c</code> is used for the new EC,</dd>
-      <dt>And</dt><dd>the customer's cached SMS / chat from the earlier ticket window is still functional if they call in.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Unit test with a 14-day-old row — assert reuse fires (age of prior row does not affect the logic).</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-4</div>
-    <div class="title">ticket_id is null on the incoming execution candidate</div>
-    <div class="real">Defensive — upstream sends an EC without a ticket_id (data anomaly).</div>
-    <dl>
-      <dt>Given</dt><dd>the incoming EC has <code>ticket_id = NULL</code>,</dd>
-      <dt>When</dt><dd>allocation runs,</dd>
-      <dt>Then</dt><dd>the reuse lookup is skipped (nothing to key on),</dd>
-      <dt>And</dt><dd>a fresh PIN pair is allocated as today,</dd>
-      <dt>And</dt><dd>a warning log line is emitted noting the missing ticket_id.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Unit test: pass an EC with null ticket_id — assert fresh path, no crash, warning logged.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-5</div>
-    <div class="title">Deallocation cascade — old EC deallocates, new EC keeps PIN ALLOCATED</div>
-    <div class="real">The natural upstream sequence: EC1 gets closed by the ticket system (its row transitions to DEALLOCATED); EC2 was already allocated (via reuse) and is the active bridge.</div>
-    <dl>
-      <dt>Given</dt><dd>EC1 and EC2 both exist for ticket_id <code>T</code>, both carrying <code>P_c</code>. EC1 is <code>ALLOCATED</code>; EC2 is <code>ALLOCATED</code>. (This is the concurrent-active scenario from EDGE-2.)</dd>
-      <dt>When</dt><dd>upstream deallocates EC1 (its row transitions to <code>DEALLOCATED</code>),</dd>
-      <dt>Then</dt><dd>EC2's row is unaffected — remains <code>ALLOCATED</code>,</dd>
-      <dt>And</dt><dd>an IVR call with entered PIN <code>P_c</code> continues to route to EC2's counterparty,</dd>
-      <dt>And</dt><dd>the PIN uniqueness guard for the ALLOCATED status is satisfied because only one row (EC2) with <code>P_c</code> is now <code>ALLOCATED</code>.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Integration test: allocate EC1, then allocate EC2 (reuse), then deallocate EC1. Assert IVR bridge on <code>P_c</code> still works and points at EC2's counterparty.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-6</div>
-    <div class="title">Prior EC on the same ticket_id was for a different CSP</div>
-    <div class="real">Rare — the CSP assigned to the RESTORE ticket changed between EC1 (CSP_A) and EC2 (CSP_B).</div>
-    <dl>
-      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row for EC1 with <code>csp_id = CSP_A</code>,</dd>
-      <dt>When</dt><dd>a new EC2 arrives for <code>T</code> with <code>csp_id = CSP_B</code> (different),</dd>
-      <dt>Then</dt><dd>the customer_pin <code>P_c</code> is reused (unchanged),</dd>
-      <dt>And</dt><dd>the csp_pin <code>P_s</code> is <strong>also reused</strong> — the PIN value is decoupled from the CSP identity; only the <code>csp_id</code> field on the row differs (points to CSP_B),</dd>
-      <dt>And</dt><dd>a call bridged via this PIN routes Leg 2 to CSP_B's mobile (whichever mobile is registered on CSP_B's pin_registry row for EC2).</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Unit test: seed a ticket_id with EC1 under CSP_A. Trigger EC2 under CSP_B. Assert customer_pin is reused; csp_id on the CSP-type row is CSP_B.</li>
-        <li>Integration test: bridge via the reused PIN — confirm the call routes to CSP_B, not CSP_A.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-7</div>
-    <div class="title">Feature flag OFF — behaviour matches today exactly</div>
-    <div class="real">Rollback lever pulled post-deploy.</div>
-    <dl>
-      <dt>Given</dt><dd>Remote Config flag <code>ivr.pin.reuse_within_ticket_id.enabled = false</code>,</dd>
-      <dt>When</dt><dd>a new RESTORE EC arrives for a ticket_id with prior rows,</dd>
-      <dt>Then</dt><dd>allocation mints fresh PINs (bypassing the reuse lookup entirely),</dd>
-      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.reused</code> stays at zero.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>QA test: flip flag OFF, allocate a second EC for an existing ticket_id, assert the two PINs differ.</li>
-        <li>Metric: <code>ivr.pin.allocated.reused</code> stays flat at zero over the OFF window.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">EDGE-8</div>
-    <div class="title">The <code>visible</code> flag on the reused row respects the new EC's cohort membership</div>
-    <div class="real">The CSP might have been in the cohort at EC1 time and out of the cohort at EC2 time (or vice versa). The PIN value is reused but visibility must reflect current state.</div>
-    <dl>
-      <dt>Given</dt><dd>EC1 for ticket_id <code>T</code> was created when CSP was in the cohort → <code>visible = true</code>,</dd>
-      <dt>When</dt><dd>EC2 for <code>T</code> is created and the CSP is now out of the cohort,</dd>
-      <dt>Then</dt><dd>the reused customer_pin and csp_pin values are copied to EC2's rows,</dd>
-      <dt>And</dt><dd>the <code>visible</code> flag on EC2's rows is set to <code>false</code> (per current cohort logic — this decision is independent of PIN reuse),</dd>
-      <dt>And</dt><dd>the PIN-fetch endpoint returns "no PIN" for EC2 as expected for a non-cohort ticket.</dd>
-    </dl>
-    <div class="verify"><strong>Verify:</strong>
-      <ul>
-        <li>Unit test with the visibility axis toggled between EC1 and EC2 — assert visibility is set per current EC's cohort state, PIN value is reused unchanged.</li>
-      </ul>
-    </div>
-  </div>
-
-  <h3>Regression guards</h3>
-
-  <div class="gherkin edge">
-    <div class="id">GUARD-1</div>
-    <div class="title">Existing PIN-fetch and PIN-verify endpoints work unchanged</div>
-    <dl>
-      <dt>Given</dt><dd>all existing endpoints that read <code>ivr_pin_registry</code> by PIN or execution_candidate_id,</dd>
-      <dt>When</dt><dd>a caller enters a PIN that is currently ALLOCATED to any EC,</dd>
-      <dt>Then</dt><dd>the IVR service resolves the PIN to that EC (regardless of whether the PIN is fresh or reused),</dd>
-      <dt>And</dt><dd>bridges Leg 2 to the counterparty on that EC's row.</dd>
-    </dl>
-  </div>
-
-  <div class="gherkin edge">
-    <div class="id">GUARD-2</div>
-    <div class="title">Analytics on PIN allocation volume don't double-count</div>
-    <dl>
-      <dt>Given</dt><dd>downstream analytics that count PIN allocations per day / per ticket_type,</dd>
-      <dt>When</dt><dd>reused allocations occur,</dd>
-      <dt>Then</dt><dd>each row insertion is still one row (one CUSTOMER row, one CSP row per EC), so row-count-based analytics are unaffected,</dd>
-      <dt>And</dt><dd>PIN-uniqueness analytics that count distinct PIN values across allocations correctly show fewer distinct values (as intended).</dd>
-    </dl>
-  </div>
-
   <hr class="sect-end">
 </section>
 
@@ -559,7 +387,7 @@
       <tr><td>A4</td><td>Data-observed scale (with prod counts)</td><td class="check">✓</td></tr>
       <tr><td>A5</td><td>The delta (before / after / why)</td><td class="check">✓</td></tr>
       <tr><td>A6</td><td>Scope &amp; non-scope</td><td class="check">✓</td></tr>
-      <tr><td>B5</td><td>Acceptance criteria — 4 logic + 8 edge + 2 guard blocks</td><td class="check">✓</td></tr>
+      <tr><td>B5</td><td>Acceptance criteria — 4 business-logic blocks</td><td class="check">✓</td></tr>
     </tbody>
   </table>
 </footer>
@@ -569,6 +397,14 @@
   <table>
     <thead><tr><th>Version</th><th>Date</th><th>Author</th><th>Section(s)</th><th>Change &amp; rationale</th><th>Approver</th></tr></thead>
     <tbody>
+      <tr>
+        <td>v1.1</td>
+        <td>2026-07-09</td>
+        <td>Ashish Raj</td>
+        <td>B5, LOGIC-3</td>
+        <td>Corrected LOGIC-3 — non-RESTORE ECs do not carry a <code>ticket_id</code> at all, so the fresh-mint path fires naturally (not through a ticket_type guard on the reuse lookup). Removed the "Edge cases" and "Regression guards" sections to keep B5 focused on the four core business-logic acceptance blocks.</td>
+        <td>Pending</td>
+      </tr>
       <tr>
         <td>v1.0</td>
         <td>2026-07-09</td>
