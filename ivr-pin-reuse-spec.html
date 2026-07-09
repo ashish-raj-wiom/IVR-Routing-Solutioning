@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVR-01 — Reuse PIN across ECs sharing the same ticket_id (RESTORE) · Change Spec</title>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
+    --core: #0b6b3a; --core-bg: #e9f5ee;
+    --cond: #8a5a00; --cond-bg: #fbf1dd;
+    --what: #1f3c6e; --what-bg: #e8eef8;
+    --how: #5b2a86; --how-bg: #efe6f7;
+    --guard: #b91c1c; --guard-bg: #fee2e2;
+    --required: #b91c1c; --required-bg: #fee2e2;
+    --illustrative: #6b7280; --illustrative-bg: #f1f3f5;
+    --quickcheck-bg: #fef9c3; --quickcheck-rule: #ca8a04; --quickcheck-ink: #713f12;
+    --hint-bg: #ecfeff; --hint-rule: #0e7490; --hint-ink: #155e75;
+    --delta-bg: #eef6ff; --delta-rule: #1f3c6e;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif; font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--bg); }
+  .layout { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav.toc { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 24px 18px; border-right: 1px solid var(--rule); background: var(--surface); font-size: 13px; }
+  nav.toc h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 18px 0 6px; }
+  nav.toc h2:first-of-type { margin-top: 0; }
+  nav.toc h2.qc { color: var(--quickcheck-ink); border-left: 3px solid var(--quickcheck-rule); padding-left: 8px; }
+  nav.toc h2.what { color: var(--what); border-left: 3px solid var(--what); padding-left: 8px; }
+  nav.toc h2.how { color: var(--how); border-left: 3px solid var(--how); padding-left: 8px; }
+  nav.toc h2.close { color: var(--muted); border-left: 3px solid var(--muted); padding-left: 8px; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; }
+  nav.toc li { margin: 4px 0; }
+  nav.toc li a { text-decoration: none; color: var(--ink); display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 4px; font-size: 12.5px; }
+  nav.toc li a:hover { background: var(--bg); }
+  nav.toc li a .ix { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 32px; font-weight: 600; }
+  main { padding: 40px 56px 120px; max-width: 980px; }
+  header.doc { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 32px; }
+  header.doc .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  header.doc h1 { font-size: 30px; margin: 6px 0 8px; line-height: 1.2; }
+  header.doc p.lede { color: var(--muted); font-size: 15px; margin: 0; max-width: 70ch; }
+  header.doc .meta-row { display: flex; gap: 24px; margin-top: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .quickcheck { margin: 28px 0 40px; background: var(--quickcheck-bg); border: 1px solid var(--quickcheck-rule); border-left: 5px solid var(--quickcheck-rule); border-radius: 6px; padding: 18px 22px; }
+  .quickcheck h2 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--quickcheck-ink); }
+  .quickcheck .qc-tag { font-size: 11px; color: var(--quickcheck-ink); opacity: 0.9; margin-bottom: 12px; }
+  .quickcheck dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+  .quickcheck dt { font-weight: 600; color: var(--quickcheck-ink); }
+  .quickcheck dd { margin: 0; color: var(--ink); }
+  .part-divider { margin: 56px 0 32px; padding: 28px 32px; border-radius: 8px; color: white; }
+  .part-divider.what { background: var(--what); }
+  .part-divider.how { background: var(--how); }
+  .part-divider .label { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.8; }
+  .part-divider h2 { font-size: 28px; margin: 4px 0 6px; color: white; }
+  .part-divider p { margin: 0; font-size: 14px; opacity: 0.92; max-width: 70ch; }
+  section.spec { margin: 40px 0; scroll-margin-top: 24px; }
+  section.spec h2 { font-size: 21px; margin: 0 0 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  section.spec h2 .num { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+  section.spec h3 { font-size: 15px; margin: 16px 0 4px; }
+  .tier { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 3px; font-weight: 600; }
+  .tier.what { background: var(--what-bg); color: var(--what); }
+  .tier.how { background: var(--how-bg); color: var(--how); }
+  .tier.guard { background: var(--guard-bg); color: var(--guard); }
+  .expected { background: #f4f4f2; border-left: 3px solid var(--ink); padding: 10px 14px; font-size: 13px; margin: 10px 0 14px; color: #333; }
+  .expected strong { font-weight: 700; }
+  .hint { background: var(--hint-bg); border-left: 3px solid var(--hint-rule); padding: 8px 14px; font-size: 13px; margin: 8px 0 14px; color: var(--hint-ink); border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top; }
+  th { background: var(--bg); font-weight: 600; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.86em; background: var(--bg); padding: 0.08em 0.32em; border-radius: 3px; border: 1px solid var(--rule); }
+  table.delta th.before { background: #f3f4f6; }
+  table.delta th.after { background: var(--delta-bg); color: var(--delta-rule); }
+  .gherkin { background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--core); padding: 12px 14px; margin: 10px 0; font-size: 13.5px; }
+  .gherkin .id { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--core); }
+  .gherkin .title { font-weight: 700; margin: 4px 0 6px; }
+  .gherkin .real { font-style: italic; color: var(--muted); font-size: 12.5px; margin: 4px 0 8px; }
+  .gherkin dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+  .gherkin dt { font-weight: 700; color: var(--core); }
+  .gherkin dd { margin: 0; }
+  .gherkin .verify { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--rule); font-size: 12.5px; }
+  .gherkin .verify ul { margin: 4px 0 0 18px; padding: 0; }
+  .gherkin .verify li { margin: 2px 0; }
+  .gherkin.edge { border-left-color: var(--cond); }
+  .gherkin.edge .id { color: var(--cond); }
+  .gherkin.edge dt { color: var(--cond); }
+  hr.sect-end { border: none; border-top: 1px dashed var(--rule); margin: 32px 0 0; }
+  footer.checklist { margin-top: 60px; padding-top: 30px; border-top: 2px solid var(--ink); }
+  footer.checklist h2 { font-size: 20px; margin-top: 0; }
+  footer.checklist table { font-size: 13.5px; }
+  footer.checklist td.check { width: 80px; text-align: center; font-family: monospace; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+    main { padding: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <h2 class="qc">Quick check</h2>
+  <ol>
+    <li><a href="#quickcheck"><span class="ix">QC.</span>7-line triage</a></li>
+  </ol>
+  <h2 class="what">Part A — WHAT</h2>
+  <ol>
+    <li><a href="#a1"><span class="ix">A1.</span>Metadata</a></li>
+    <li><a href="#a2"><span class="ix">A2.</span>Why this change</a></li>
+    <li><a href="#a3"><span class="ix">A3.</span>Solution in one paragraph</a></li>
+    <li><a href="#a4"><span class="ix">A4.</span>Data-observed scale</a></li>
+    <li><a href="#a5"><span class="ix">A5.</span>The delta</a></li>
+    <li><a href="#a6"><span class="ix">A6.</span>Scope &amp; non-scope</a></li>
+  </ol>
+  <h2 class="how">Part B — HOW</h2>
+  <ol>
+    <li><a href="#b5"><span class="ix">B5.</span>Acceptance criteria</a></li>
+  </ol>
+  <h2 class="close">Closeout</h2>
+  <ol>
+    <li><a href="#checklist"><span class="ix">—</span>Completeness checklist</a></li>
+    <li><a href="#changelog"><span class="ix">—</span>Changelog</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<header class="doc">
+  <div class="eyebrow">IVR-01 · Change spec · v1.0</div>
+  <h1>Reuse PIN across execution candidates sharing the same <code>ticket_id</code> (RESTORE only)</h1>
+  <p class="lede">A single customer can generate multiple RESTORE execution candidates in rapid succession — each new EC gets a fresh PIN and the old EC's PIN is instantly deallocated. Callers with the previous PIN in hand (from SMS, chat, or their memory) enter it and fail. This spec aligns the PIN's lifetime with the <code>ticket_id</code> that the customer already sees, eliminating the churn-driven PIN staleness.</p>
+  <div class="meta-row">
+    <span><strong>Owner:</strong> Ashish Raj (PM, IVR)</span>
+    <span><strong>Service:</strong> IVR</span>
+    <span><strong>Scope:</strong> <code>ivr_pin_registry</code> allocation logic</span>
+    <span><strong>Status:</strong> Draft</span>
+  </div>
+</header>
+
+<section class="quickcheck" id="quickcheck">
+  <h2>Quick check</h2>
+  <div class="qc-tag">7-line triage</div>
+  <dl>
+    <dt>Problem</dt><dd>Multi-EC RESTORE tickets churn PINs; callers use the stale PIN and the IVR bridge fails.</dd>
+    <dt>Evidence</dt><dd>20 of 66 unbridged calls (30%) in Phase-1 cohort 2–7 Jul are attributable to this. 3,107 of 36,873 RESTORE ticket_ids in the last 30 days have ≥ 2 execution candidates (8.4%). One ticket_id has 26 ECs.</dd>
+    <dt>Root cause</dt><dd>PIN allocation is scoped to <code>execution_candidate_id</code>, not to <code>ticket_id</code>. New EC → fresh PIN, previous EC's PIN deallocated instantly.</dd>
+    <dt>Fix</dt><dd>On new EC allocate, look up prior rows in <code>ivr_pin_registry</code> for the same <code>ticket_id</code>. If found and the PINs are currently free, reuse them. Else, allocate fresh.</dd>
+    <dt>Scope</dt><dd>RESTORE only (verified — other ticket_types don't exhibit multi-EC-per-ticket_id).</dd>
+    <dt>Frontend</dt><dd>Zero change. Apps and Exotel see the same PIN across ECs — that's the whole point.</dd>
+    <dt>Impact</dt><dd>Bridge rate 96.1% → ~97.3% just from this. Kills the churn root cause across Buckets 1 / 2 / 3 of the current RCA.</dd>
+  </dl>
+</section>
+
+<div class="part-divider what">
+  <div class="label">Part A</div>
+  <h2>What we are changing</h2>
+  <p>The IVR PIN allocation logic. Nothing else moves. No CSP App change, no Customer App change, no CleverTap / SMS change, no cohort-flow change.</p>
+</div>
+
+<section class="spec" id="a1">
+  <h2><span class="num">A1.</span> Metadata <span class="tier what">WHAT</span></h2>
+  <table>
+    <tbody>
+      <tr><td style="width:22%">Change title</td><td>Reuse PIN across execution candidates sharing the same <code>ticket_id</code> (RESTORE only)</td></tr>
+      <tr><td>Ticket ID</td><td>IVR-01</td></tr>
+      <tr><td>Author</td><td>Ashish Raj</td></tr>
+      <tr><td>Type</td><td>Server-side behaviour change (IVR service)</td></tr>
+      <tr><td>Data-model change</td><td>None. Uses the existing <code>ticket_id</code> column on <code>ivr_pin_registry</code>.</td></tr>
+      <tr><td>Client change</td><td>None.</td></tr>
+      <tr><td>Cohort dependency</td><td>None. Applies uniformly to all cohort and non-cohort tickets. Interacts cleanly with the <code>visible</code> flag (each EC continues to carry its own visibility per current logic).</td></tr>
+      <tr><td>Rollback</td><td>Flag-guarded. If disabled, allocation falls back to today's behaviour (fresh PIN per EC).</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="spec" id="a2">
+  <h2><span class="num">A2.</span> Why this change <span class="tier what">WHAT</span></h2>
+  <p>Three connected observations:</p>
+  <p><strong>(1) A single ticket_id can span many execution candidates.</strong> When the upstream service creates a new RESTORE execution candidate for a customer, it re-uses the same <code>ticket_id</code> that the customer has been receiving in their SMS / chat. Today IVR treats each execution candidate as a fresh allocation and mints new PINs. The customer's cached credential (from the SMS they received minutes / hours ago) instantly becomes invalid.</p>
+  <p><strong>(2) The pattern is severe.</strong> In the last 30 days, 8.4% of RESTORE ticket_ids have ≥ 2 execution candidates. One ticket_id has 26 ECs across 3 days. In one recorded case, a single customer generated 4 execution candidates for the same ticket_id in 10 minutes, each open for less than a minute. The CSP was calling to bridge, the ticket_id under them was churning, and every PIN they typed was already deallocated by the time the IVR checked it.</p>
+  <p><strong>(3) The failure signature is unambiguous.</strong> 14 of 20 attributable failures in the Phase-1 sample had the caller enter a PIN that <em>exactly matches</em> a prior execution candidate's PIN for the same customer's <code>ticket_id</code>. The remaining 6 have the churn signature but with fragmented / mid-attempt digits. This isn't a UX problem or a comms-discoverability problem — the caller has the right value; the system has moved out from under them.</p>
+</section>
+
+<section class="spec" id="a3">
+  <h2><span class="num">A3.</span> Solution in one paragraph <span class="tier what">WHAT</span></h2>
+  <p>When the IVR receives a new execution candidate to allocate PINs for, it queries <code>ivr_pin_registry</code> for prior rows with the same <code>ticket_id</code>. If found, it reuses the most recent (customer_pin, csp_pin) pair for the new execution candidate — subject to a safety check that neither PIN is currently ALLOCATED to any other execution candidate. Where the ticket_id has no prior rows (first execution candidate for that ticket), a fresh PIN pair is allocated as today. Scope is limited to <code>ticket_type = 'RESTORE'</code>, because the data confirms other ticket_types (INSTALL, PICKUP, NBREC) do not exhibit the multi-EC-per-ticket_id pattern.</p>
+</section>
+
+<section class="spec" id="a4">
+  <h2><span class="num">A4.</span> Data-observed scale <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Prove that the pattern is not an edge case; quantify the size.</div>
+  <table>
+    <thead><tr><th>Metric (last 30 days, prod)</th><th>Value</th><th>Interpretation</th></tr></thead>
+    <tbody>
+      <tr><td>Total RESTORE <code>ticket_id</code> values</td><td style="text-align:right">36,873</td><td>The RESTORE population base</td></tr>
+      <tr><td>RESTORE <code>ticket_id</code>s with ≥ 2 execution candidates</td><td style="text-align:right"><strong>3,107 (8.4%)</strong></td><td>The set that would benefit from this fix</td></tr>
+      <tr><td>Top-1 ticket_id by EC count</td><td style="text-align:right"><strong>26 ECs across 3 days</strong></td><td>Pathological case; PIN churned 26 times for one customer</td></tr>
+      <tr><td>Non-RESTORE ticket_types with the same pattern</td><td style="text-align:right"><strong>0</strong></td><td>INSTALL, PICKUP, NBREC don't exhibit multi-EC. RESTORE-scoped fix is safe.</td></tr>
+      <tr><td>Phase-1 unbridged calls (2–7 Jul) attributable to this pattern</td><td style="text-align:right"><strong>20 of 66 (30%)</strong></td><td>Spans all three current buckets in the RCA dashboard (13 in B1, 2 in B2, 5 in B3)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The worked example.</strong> Customer <code>281749854717891</code>, ticket_id <code>1783354714706983</code>, 7 July 2026 evening:</p>
+  <table>
+    <thead><tr><th>Execution candidate</th><th>PIN allocated</th><th>Allocated (IST)</th><th>Deallocated (IST)</th><th>Duration</th></tr></thead>
+    <tbody>
+      <tr><td>488a80b1</td><td>102952</td><td>06 Jul 21:19:25</td><td>06 Jul 21:20:18</td><td>53 s</td></tr>
+      <tr><td>215aafff</td><td>103918</td><td>07 Jul 08:37:04</td><td>07 Jul 10:14:15</td><td>1 h 37 m</td></tr>
+      <tr><td>e5ee0b16</td><td>107634</td><td>07 Jul 21:01:20</td><td>07 Jul 21:02:47</td><td>1 m 27 s</td></tr>
+      <tr><td>83e5f61a</td><td>107652</td><td>07 Jul 21:08:51</td><td>07 Jul 21:09:18</td><td>27 s</td></tr>
+      <tr><td>22752d70</td><td>107654</td><td>07 Jul 21:09:49</td><td>07 Jul 21:10:25</td><td>36 s</td></tr>
+      <tr><td>a0d1f7ba</td><td>107656</td><td>07 Jul 21:10:37</td><td>07 Jul 21:11:14</td><td>37 s</td></tr>
+    </tbody>
+  </table>
+  <p>4 ECs in ~10 minutes on the same ticket_id, each with a different PIN. In this window the caller made 3 IVR calls (at 21:04, 21:06, 21:08), each entering a value that matched a PIN from a prior EC in this same ticket_id — all deallocated by the time of entry. Under this spec, all 4 ECs would carry PIN <code>102952</code> (the first PIN allocated to <code>ticket_id 1783354714706983</code>) and the caller's cached credential would bridge cleanly.</p>
+</section>
+
+<section class="spec" id="a5">
+  <h2><span class="num">A5.</span> The delta <span class="tier what">WHAT</span></h2>
+  <div class="expected"><strong>What is expected:</strong> One row per atomic change: <em>what changes → before → after → why</em>.</div>
+  <table class="delta">
+    <thead><tr><th style="width:20%">What changes</th><th class="before" style="width:28%">Before</th><th class="after" style="width:28%">After</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>PIN allocation lookup on new execution candidate (RESTORE)</td>
+        <td>Allocation flow always mints a fresh pair of PINs (<code>customer_pin</code>, <code>csp_pin</code>) for every new <code>execution_candidate_id</code>, regardless of the <code>ticket_id</code>. Prior EC's PIN is deallocated in the same transaction; the new PIN is inserted.</td>
+        <td>Before minting a fresh pair, allocation queries <code>ivr_pin_registry</code> for rows with the same <code>ticket_id</code>. If any row exists (irrespective of pin_status), the most recent row's (customer_pin, csp_pin) is taken as the candidate pair for reuse.</td>
+        <td>The <code>ticket_id</code> is the identifier the customer already sees on their SMS / chat. Anchoring the PIN's lifetime to <code>ticket_id</code> means the customer's cached credential stays valid across EC transitions for the same ticket.</td>
+      </tr>
+      <tr>
+        <td>Safety check: PIN uniqueness constraint</td>
+        <td>N/A — every allocation mints fresh values from the PIN pool, so uniqueness is guaranteed by generation.</td>
+        <td>Before committing the reused pair, allocation verifies that neither <code>customer_pin</code> nor <code>csp_pin</code> is currently <code>ALLOCATED</code> to any <em>other</em> execution candidate anywhere in the registry. If either is in use elsewhere, fall back to a fresh allocation. This scenario is expected to be extremely rare in practice (see EDGE-4) but must be handled correctly.</td>
+        <td>Protects the invariant that a PIN uniquely identifies one active ticket in the IVR at any moment. Prevents the theoretical case where a prior EC's PIN, since deallocated, has been reissued to a different ticket_id in the meantime.</td>
+      </tr>
+      <tr>
+        <td>Scope: RESTORE only</td>
+        <td>The allocation code is ticket-type-agnostic — same flow for INSTALL, RESTORE, PICKUP, NBREC.</td>
+        <td>The reuse lookup is guarded by <code>ticket_type = 'RESTORE'</code>. For all other ticket_types, allocation continues to mint fresh PINs as today (unchanged path).</td>
+        <td>Verified by data: no other ticket_type exhibits multi-EC per <code>ticket_id</code> in the last 30 days. Restricting the change to RESTORE keeps the blast radius small and matches the observed problem exactly.</td>
+      </tr>
+      <tr>
+        <td>Row insertion pattern (audit trail)</td>
+        <td>Each execution candidate gets its own pair of rows in <code>ivr_pin_registry</code> (one CUSTOMER, one CSP), with the PIN values that were freshly minted.</td>
+        <td>Unchanged. A new pair of rows is still inserted per execution candidate — the PIN <em>values</em> are reused from the prior row, but the row itself is fresh (its own <code>id</code>, its own <code>execution_candidate_id</code>, its own <code>allocated_at</code>, its own <code>visible</code> flag, its own <code>csp_id</code>). One row per EC preserves the audit trail.</td>
+        <td>Keeps the deallocation cascade unchanged (each EC still owns its own row and can be deallocated independently). Preserves the "one row per EC × party" invariant that downstream analytics rely on.</td>
+      </tr>
+      <tr>
+        <td>Concurrency guard</td>
+        <td>N/A — no concurrent-EC handling exists for the same <code>ticket_id</code>.</td>
+        <td>The allocation transaction takes a row-level advisory lock keyed on <code>ticket_id</code> before the lookup + insert, so two ECs arriving simultaneously for the same ticket_id serialise and both see the same (reused) PIN pair. First to insert wins; the second reads the just-inserted row and reuses the same PIN pair.</td>
+        <td>The 8.4% churn population includes cases where two ECs land within seconds of each other. Without the lock, a race could cause both to allocate fresh (different) PINs and defeat the fix.</td>
+      </tr>
+      <tr>
+        <td>Feature flag / rollback</td>
+        <td>N/A — behaviour is baked in.</td>
+        <td>The reuse behaviour is gated by a Remote Config flag (e.g. <code>ivr.pin.reuse_within_ticket_id.enabled</code>). Default <code>true</code> post-release. Setting to <code>false</code> restores today's behaviour (fresh per EC) immediately, no service restart.</td>
+        <td>Standard rollback lever. If an unexpected issue emerges post-deploy, the flag flips off and behaviour reverts to the current baseline without a code deploy.</td>
+      </tr>
+      <tr>
+        <td>Observability</td>
+        <td>No specific metric distinguishes fresh vs reused PIN allocations.</td>
+        <td>Two counters emitted at allocation time: <code>ivr.pin.allocated.fresh</code> (new PIN pair minted) and <code>ivr.pin.allocated.reused</code> (existing pair reused from prior EC on same ticket_id). Includes ticket_type dimension for slicing.</td>
+        <td>Post-deploy verification: <code>reused</code> should account for ~8% of RESTORE allocations if the observed multi-EC rate holds. If the ratio drifts significantly the flag can be assessed.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="spec" id="a6">
+  <h2><span class="num">A6.</span> Scope &amp; non-scope <span class="tier what">WHAT</span></h2>
+  <table>
+    <thead><tr><th style="width:30%">Item</th><th>In / out</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>RESTORE ticket_type</td><td><strong>In scope</strong></td><td>The only ticket_type with the observed multi-EC pattern.</td></tr>
+      <tr><td>Other ticket_types (INSTALL, PICKUP, NBREC)</td><td>Out of scope</td><td>No multi-EC-per-ticket_id observed in the last 30 days. Continue existing fresh-PIN behaviour.</td></tr>
+      <tr><td>Cohort <code>visible</code> flag</td><td>Out of scope</td><td>The visibility flag continues to be set per EC based on cohort membership at the moment the EC is created. PIN reuse is orthogonal.</td></tr>
+      <tr><td>Upstream cause of multi-EC RESTORE tickets</td><td>Out of scope for this spec</td><td>Recommended as a separate investigation. This spec defends the IVR against the pattern rather than eliminating the pattern itself.</td></tr>
+      <tr><td>PIN comms (SMS / chat / push)</td><td>Out of scope</td><td>The customer sees one PIN for the ticket_id in their existing chat / SMS. After this fix, that PIN stays valid across EC transitions — reducing the need for re-communication, not requiring any change to comms.</td></tr>
+      <tr><td>Historical rows</td><td>Not migrated</td><td>Existing rows in <code>ivr_pin_registry</code> stay as they are. The reuse logic only affects NEW execution candidates created post-deploy.</td></tr>
+    </tbody>
+  </table>
+  <hr class="sect-end">
+</section>
+
+<div class="part-divider how">
+  <div class="label">Part B</div>
+  <h2>How we will verify</h2>
+  <p>Every rule above must be observable end-to-end. Each acceptance block ties back to an A5 row. Cover the happy path first, then the edges that would silently break it.</p>
+</div>
+
+<section class="spec" id="b5">
+  <h2><span class="num">B5.</span> Acceptance criteria <span class="tier how">HOW</span></h2>
+  <div class="expected"><strong>What is expected:</strong> Given / When / Then blocks tied to concrete verification points. Include the negative cases: any row where the new logic <em>doesn't</em> fire, and any row where reuse must fall back to fresh allocation.</div>
+
+  <h3>Business logic — happy path</h3>
+
+  <div class="gherkin">
+    <div class="id">LOGIC-1</div>
+    <div class="title">Second RESTORE execution candidate for an existing ticket_id reuses the prior PIN</div>
+    <div class="real">A customer's first RESTORE execution candidate closed 10 minutes ago; upstream creates a second EC for the same ticket_id.</div>
+    <dl>
+      <dt>Given</dt><dd>a RESTORE <code>ticket_id T</code> already has one row pair in <code>ivr_pin_registry</code> (customer_pin <code>P_c</code>, csp_pin <code>P_s</code>), both currently <code>DEALLOCATED</code>,</dd>
+      <dt>And</dt><dd>PINs <code>P_c</code> and <code>P_s</code> are not currently ALLOCATED to any other execution_candidate,</dd>
+      <dt>When</dt><dd>a new execution candidate <code>EC2</code> arrives for the same <code>ticket_id T</code> (ticket_type RESTORE),</dd>
+      <dt>Then</dt><dd>allocation inserts a new pair of rows for <code>EC2</code> with <code>customer_pin = P_c</code> and <code>csp_pin = P_s</code>,</dd>
+      <dt>And</dt><dd>both new rows are set to <code>pin_status = ALLOCATED</code> with fresh <code>allocated_at</code> and <code>deallocated_at = NULL</code>,</dd>
+      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.reused{ticket_type=RESTORE}</code> increments by 1.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li><strong>DB</strong> — <code>SELECT pin FROM ivr_pin_registry WHERE execution_candidate_id = 'EC2' AND type = 'CUSTOMER'</code> returns <code>P_c</code>.</li>
+        <li><strong>DB</strong> — <code>SELECT pin FROM ivr_pin_registry WHERE execution_candidate_id = 'EC2' AND type = 'CSP'</code> returns <code>P_s</code>.</li>
+        <li><strong>IVR call</strong> — a caller dialling the masked number and entering <code>P_c</code> reaches Leg 2 to the CSP; Exotel row has <code>Leg2Status = completed</code> or <code>no-answer</code> (i.e., the bridge was attempted).</li>
+        <li><strong>Metric</strong> — <code>ivr.pin.allocated.reused</code> emits a datapoint for this allocation.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <div class="id">LOGIC-2</div>
+    <div class="title">First RESTORE execution candidate for a new ticket_id allocates fresh</div>
+    <div class="real">Upstream creates the very first RESTORE EC for a brand-new ticket_id — no prior rows exist.</div>
+    <dl>
+      <dt>Given</dt><dd>a RESTORE <code>ticket_id T</code> has zero rows in <code>ivr_pin_registry</code>,</dd>
+      <dt>When</dt><dd>a new execution candidate <code>EC1</code> arrives for <code>ticket_id T</code>,</dd>
+      <dt>Then</dt><dd>allocation mints a fresh (customer_pin, csp_pin) pair from the PIN pool,</dd>
+      <dt>And</dt><dd>inserts the pair of rows in <code>ivr_pin_registry</code> tagged to <code>EC1</code>, <code>pin_status = ALLOCATED</code>,</dd>
+      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.fresh{ticket_type=RESTORE}</code> increments by 1.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li><strong>DB</strong> — the inserted PINs are not equal to any deallocated PIN for a different ticket_id (i.e., they came from the fresh pool).</li>
+        <li><strong>Metric</strong> — <code>ivr.pin.allocated.fresh</code> emits; <code>ivr.pin.allocated.reused</code> does not.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <div class="id">LOGIC-3</div>
+    <div class="title">Non-RESTORE execution candidate always allocates fresh, even with a matching ticket_id</div>
+    <div class="real">An INSTALL or PICKUP EC arrives whose ticket_id coincidentally already exists on a prior row (extremely rare given today's data, but must not silently reuse).</div>
+    <dl>
+      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row in <code>ivr_pin_registry</code>,</dd>
+      <dt>When</dt><dd>a new EC arrives for <code>T</code> with <code>ticket_type IN ('INSTALL', 'PICKUP', 'NBREC')</code>,</dd>
+      <dt>Then</dt><dd>allocation mints fresh PINs (does not enter the reuse branch),</dd>
+      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.fresh</code> increments; <code>ivr.pin.allocated.reused</code> does not.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test: pass a mocked EC with ticket_type != RESTORE and a matching prior row — assert the reuse path is not taken.</li>
+        <li>Metric — no <code>ivr.pin.allocated.reused</code> emission for non-RESTORE.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin">
+    <div class="id">LOGIC-4</div>
+    <div class="title">Caller with a cached PIN from the closed prior EC bridges successfully after reuse</div>
+    <div class="real">End-to-end: same customer / same ticket_id, EC1 closed, EC2 created via reuse. Customer or CSP dials the masked number and enters the PIN they had from EC1's SMS / chat.</div>
+    <dl>
+      <dt>Given</dt><dd>LOGIC-1 has fired (EC2 has been allocated using the reused PIN pair from EC1),</dd>
+      <dt>When</dt><dd>a caller dials the masked IVR number and enters <code>P_c</code> (the customer PIN from the closed EC1),</dd>
+      <dt>Then</dt><dd>the IVR identifies the ticket (via the now-ALLOCATED row on EC2 carrying the same <code>P_c</code>),</dd>
+      <dt>And</dt><dd>routes Leg 2 to the counterparty of EC2 (either the customer or CSP number on the EC2 rows),</dd>
+      <dt>And</dt><dd>Exotel records <code>Leg1Status = completed</code> and <code>Leg2Status ∈ (completed, no-answer, canceled)</code> — i.e., the bridge was attempted rather than the caller being trapped at the PIN prompt.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Exotel CDR shows a to_number populated to the counterparty's mobile (not equal to the masked DID).</li>
+        <li><code>ivr.user_connection_call_logs</code> row has <code>to_number</code> non-null, <code>call_status ∈ (CONNECTED, MISSED_CALL, CANCELLED, REJECTED)</code>, i.e., not <code>UNKNOWN</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Edge cases</h3>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-1</div>
+    <div class="title">Prior ticket_id row has PINs that are currently ALLOCATED to a DIFFERENT execution candidate</div>
+    <div class="real">Rare — the prior EC on this ticket_id was deallocated, but in the interim the PIN was recycled back to the pool and reissued to a different (unrelated) ticket_id. If we reused it now, two tickets would claim the same PIN.</div>
+    <dl>
+      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior deallocated row with customer_pin <code>P_c</code>,</dd>
+      <dt>And</dt><dd>PIN <code>P_c</code> is currently <code>ALLOCATED</code> to a different execution candidate (ticket_id ≠ T),</dd>
+      <dt>When</dt><dd>a new EC arrives for <code>T</code>,</dd>
+      <dt>Then</dt><dd>allocation falls back to minting a fresh PIN pair (does not reuse <code>P_c</code>),</dd>
+      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.fresh</code> increments (with a debug log line noting the fallback reason).</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test: seed a state where the prior ticket_id's PIN is now allocated elsewhere. Assert the new EC gets a fresh PIN, not the conflicted one.</li>
+        <li>Log line emitted with reason <code>pin_reuse_skipped:conflict</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-2</div>
+    <div class="title">Two execution candidates arrive concurrently for the same ticket_id</div>
+    <div class="real">Upstream produces EC2 and EC3 within milliseconds for the same ticket_id (a re-drive burst). Both allocation paths run in parallel.</div>
+    <dl>
+      <dt>Given</dt><dd>ticket_id <code>T</code> has one prior deallocated row with customer_pin <code>P_c</code>,</dd>
+      <dt>When</dt><dd>EC2 and EC3 for <code>T</code> arrive at the allocation service at the same moment (interleaved transactions),</dd>
+      <dt>Then</dt><dd>the advisory lock on <code>ticket_id</code> serialises them,</dd>
+      <dt>And</dt><dd>the first-to-commit inserts a row with <code>customer_pin = P_c</code> for its EC,</dd>
+      <dt>And</dt><dd>the second-to-commit either <strong>(a)</strong> observes that <code>P_c</code> is now allocated to the first EC and falls back to a fresh PIN (per EDGE-1's rule), OR <strong>(b)</strong> if the design allows two ECs to share a PIN simultaneously, inserts with the same <code>P_c</code>. The chosen design must be one or the other — not both. See design note below.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Load test — 50 concurrent EC-creation calls for the same synthetic ticket_id. All 50 must succeed without deadlock. Inspect the resulting rows: consistent with the chosen design.</li>
+        <li>No orphaned rows, no duplicated allocated_at with the same execution_candidate_id.</li>
+      </ul>
+    </div>
+    <div class="hint"><strong>Design decision to lock in:</strong> can two concurrent active ECs for the same ticket_id share a PIN? Recommendation — <em>yes</em>, because the IVR bridge on that PIN reaches the counterparty on the most recent EC (the ticket the customer / CSP is actually talking about). Any policy that forbids this creates fresh-PIN churn on the second concurrent EC and defeats the fix.</div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-3</div>
+    <div class="title">Historical row exists for ticket_id but the PINs are days old and the pool would ordinarily have recycled them</div>
+    <div class="real">A ticket_id had its first EC 2 weeks ago; the customer restarts the RESTORE journey and a new EC is created. The old PIN is technically still in the registry (deallocated).</div>
+    <dl>
+      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row from 14 days ago with <code>P_c</code>, currently deallocated, and <code>P_c</code> is not currently ALLOCATED elsewhere,</dd>
+      <dt>When</dt><dd>a new EC arrives for <code>T</code>,</dd>
+      <dt>Then</dt><dd>reuse still applies — <code>P_c</code> is used for the new EC,</dd>
+      <dt>And</dt><dd>the customer's cached SMS / chat from the earlier ticket window is still functional if they call in.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test with a 14-day-old row — assert reuse fires (age of prior row does not affect the logic).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-4</div>
+    <div class="title">ticket_id is null on the incoming execution candidate</div>
+    <div class="real">Defensive — upstream sends an EC without a ticket_id (data anomaly).</div>
+    <dl>
+      <dt>Given</dt><dd>the incoming EC has <code>ticket_id = NULL</code>,</dd>
+      <dt>When</dt><dd>allocation runs,</dd>
+      <dt>Then</dt><dd>the reuse lookup is skipped (nothing to key on),</dd>
+      <dt>And</dt><dd>a fresh PIN pair is allocated as today,</dd>
+      <dt>And</dt><dd>a warning log line is emitted noting the missing ticket_id.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test: pass an EC with null ticket_id — assert fresh path, no crash, warning logged.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-5</div>
+    <div class="title">Deallocation cascade — old EC deallocates, new EC keeps PIN ALLOCATED</div>
+    <div class="real">The natural upstream sequence: EC1 gets closed by the ticket system (its row transitions to DEALLOCATED); EC2 was already allocated (via reuse) and is the active bridge.</div>
+    <dl>
+      <dt>Given</dt><dd>EC1 and EC2 both exist for ticket_id <code>T</code>, both carrying <code>P_c</code>. EC1 is <code>ALLOCATED</code>; EC2 is <code>ALLOCATED</code>. (This is the concurrent-active scenario from EDGE-2.)</dd>
+      <dt>When</dt><dd>upstream deallocates EC1 (its row transitions to <code>DEALLOCATED</code>),</dd>
+      <dt>Then</dt><dd>EC2's row is unaffected — remains <code>ALLOCATED</code>,</dd>
+      <dt>And</dt><dd>an IVR call with entered PIN <code>P_c</code> continues to route to EC2's counterparty,</dd>
+      <dt>And</dt><dd>the PIN uniqueness guard for the ALLOCATED status is satisfied because only one row (EC2) with <code>P_c</code> is now <code>ALLOCATED</code>.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Integration test: allocate EC1, then allocate EC2 (reuse), then deallocate EC1. Assert IVR bridge on <code>P_c</code> still works and points at EC2's counterparty.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-6</div>
+    <div class="title">Prior EC on the same ticket_id was for a different CSP</div>
+    <div class="real">Rare — the CSP assigned to the RESTORE ticket changed between EC1 (CSP_A) and EC2 (CSP_B).</div>
+    <dl>
+      <dt>Given</dt><dd>ticket_id <code>T</code> has a prior row for EC1 with <code>csp_id = CSP_A</code>,</dd>
+      <dt>When</dt><dd>a new EC2 arrives for <code>T</code> with <code>csp_id = CSP_B</code> (different),</dd>
+      <dt>Then</dt><dd>the customer_pin <code>P_c</code> is reused (unchanged),</dd>
+      <dt>And</dt><dd>the csp_pin <code>P_s</code> is <strong>also reused</strong> — the PIN value is decoupled from the CSP identity; only the <code>csp_id</code> field on the row differs (points to CSP_B),</dd>
+      <dt>And</dt><dd>a call bridged via this PIN routes Leg 2 to CSP_B's mobile (whichever mobile is registered on CSP_B's pin_registry row for EC2).</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test: seed a ticket_id with EC1 under CSP_A. Trigger EC2 under CSP_B. Assert customer_pin is reused; csp_id on the CSP-type row is CSP_B.</li>
+        <li>Integration test: bridge via the reused PIN — confirm the call routes to CSP_B, not CSP_A.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-7</div>
+    <div class="title">Feature flag OFF — behaviour matches today exactly</div>
+    <div class="real">Rollback lever pulled post-deploy.</div>
+    <dl>
+      <dt>Given</dt><dd>Remote Config flag <code>ivr.pin.reuse_within_ticket_id.enabled = false</code>,</dd>
+      <dt>When</dt><dd>a new RESTORE EC arrives for a ticket_id with prior rows,</dd>
+      <dt>Then</dt><dd>allocation mints fresh PINs (bypassing the reuse lookup entirely),</dd>
+      <dt>And</dt><dd>the counter <code>ivr.pin.allocated.reused</code> stays at zero.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>QA test: flip flag OFF, allocate a second EC for an existing ticket_id, assert the two PINs differ.</li>
+        <li>Metric: <code>ivr.pin.allocated.reused</code> stays flat at zero over the OFF window.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">EDGE-8</div>
+    <div class="title">The <code>visible</code> flag on the reused row respects the new EC's cohort membership</div>
+    <div class="real">The CSP might have been in the cohort at EC1 time and out of the cohort at EC2 time (or vice versa). The PIN value is reused but visibility must reflect current state.</div>
+    <dl>
+      <dt>Given</dt><dd>EC1 for ticket_id <code>T</code> was created when CSP was in the cohort → <code>visible = true</code>,</dd>
+      <dt>When</dt><dd>EC2 for <code>T</code> is created and the CSP is now out of the cohort,</dd>
+      <dt>Then</dt><dd>the reused customer_pin and csp_pin values are copied to EC2's rows,</dd>
+      <dt>And</dt><dd>the <code>visible</code> flag on EC2's rows is set to <code>false</code> (per current cohort logic — this decision is independent of PIN reuse),</dd>
+      <dt>And</dt><dd>the PIN-fetch endpoint returns "no PIN" for EC2 as expected for a non-cohort ticket.</dd>
+    </dl>
+    <div class="verify"><strong>Verify:</strong>
+      <ul>
+        <li>Unit test with the visibility axis toggled between EC1 and EC2 — assert visibility is set per current EC's cohort state, PIN value is reused unchanged.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Regression guards</h3>
+
+  <div class="gherkin edge">
+    <div class="id">GUARD-1</div>
+    <div class="title">Existing PIN-fetch and PIN-verify endpoints work unchanged</div>
+    <dl>
+      <dt>Given</dt><dd>all existing endpoints that read <code>ivr_pin_registry</code> by PIN or execution_candidate_id,</dd>
+      <dt>When</dt><dd>a caller enters a PIN that is currently ALLOCATED to any EC,</dd>
+      <dt>Then</dt><dd>the IVR service resolves the PIN to that EC (regardless of whether the PIN is fresh or reused),</dd>
+      <dt>And</dt><dd>bridges Leg 2 to the counterparty on that EC's row.</dd>
+    </dl>
+  </div>
+
+  <div class="gherkin edge">
+    <div class="id">GUARD-2</div>
+    <div class="title">Analytics on PIN allocation volume don't double-count</div>
+    <dl>
+      <dt>Given</dt><dd>downstream analytics that count PIN allocations per day / per ticket_type,</dd>
+      <dt>When</dt><dd>reused allocations occur,</dd>
+      <dt>Then</dt><dd>each row insertion is still one row (one CUSTOMER row, one CSP row per EC), so row-count-based analytics are unaffected,</dd>
+      <dt>And</dt><dd>PIN-uniqueness analytics that count distinct PIN values across allocations correctly show fewer distinct values (as intended).</dd>
+    </dl>
+  </div>
+
+  <hr class="sect-end">
+</section>
+
+<footer class="checklist" id="checklist">
+  <h2>Completeness checklist</h2>
+  <table>
+    <thead><tr><th>Section</th><th>Content</th><th class="check">Done</th></tr></thead>
+    <tbody>
+      <tr><td>QC</td><td>Quick check filled</td><td class="check">✓</td></tr>
+      <tr><td>A1</td><td>Metadata</td><td class="check">✓</td></tr>
+      <tr><td>A2</td><td>Why this change</td><td class="check">✓</td></tr>
+      <tr><td>A3</td><td>Solution in one paragraph</td><td class="check">✓</td></tr>
+      <tr><td>A4</td><td>Data-observed scale (with prod counts)</td><td class="check">✓</td></tr>
+      <tr><td>A5</td><td>The delta (before / after / why)</td><td class="check">✓</td></tr>
+      <tr><td>A6</td><td>Scope &amp; non-scope</td><td class="check">✓</td></tr>
+      <tr><td>B5</td><td>Acceptance criteria — 4 logic + 8 edge + 2 guard blocks</td><td class="check">✓</td></tr>
+    </tbody>
+  </table>
+</footer>
+
+<section class="spec" id="changelog" style="margin-top: 56px;">
+  <h2>Changelog</h2>
+  <table>
+    <thead><tr><th>Version</th><th>Date</th><th>Author</th><th>Section(s)</th><th>Change &amp; rationale</th><th>Approver</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>v1.0</td>
+        <td>2026-07-09</td>
+        <td>Ashish Raj</td>
+        <td>All</td>
+        <td>Initial draft. Reuses PIN across execution candidates sharing a <code>ticket_id</code> for RESTORE tickets. Addresses 20 of 66 (30%) unbridged calls observed in Phase-1 cohort 2–7 Jul 2026.</td>
+        <td>Pending</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+</div>
+</body>
+</html>
