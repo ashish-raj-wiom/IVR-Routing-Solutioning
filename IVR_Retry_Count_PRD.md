@@ -2,8 +2,8 @@
 
 | | | | |
 |---|---|---|---|
-| **Owner** — Ashish Raj (PM, IVR) | **Reviewer** — Rahul | **Status** — Draft | **Sign-off** — Pending |
-| **Version** — v0.2 · 2026-09-08 | **Consulted — Exotel** — Tanay Puntambekar, Adnan C | **Consulted — Eng** — Rahul | |
+| **Owner** — Ashish Raj (PM, IVR) | **Reviewer** — Rahul | **Status** — Signed off | **Sign-off** — Signed off · 2026-09-08 |
+| **Version** — v1.0 · 2026-09-08 | **Consulted — Exotel** — Tanay Puntambekar, Adnan C | **Consulted — Eng** — Rahul | |
 
 ---
 
@@ -185,12 +185,3 @@ What the platform must be able to do for this feature to exist. Whether these ar
 | Emit per-call telemetry that carries the C-01 value in effect at fetch time and reconstructs the numbers array actually sent. | MQ-1 · MQ-2 · MQ-3 |
 | Attribute successful connects to either the first attempt on a number or a subsequent retry on the same number. | MQ-2 |
 
----
-
-## AI-generated content for review
-
-All previously flagged items resolved by PM in v0.2 review pass. Section retained empty as a marker; may be removed at finalise.
-
-| Location | What was generated | Basis |
-|---|---|---|
-| — | — | (none) |
