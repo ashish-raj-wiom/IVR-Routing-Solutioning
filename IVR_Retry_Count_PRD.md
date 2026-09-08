@@ -22,8 +22,7 @@
 | ID | Guardrail | One line | Anchors |
 |---|---|---|---|
 | G1 | **Same behaviour at C-01 = 0** | With retry disabled, each number in the rollover list is dialled exactly once — no duplicates in the numbers array, no extra dials. Identical to the pre-change flow. | R2 · AC-REG-1 · AC-CFG-1 · MQ-3 |
-| G2 | **No user reaches a stopped state early** | Rollover to the next number in the list still happens after all retries on the current number are exhausted — never before. | R1 · T1 · AC-DIAL-1 |
-| G3 | **Runtime-changeable, no deploy** | Retry count can be raised, lowered or zeroed at any time without a code release. | R2 · C-01 · AC-CFG-1 |
+| G2 | **IVR 2.0 functionality preserved** | The existing IVR 2.0 flow — identification chain, PIN authentication, rollover order, Connect-applet contract, dead-end path, disposition webhook — continues to work exactly as it does today. This spec is a pure extension: it adds only the duplication step at Connect-applet fetch time; nothing else changes. | R1 · AC-REG-1 · AC-REG-2 · AC-GRD-1 |
 
 ### Success metrics
 
@@ -130,14 +129,14 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-CFG-1 | **Given** C-01 = 1 and the first Connect-applet fetch for call A has been sent to Exotel, **When** an operator changes C-01 to 0 at runtime (no restart) and a second call B triggers a Connect-applet fetch, **Then** call B's numbers array is produced under C-01 = 0 (no duplicates); call A's ongoing dial sequence continues under the value read at its fetch time (C-01 = 1). | R2a · G3 · C-01 | Settled |
+| AC-CFG-1 | **Given** C-01 = 1 and the first Connect-applet fetch for call A has been sent to Exotel, **When** an operator changes C-01 to 0 at runtime (no restart) and a second call B triggers a Connect-applet fetch, **Then** call B's numbers array is produced under C-01 = 0 (no duplicates); call A's ongoing dial sequence continues under the value read at its fetch time (C-01 = 1). | R2a · C-01 | Settled |
 | AC-CFG-2 | **Given** C-01 is set to an out-of-range value (e.g. 3 or -1), **When** the fetch is received, **Then** the IVR clamps to the nearest in-range value (0 or 2 respectively) and continues processing — the call is not failed. | Value hygiene on C-01 ⚠️ *AI GENERATED — review* | Settled |
 
 ### GRD — Guardrail
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-GRD-1 | **Given** C-01 = 1 and a call whose first number fails to pick up, **When** Exotel completes ring attempts on that number, **Then** Exotel proceeds to the *second entry in the sent array* — which is the same number retried — before advancing to the second distinct number in the base list. | G2 · R1b · T3 | Settled |
+| AC-GRD-1 | **Given** C-01 = 1 and a call whose first number fails to pick up, **When** Exotel completes ring attempts on that number, **Then** Exotel proceeds to the *second entry in the sent array* — which is the same number retried — before advancing to the second distinct number in the base list, preserving the sequential rollover contract of IVR 2.0. | G2 · R1b · T3 | Settled |
 
 ### WF — Workflow
 
