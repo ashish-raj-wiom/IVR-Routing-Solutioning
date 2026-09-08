@@ -21,7 +21,7 @@
 
 | ID | Guardrail | One line | Anchors |
 |---|---|---|---|
-| G1 | **Same behaviour at C-01 = 0** | With retry disabled, calls behave exactly as they did on 1 Sept — no duplicates in the numbers array, no extra dials. | R2 · AC-REG-1 · AC-CFG-1 · MQ-3 |
+| G1 | **Same behaviour at C-01 = 0** | With retry disabled, each number in the rollover list is dialled exactly once — no duplicates in the numbers array, no extra dials. Identical to the pre-change flow. | R2 · AC-REG-1 · AC-CFG-1 · MQ-3 |
 | G2 | **No user reaches a stopped state early** | Rollover to the next number in the list still happens after all retries on the current number are exhausted — never before. | R1 · T1 · AC-DIAL-1 |
 | G3 | **Runtime-changeable, no deploy** | Retry count can be raised, lowered or zeroed at any time without a code release. | R2 · C-01 · AC-CFG-1 |
 
@@ -116,7 +116,7 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-REG-1 | **Given** C-01 = 0, **When** the IVR receives a Connect-applet fetch for either direction, **Then** the numbers array sent to Exotel is byte-for-byte identical to what the pre-change flow (state on 1 Sept 2026) would have produced — same numbers, same order, same length. | G1 · T1 · R2b | Settled |
+| AC-REG-1 | **Given** C-01 = 0, **When** the IVR receives a Connect-applet fetch for either direction, **Then** the numbers array sent to Exotel is byte-for-byte identical to what the pre-change flow would produce — same numbers, same order, same length, with each number appearing exactly once. | G1 · T1 · R2b | Settled |
 | AC-REG-2 | **Given** any value of C-01, **When** the fetch is received, **Then** the per-number ring time returned to Exotel (`max_ringing_duration`) is unchanged from today. | §1 Boundary | Settled |
 
 ### BV — Boundary values
