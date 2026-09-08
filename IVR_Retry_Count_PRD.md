@@ -22,7 +22,7 @@
 | ID | Guardrail | One line | Anchors |
 |---|---|---|---|
 | G1 | **Same behaviour at C-01 = 0** | With retry disabled, each number in the rollover list is dialled exactly once — no duplicates in the numbers array, no extra dials. Identical to the pre-change flow. | R2 · AC-REG-1 · AC-CFG-1 · MQ-3 |
-| G2 | **IVR 2.0 functionality preserved** | The existing IVR 2.0 flow — identification chain, PIN authentication, rollover order, Connect-applet contract, dead-end path, disposition webhook — continues to work exactly as it does today. This spec is a pure extension: it adds only the duplication step at Connect-applet fetch time; nothing else changes. | R1 · AC-REG-1 · AC-REG-2 · AC-GRD-1 |
+| G2 | **IVR 2.0 functionality preserved** | The existing IVR 2.0 flow — identification chain, PIN authentication, rollover order, Connect-applet contract, dead-end path, disposition webhook — continues to work exactly as it does today. This spec is a pure extension: it adds only the duplication step at Connect-applet fetch time; nothing else changes. | R1 · AC-REG-1 · AC-REG-2 · AC-GRD-1 · MQ-4 |
 
 ### Success metrics
 
@@ -98,6 +98,7 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 | MQ-1 | Call-level connect rate over a rolling window, split by the C-01 value in effect at call time (direction split — customer-initiated vs CSP-initiated — kept as a diagnostic cut). | M1 |
 | MQ-2 | For calls that reached a bridged conversation, whether the successful connect came from the first attempt on a number or from a retry attempt on the same number. | Attribution for M1's lift — quantifies how much of the lift is retry-driven vs baseline. |
 | MQ-3 | For every call, whether the numbers array sent to Exotel matched exactly what the pre-change flow would have produced when C-01 = 0. | G1 invariant |
+| MQ-4 | For every call, whether the observable IVR 2.0 flow steps unrelated to the retry expansion — identification chain outcome, PIN authentication outcome, rollover order actually attempted, disposition webhook shape, dead-end path where applicable — match their pre-change behaviour. | G2 |
 
 ---
 
@@ -115,8 +116,8 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-REG-1 | **Given** C-01 = 0, **When** the IVR receives a Connect-applet fetch for either direction, **Then** the numbers array sent to Exotel is byte-for-byte identical to what the pre-change flow would produce — same numbers, same order, same length, with each number appearing exactly once. | G1 · T1 · R2b | Settled |
-| AC-REG-2 | **Given** any value of C-01, **When** the fetch is received, **Then** the per-number ring time returned to Exotel (`max_ringing_duration`) is unchanged from today. | §1 Boundary | Settled |
+| AC-REG-1 | **Given** C-01 = 0, **When** the IVR receives a Connect-applet fetch for either direction, **Then** the numbers array sent to Exotel is byte-for-byte identical to what the pre-change flow would produce — same numbers, same order, same length, with each number appearing exactly once. | G1 · G2 · T1 · R2b | Settled |
+| AC-REG-2 | **Given** any value of C-01 in the allowed range, **When** the fetch is received, **Then** the Connect-applet response body carries the same `max_ringing_duration` value (30 s, per Exotel default) that the pre-change flow returned — no other Connect-applet parameter is modified by this spec. | G2 | Settled |
 
 ### BV — Boundary values
 
@@ -129,8 +130,8 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-CFG-1 | **Given** C-01 = 1 and the first Connect-applet fetch for call A has been sent to Exotel, **When** an operator changes C-01 to 0 at runtime (no restart) and a second call B triggers a Connect-applet fetch, **Then** call B's numbers array is produced under C-01 = 0 (no duplicates); call A's ongoing dial sequence continues under the value read at its fetch time (C-01 = 1). | R2a · C-01 | Settled |
-| AC-CFG-2 | **Given** C-01 is set to an out-of-range value (e.g. 3 or -1), **When** the fetch is received, **Then** the IVR clamps to the nearest in-range value (0 or 2 respectively) and continues processing — the call is not failed. | Value hygiene on C-01 ⚠️ *AI GENERATED — review* | Settled |
+| AC-CFG-1 | **Given** C-01 = 1 and the first Connect-applet fetch for call A has been sent to Exotel, **When** an operator changes C-01 to 0 at runtime (no restart) and a second call B triggers a Connect-applet fetch, **Then** call B's numbers array is produced under C-01 = 0 (no duplicates); call A's ongoing dial sequence continues under the value read at its fetch time (C-01 = 1). | R2a · G1 · C-01 | Settled |
+| AC-CFG-2 | **Given** C-01 is set to an out-of-range value (e.g. 3 or -1), **When** the fetch is received, **Then** the IVR clamps to the nearest in-range value (0 or 2 respectively) and continues processing — the call is not failed. | R2a · C-01 ⚠️ *AI GENERATED — review* | Settled |
 
 ### GRD — Guardrail
 
