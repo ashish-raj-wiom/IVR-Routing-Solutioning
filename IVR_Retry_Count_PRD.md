@@ -166,7 +166,7 @@ What the platform must be able to do for this feature to exist. Whether these ar
 
 | Capability | Needed by |
 |---|---|
-| Read a live-changeable scalar (C-01) at Connect-applet-fetch time without restart. | R2a · G3 · C-01 |
+| Read a live-changeable scalar (C-01) at Connect-applet-fetch time without restart. | R2a · C-01 |
 | Expand a rollover list by duplicating each entry (1 + C-01) times while preserving order. | T2 · R1a · R1b |
 | Cap the expanded list at Exotel's 10-entry platform limit, truncating the tail if it exceeds. | T4 |
 | Emit per-call telemetry that carries the C-01 value in effect at fetch time and reconstructs the numbers array actually sent. | MQ-1 · MQ-2 · MQ-3 |
