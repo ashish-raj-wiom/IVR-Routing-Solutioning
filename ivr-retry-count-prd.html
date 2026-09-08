@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVR Retry Count — PRD</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: false, theme: 'default', flowchart: { htmlLabels: true } });
+  window.__mermaidRender = () => mermaid.run({ querySelector: '.mermaid' });
+</script>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --ink: #1a1a1a; --muted: #6b6b6b; --rule: #e5e5e2;
+    --link: #1f3c6e;
+    --warn-bg: #fef9c3; --warn-ink: #713f12; --warn-rule: #ca8a04;
+    --code-bg: #f4f4f2;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px; line-height: 1.6; color: var(--ink); background: var(--bg);
+  }
+  main {
+    max-width: 900px; margin: 0 auto; padding: 48px 56px 120px;
+  }
+  header.doc {
+    border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 32px;
+  }
+  header.doc .eyebrow {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+  }
+  header.doc h1 { font-size: 26px; margin: 8px 0 6px; line-height: 1.25; }
+  header.doc .sub { color: var(--muted); font-size: 13px; }
+  h1, h2, h3, h4 { color: var(--ink); }
+  h1 { font-size: 26px; margin: 32px 0 12px; }
+  h2 { font-size: 21px; margin: 40px 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); scroll-margin-top: 16px; }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  h4 { font-size: 14px; margin: 18px 0 6px; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 8px 0 12px; padding-left: 24px; }
+  li { margin: 3px 0; }
+  hr { border: none; border-top: 1px dashed var(--rule); margin: 32px 0; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.87em; background: var(--code-bg); padding: 0.08em 0.35em;
+    border-radius: 3px; border: 1px solid var(--rule);
+  }
+  pre {
+    background: var(--code-bg); padding: 14px 16px; border-radius: 6px;
+    overflow-x: auto; font-size: 13px; border: 1px solid var(--rule);
+  }
+  pre code { background: none; padding: 0; border: none; font-size: inherit; }
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 13.5px;
+  }
+  th, td {
+    text-align: left; padding: 8px 10px; border: 1px solid var(--rule); vertical-align: top;
+  }
+  th { background: var(--bg); font-weight: 600; }
+  blockquote {
+    margin: 10px 0; padding: 10px 14px; background: var(--code-bg);
+    border-left: 3px solid var(--muted); color: #333;
+  }
+  em { color: var(--warn-ink); }
+  strong { font-weight: 700; }
+  /* Highlight the AI-generated markers */
+  em:has(> code), p em, td em, li em { font-style: italic; }
+  /* Mermaid container */
+  .mermaid {
+    text-align: center; background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 5px; padding: 14px; margin: 14px 0; overflow-x: auto;
+  }
+  @media (max-width: 900px) {
+    main { padding: 24px 18px 80px; }
+    h2 { font-size: 18px; }
+    table { font-size: 12.5px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="doc">
+  <div class="eyebrow">IVR — Change Spec · v0.1 Draft</div>
+  <h1>IVR Retry Count — PRD</h1>
+  <div class="sub">This page renders <a href="https://github.com/ashish-raj-wiom/IVR-Routing-Solutioning/blob/main/IVR_Retry_Count_PRD.md">IVR_Retry_Count_PRD.md</a> live from the repo — it stays in exact sync with the source.</div>
+</header>
+
+<div id="content">Loading…</div>
+
+<script>
+  const MD_URL = 'https://raw.githubusercontent.com/ashish-raj-wiom/IVR-Routing-Solutioning/main/IVR_Retry_Count_PRD.md';
+  fetch(MD_URL)
+    .then(r => r.ok ? r.text() : Promise.reject('HTTP ' + r.status))
+    .then(md => {
+      // Convert ```mermaid fenced blocks into <div class="mermaid"> for the mermaid script to render
+      const processed = md.replace(/```mermaid\n([\s\S]*?)```/g, (_, body) => `<div class="mermaid">${body}</div>`);
+      const html = marked.parse(processed);
+      document.getElementById('content').innerHTML = html;
+      if (window.__mermaidRender) window.__mermaidRender();
+    })
+    .catch(err => {
+      document.getElementById('content').innerHTML =
+        '<p style="color:#b91c1c">Failed to load the PRD source (' + err + '). ' +
+        'The MD file may not be published yet — check <a href="' + MD_URL + '">the source</a>.</p>';
+    });
+</script>
+
+</main>
+</body>
+</html>
