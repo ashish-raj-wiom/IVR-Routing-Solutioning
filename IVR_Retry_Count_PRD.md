@@ -28,8 +28,6 @@
 | ID | Metric | Baseline | Target | Source |
 |---|---|---|---|---|
 | M1 | Call-level connect rate on IVR 2.0 — with retry_count = 1 | 51% ⚠️ *AI GENERATED — review* *(pre-change, Sept 2 rollover state)* | ≥ 53% ⚠️ *AI GENERATED — review* *(+2 pp lift toward the 55% non-IVR benchmark)* | MQ-1 |
-| M2 | Customer-initiated connect rate | 48% ⚠️ *AI GENERATED — review* | ≥ 51% ⚠️ *AI GENERATED — review* | MQ-1 (customer-initiated slice) |
-| M3 | CSP-initiated connect rate | 53% ⚠️ *AI GENERATED — review* | ≥ 54% ⚠️ *AI GENERATED — review* | MQ-1 (CSP-initiated slice) |
 
 **Invariant (not a metric):** G1 same-behaviour-at-zero deviations = 0, zero tolerance. Monitored via MQ-3, not trended.
 
@@ -97,7 +95,7 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | ID | The system must be able to answer… | Feeds |
 |---|---|---|
-| MQ-1 | Call-level connect rate over a rolling window, split by direction (customer-initiated / CSP-initiated) and by the C-01 value in effect at call time. | M1 · M2 · M3 |
+| MQ-1 | Call-level connect rate over a rolling window, split by the C-01 value in effect at call time (direction split — customer-initiated vs CSP-initiated — kept as a diagnostic cut). | M1 |
 | MQ-2 | For calls that reached a bridged conversation, whether the successful connect came from the first attempt on a number or from a retry attempt on the same number. | Attribution for M1's lift — quantifies how much of the lift is retry-driven vs baseline. |
 | MQ-3 | For every call, whether the numbers array sent to Exotel matched exactly what the pre-change flow would have produced when C-01 = 0. | G1 invariant |
 
@@ -182,7 +180,5 @@ What the platform must be able to do for this feature to exist. Whether these ar
 | Header · Reviewer | "Eng Lead" placeholder | No reviewer named yet — needs assignment |
 | Header · Consulted — Eng | Marked TBD | Same as above |
 | §1 M1 baseline (51%) and target (≥ 53%) | Baseline taken from PM's earlier Sept 2 rollover update ("~51%"); target set as a modest +2 pp lift toward the 55% non-IVR benchmark | Inferred from the earlier email thread numbers; PM to confirm the exact target |
-| §1 M2 baseline (48%) and target (≥ 51%) | Same source and inference as M1 | Confirm |
-| §1 M3 baseline (53%) and target (≥ 54%) | Same source and inference | Confirm — CSP-initiated is already above non-IVR benchmark of 52%, so target may need PM re-think |
 | §5 C-01 owner (Product) | Default owner for a product-behaviour knob | Confirm |
 | §7 AC-CFG-2 (out-of-range clamping) | Added as a safety AC — the value hygiene isn't in the PM's brief but is required behaviour if a runtime knob is exposed | Confirm the clamping direction (clamp vs reject vs fallback to default) |
