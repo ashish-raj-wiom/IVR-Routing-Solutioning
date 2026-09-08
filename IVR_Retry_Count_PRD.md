@@ -2,8 +2,8 @@
 
 | | | | |
 |---|---|---|---|
-| **Owner** — Ashish Raj (PM, IVR) | **Reviewer** — Eng Lead ⚠️ *AI GENERATED — review* | **Status** — Draft | **Sign-off** — Pending |
-| **Version** — v0.1 · 2026-09-08 | **Consulted — Exotel** — Tanay Puntambekar, Adnan C | **Consulted — Eng** — TBD ⚠️ *AI GENERATED — review* | |
+| **Owner** — Ashish Raj (PM, IVR) | **Reviewer** — Rahul | **Status** — Draft | **Sign-off** — Pending |
+| **Version** — v0.2 · 2026-09-08 | **Consulted — Exotel** — Tanay Puntambekar, Adnan C | **Consulted — Eng** — Rahul | |
 
 ---
 
@@ -11,7 +11,13 @@
 
 **Context.** This spec is an extension of the **IVR 2.0** feature (see §8). It applies only when the caller dials the **IVR masked number** to reach the callee — i.e., on the same call sessions that the multi-number rollover (Sept 2 release) already governs. Any call not initiated through the IVR masked number is untouched by this spec.
 
-**Who is the caller.** The caller (see §8) is either a **CSP user** (Owner, Manager or Technician of a partner) or a **customer**, in each case with an **active ticket of type Install, Restore or Pickup** — per IVR 2.0's own scope. Anyone else dialling the masked number is not a caller under this spec and receives whatever IVR 2.0 already does for unauthorised callers (dead-end IVR, out of scope here).
+**Who is the caller.** For informational context only — caller eligibility is fully owned by IVR 2.0, not by this spec. IVR 2.0 admits three populations to the call flow that this spec extends:
+
+- a **CSP user** (Owner, Manager or Technician) with an active Install / Restore / Pickup ticket,
+- a **customer** with an active ticket of the same types, and
+- a **PIN-authenticated caller** on any SIM (the colleague-forwarding / unregistered-SIM case), where PIN authentication proves association with a specific active ticket.
+
+Whoever IVR 2.0 admits, this spec expands the same way. This spec does not add, remove or narrow that admission set — that stays IVR 2.0's business.
 
 **Objective.** When a caller dials the IVR masked number to reach the callee and the callee does not pick up on the first ring, the same number is dialled again so the caller has a better chance of reaching them.
 
@@ -28,7 +34,7 @@
 
 | ID | Metric | Baseline | Target | Source |
 |---|---|---|---|---|
-| M1 | Call-level connect rate on IVR 2.0 — with retry_count = 1 | 51% ⚠️ *AI GENERATED — review* *(pre-change, Sept 2 rollover state)* | ≥ 53% ⚠️ *AI GENERATED — review* *(+2 pp lift toward the 55% non-IVR benchmark)* | MQ-1 |
+| M1 | Call-level connect rate on IVR 2.0 — with retry_count = 1 | 51% *(pre-change, Sept 2 rollover state)* | ≥ 53% *(+2 pp lift toward the 55% non-IVR benchmark)* | MQ-1 |
 
 **Invariant (not a metric):** G1 same-behaviour-at-zero deviations = 0, zero tolerance. Monitored via MQ-3, not trended.
 
@@ -38,7 +44,7 @@
 
 | ID | Story | MUST | MUST NOT |
 |---|---|---|---|
-| R1 | As a caller — a CSP user (Owner / Manager / Technician) or a customer, with an active Install / Restore / Pickup ticket — who dials the IVR masked number to reach a specific callee, I want the platform to try the same number more than once so I don't lose a call to a fumbled first ring. | **(a)** Dial the current number in the rollover list up to (1 + C-01) times before advancing to the next number. **(b)** Preserve rollover order — retries on number N complete before number N+1 is attempted. | Change the identity or count of the *distinct* numbers dialled in the rollover list — that is out of scope (§1 Boundary). Apply this behaviour to callers who are neither CSP users nor customers with an active Install / Restore / Pickup ticket — they are handled by IVR 2.0's existing dead-end path (§1 Context). |
+| R1 | As a caller who dials the IVR masked number to reach a specific callee, I want the platform to try the same number more than once so I don't lose a call to a fumbled first ring. (Caller eligibility is IVR 2.0's — see §1 Context.) | **(a)** Dial the current number in the rollover list up to (1 + C-01) times before advancing to the next number. **(b)** Preserve rollover order — retries on number N complete before number N+1 is attempted. | Change the identity or count of the *distinct* numbers dialled in the rollover list — that is out of scope (§1 Boundary). |
 | R2 | As IVR Ops, I want a single runtime-changeable knob for the retry count so I can turn the behaviour on, off, or up without a deploy. | **(a)** Expose retry count as a single parameter (C-01). **(b)** Setting it to 0 must produce a numbers array identical to today's (§1 Boundary, G1). | Require a service restart, code deploy, or coordination with Exotel to change the value. |
 
 ---
@@ -85,7 +91,7 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | ID | Parameter | Default | Range | Who changes it |
 |---|---|---|---|---|
-| C-01 | retry_count — number of extra times each entry in the rollover list is dialled before advancing to the next entry | **1** | 0, 1, or 2 | Product ⚠️ *AI GENERATED — review* |
+| C-01 | retry_count — number of extra times each entry in the rollover list is dialled before advancing to the next entry | **1** | 0, 1, or 2 | Product |
 
 **Note on Exotel's 10-entry platform cap.** Exotel accepts at most 10 numbers per Connect-applet response — this is Exotel's platform limit, not a Wiom parameter. With the current rollover lists (up to 3 for customer-initiated, up to 2 for CSP-initiated), C-01 = 2 produces at most 9 entries, safely inside Exotel's cap. If the rollover list ever grows to 4 or more distinct numbers, the T4 truncation branch (§3b) protects the call by capping the sent array at 10.
 
@@ -131,7 +137,6 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
 | AC-CFG-1 | **Given** C-01 = 1 and the first Connect-applet fetch for call A has been sent to Exotel, **When** an operator changes C-01 to 0 at runtime (no restart) and a second call B triggers a Connect-applet fetch, **Then** call B's numbers array is produced under C-01 = 0 (no duplicates); call A's ongoing dial sequence continues under the value read at its fetch time (C-01 = 1). | R2a · G1 · C-01 | Settled |
-| AC-CFG-2 | **Given** C-01 is set to an out-of-range value (e.g. 3 or -1), **When** the fetch is received, **Then** the IVR clamps to the nearest in-range value (0 or 2 respectively) and continues processing — the call is not failed. | R2a · C-01 ⚠️ *AI GENERATED — review* | Settled |
 
 ### GRD — Guardrail
 
@@ -153,7 +158,7 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 |---|---|---|
 | IVR 2.0 | The parent feature this spec extends. IVR 2.0 introduced the single masked-number architecture with PIN-based authentication and multi-number rollover (Sept 2 2026). This spec adds the retry_count layer on top of that flow — same call sessions, same rollover list, same Connect-applet contract with Exotel. Anything IVR 2.0 does not govern is out of scope here. | IVR |
 | IVR masked number | The single Wiom-owned DID that both customers and CSPs dial to reach each other through IVR 2.0. Every call session governed by this spec begins with a caller dialling this number. Calls made through any other channel (direct mobile-to-mobile, Call-Center number, Trust-Line number, legacy MN1/MN2) are outside this spec's scope. | IVR |
-| Caller | **Canonical definition:** the party who dials the IVR masked number to initiate a call session. Under this spec, only two populations qualify: (i) a **CSP user** — an Owner, Manager or Technician on a Wiom partner account — and (ii) a **customer** — a person with a Wiom account. In either case, the caller must have an **active ticket of type Install, Restore or Pickup** at the moment of the call, per IVR 2.0's authentication scope. Callers outside this population are handled by IVR 2.0's dead-end path and are not affected by this spec. | IVR |
+| Caller | The party who dials the IVR masked number to initiate a call session. Eligibility is owned by IVR 2.0 and is stated for context in §1 (CSP users, customers, and PIN-authenticated callers via colleague forwarding — all tied to an active Install / Restore / Pickup ticket). This spec does not constrain who counts as a caller. | IVR |
 | Rollover list | **Canonical definition:** the ordered list of distinct phone numbers the IVR wants dialled on a single call session, before this spec's expansion is applied. For customer-initiated calls it is Technician → Manager → Owner (up to 3); for CSP-initiated calls it is Customer primary → Customer alternate (up to 2). Constructed by the existing IVR 2.0 flow — this spec does not change it. | IVR |
 | Numbers array | The `numbers` array field in the JSON response sent to Exotel's Connect applet on each fetch. This spec's expansion (T2) is applied when building this array; the array is what Exotel actually dials. | IVR |
 | Connect-applet fetch | The HTTP call Exotel makes to the IVR service for each call session to obtain the Connect-applet response (which includes the numbers array). Exotel's Passthru / Connect mechanism, per Exotel's documented API contract. | Exotel |
@@ -177,10 +182,8 @@ What the platform must be able to do for this feature to exist. Whether these ar
 
 ## AI-generated content for review
 
+All previously flagged items resolved by PM in v0.2 review pass. Section retained empty as a marker; may be removed at finalise.
+
 | Location | What was generated | Basis |
 |---|---|---|
-| Header · Reviewer | "Eng Lead" placeholder | No reviewer named yet — needs assignment |
-| Header · Consulted — Eng | Marked TBD | Same as above |
-| §1 M1 baseline (51%) and target (≥ 53%) | Baseline taken from PM's earlier Sept 2 rollover update ("~51%"); target set as a modest +2 pp lift toward the 55% non-IVR benchmark | Inferred from the earlier email thread numbers; PM to confirm the exact target |
-| §5 C-01 owner (Product) | Default owner for a product-behaviour knob | Confirm |
-| §7 AC-CFG-2 (out-of-range clamping) | Added as a safety AC — the value hygiene isn't in the PM's brief but is required behaviour if a runtime knob is exposed | Confirm the clamping direction (clamp vs reject vs fallback to default) |
+| — | — | (none) |
