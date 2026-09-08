@@ -56,8 +56,8 @@ flowchart TD
     B --> C{"C-01 retry_count"}
     C -- "= 0" --> D["T1 — send base list to Exotel, no expansion"]
     C -- "= 1 or 2" --> E["T2 — expand: repeat each entry (1 + C-01) times, order preserved"]
-    E --> F{"Expanded list within Exotel array cap?"}
-    F -- "≤ 10 entries (C-02)" --> G["T3 — send expanded list to Exotel"]
+    E --> F{"Expanded list within Exotel's 10-entry platform cap?"}
+    F -- "≤ 10 entries" --> G["T3 — send expanded list to Exotel"]
     F -- "> 10 entries" --> H["T4 — cap the list at 10, send the truncated list to Exotel"]
 ```
 
@@ -69,8 +69,8 @@ flowchart TD
 |---|---|---|---|---|---|
 | T1 | — | Connect-applet fetch received | C-01 = 0 | Sent (no-op expansion) | Base rollover list sent verbatim to Exotel. Behaviour is identical to today's flow. (R2b, G1) |
 | T2 | — | Connect-applet fetch received | C-01 ∈ {1, 2} | Expanded | Each entry in the base list is repeated (1 + C-01) times, order preserved. Example: base = [A, B, C], C-01 = 1 → expanded = [A, A, B, B, C, C]. (R1a, R1b) |
-| T3 | Expanded | List size ≤ 10 (C-02) | — | Sent | Expanded list sent to Exotel as the Connect-applet response body. Exotel dials each entry in order per its documented behaviour. |
-| T4 | Expanded | List size > 10 (C-02) | — | Sent (capped) | List is truncated to the first 10 entries; the truncated list is sent to Exotel. Truncation removes the tail — earlier retries on higher-priority numbers are preserved over later retries on fallback numbers. |
+| T3 | Expanded | List size ≤ 10 (Exotel platform cap) | — | Sent | Expanded list sent to Exotel as the Connect-applet response body. Exotel dials each entry in order per its documented behaviour. |
+| T4 | Expanded | List size > 10 (Exotel platform cap) | — | Sent (capped) | List is truncated to the first 10 entries; the truncated list is sent to Exotel. Truncation removes the tail — earlier retries on higher-priority numbers are preserved over later retries on fallback numbers. |
 
 ---
 
@@ -87,9 +87,8 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 | ID | Parameter | Default | Range | Who changes it |
 |---|---|---|---|---|
 | C-01 | retry_count — number of extra times each entry in the rollover list is dialled before advancing to the next entry | **1** | 0, 1, or 2 | Product ⚠️ *AI GENERATED — review* |
-| C-02 | Maximum size of the numbers array sent to Exotel — the cap Exotel enforces on the Connect-applet response | 10 | Fixed at 10 by Exotel (see §8) | Exotel — not customer-changeable |
 
-**Interaction note (C-01 × C-02):** with a full 3-number rollover list, C-01 = 2 would produce 9 entries — within cap. With a hypothetical 4-number list, C-01 = 2 would produce 12 entries and T4 truncation would fire, dropping the last (lowest-priority) entry's third retry first. This is why the current rollout lists (max 3 for customer-initiated, max 2 for CSP-initiated) fit within the cap at every allowed C-01 value.
+**Note on Exotel's 10-entry platform cap.** Exotel accepts at most 10 numbers per Connect-applet response — this is Exotel's platform limit, not a Wiom parameter. With the current rollover lists (up to 3 for customer-initiated, up to 2 for CSP-initiated), C-01 = 2 produces at most 9 entries, safely inside Exotel's cap. If the rollover list ever grows to 4 or more distinct numbers, the T4 truncation branch (§3b) protects the call by capping the sent array at 10.
 
 ---
 
@@ -124,8 +123,8 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-BV-1 | **Given** C-01 is set to 2 and a base list of 4 numbers `[A, B, C, D]` (hypothetical — no current flow produces this), **When** the fetch is received, **Then** the array sent to Exotel is `[A, A, A, B, B, B, C, C, C, D]` — truncated at 10 entries (C-02). The last (`D`) loses its second and third retries. | T4 · C-02 | Settled |
-| AC-BV-2 | **Given** a base list of exactly 5 numbers and C-01 = 1, **When** the fetch is received, **Then** the array sent is exactly 10 entries — at the cap, no truncation. | T3 boundary at C-02 | Settled |
+| AC-BV-1 | **Given** C-01 is set to 2 and a base list of 4 numbers `[A, B, C, D]` (hypothetical — no current flow produces this), **When** the fetch is received, **Then** the array sent to Exotel is `[A, A, A, B, B, B, C, C, C, D]` — truncated at Exotel's 10-entry platform cap. The last (`D`) loses its second and third retries. | T4 | Settled |
+| AC-BV-2 | **Given** a base list of exactly 5 numbers and C-01 = 1, **When** the fetch is received, **Then** the array sent is exactly 10 entries — at Exotel's platform cap, no truncation. | T3 boundary | Settled |
 
 ### CFG — Configurability
 
@@ -170,7 +169,7 @@ What the platform must be able to do for this feature to exist. Whether these ar
 |---|---|
 | Read a live-changeable scalar (C-01) at Connect-applet-fetch time without restart. | R2a · G3 · C-01 |
 | Expand a rollover list by duplicating each entry (1 + C-01) times while preserving order. | T2 · R1a · R1b |
-| Cap the expanded list at C-02 entries, truncating the tail if it exceeds. | T4 · C-02 |
+| Cap the expanded list at Exotel's 10-entry platform limit, truncating the tail if it exceeds. | T4 |
 | Emit per-call telemetry that carries the C-01 value in effect at fetch time and reconstructs the numbers array actually sent. | MQ-1 · MQ-2 · MQ-3 |
 | Attribute successful connects to either the first attempt on a number or a subsequent retry on the same number. | MQ-2 |
 
