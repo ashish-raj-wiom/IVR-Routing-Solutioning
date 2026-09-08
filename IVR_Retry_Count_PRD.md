@@ -21,6 +21,8 @@ Whoever IVR 2.0 admits, this spec expands the same way. This spec does not add, 
 
 **Objective.** When a caller dials the IVR masked number to reach the callee and the callee does not pick up on the first ring, the same number is dialled again so the caller has a better chance of reaching them.
 
+**Applies to every IVR 2.0 calling flow.** The retry expansion fires at a single point — the Connect-applet fetch — which is reached by all three IVR 2.0 calling paths: (i) **In-app CTA** — caller taps Call in the app, IVR resolves the destination via Table 1 cache hit; (ii) **Dialer callback, single active ticket** — caller dials the masked number, IVR's identification chain finds one active ticket and resolves the destination without a PIN prompt; (iii) **Dialer callback, PIN required** — caller dials the masked number, IVR prompts for a PIN (multi-ticket disambiguation or unknown caller), the PIN validates and the destination is resolved. In all three paths, the destination arrives at the Connect-applet fetch as a `numbers` array; this spec's expansion is applied identically in each case (AC-WF-1, AC-WF-2, AC-WF-3).
+
 **Boundary.** This spec governs how many times the same number is dialled inside one call session on the IVR masked number — a single scalar (C-01). It leaves everything else unchanged: the list of distinct numbers the caller tries in rollover (Technician → Manager → Owner for customer-initiated; Customer primary → Customer alternate for CSP-initiated), the per-number ring time (30 s per Exotel default), and every other Connect-applet parameter. Non-IVR-masked-number call paths (direct dial, Call-Center / Trust-Line numbers, any legacy MN1/MN2 routing) are out of scope. If this ships and rollover order changes, that broke (AC-REG-1). If ring time changes, that broke (AC-REG-2).
 
 ### Guardrails — promises that hold on every path
@@ -144,11 +146,16 @@ The caller hears the same ring / hold experience that Exotel provides today; no 
 |---|---|---|---|
 | AC-GRD-1 | **Given** C-01 = 1 and a call whose first number fails to pick up, **When** Exotel completes ring attempts on that number, **Then** Exotel proceeds to the *second entry in the sent array* — which is the same number retried — before advancing to the second distinct number in the base list, preserving the sequential rollover contract of IVR 2.0. | G2 · R1b · T3 | Settled |
 
-### WF — Workflow
+### WF — Workflow (retry expansion across every IVR 2.0 calling flow)
+
+Every IVR 2.0 calling flow reaches the Connect-applet fetch and must apply the expansion identically. One AC per flow, plus one end-to-end rollover journey.
 
 | AC | Given / When / Then | Verifies | Status |
 |---|---|---|---|
-| AC-WF-1 | **Given** C-01 = 1, a customer-initiated call, base list `[TechMobile, MgrMobile, OwnerMobile]`, **When** TechMobile does not pick up on the first attempt or its retry, and MgrMobile picks up on its first attempt, **Then** the call bridges to MgrMobile and the disposition webhook records legs in the order `TechMobile, TechMobile, MgrMobile`. | R1a · R1b · T2 · T3 · G2 | Settled |
+| AC-WF-1 | **Path 1 — In-app CTA.** **Given** C-01 = 1 and a customer with an active ticket taps the Call CTA in the app, causing IVR to resolve the destination via a Table 1 cache hit with the CSP's mobile `9211111111`, **When** IVR receives the Connect-applet fetch, **Then** the numbers array sent to Exotel is `[9211111111, 9211111111]` — the same number, dialled twice in sequence. | R1a · T2 · T3 · G2 | Settled |
+| AC-WF-2 | **Path 2 — Dialer callback, single active ticket.** **Given** C-01 = 1 and a CSP user dials the IVR masked number from their phone's call log; IVR's identification chain matches them, finds exactly one active ticket, and resolves the destination to the customer's mobile `9322222222`, **When** IVR receives the Connect-applet fetch, **Then** the numbers array sent to Exotel is `[9322222222, 9322222222]`. | R1a · T2 · T3 · G2 | Settled |
+| AC-WF-3 | **Path 3 / 4 — Dialer callback, PIN required.** **Given** C-01 = 1 and a caller dials the IVR masked number; IVR prompts for a PIN because the caller has multiple active tickets (Path 3) or is unknown to the identification chain (Path 4); the caller enters a valid PIN and the resolved destination is `[9433333333, 9433444444]` (a 2-number rollover list), **When** IVR receives the Connect-applet fetch that follows PIN validation, **Then** the numbers array sent to Exotel is `[9433333333, 9433333333, 9433444444, 9433444444]`. | R1a · R1b · T2 · T3 · G2 | Settled |
+| AC-WF-4 | **End-to-end rollover.** **Given** C-01 = 1, a customer-initiated call reached via any of Paths 1–3, base list `[TechMobile, MgrMobile, OwnerMobile]`, **When** TechMobile does not pick up on the first attempt or its retry, and MgrMobile picks up on its first attempt, **Then** the call bridges to MgrMobile and the disposition webhook records legs in the order `TechMobile, TechMobile, MgrMobile`. | R1a · R1b · T2 · T3 · G2 | Settled |
 
 ---
 
